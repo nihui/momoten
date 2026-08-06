@@ -9,6 +9,30 @@
 
 namespace momoten {
 
+static void qualify_file_scope_constants(std::string& source)
+{
+    size_t kernel = source.find("\n__kernel ");
+    if (kernel == std::string::npos)
+        return;
+    kernel++;
+
+    const std::string address_space = "__constant ";
+    size_t line = 0;
+    while (line < kernel)
+    {
+        if (source.compare(line, 6, "const ") == 0)
+        {
+            source.insert(line, address_space);
+            line += address_space.size();
+            kernel += address_space.size();
+        }
+        const size_t newline = source.find('\n', line);
+        if (newline == std::string::npos)
+            break;
+        line = newline + 1;
+    }
+}
+
 KernelABI::KernelABI()
     : address_bits(0), subgroup_mode(SubgroupModeSingleton), subgroup_size(1), fp64(false), integer_dot_product(false), workgroup_splittable(false), push_constant_arg_index(-1), push_constant_size(0)
 {
@@ -269,6 +293,12 @@ bool translate_spirv_to_opencl_c(const uint32_t* words, size_t word_count,
         compiler.set_common_options(common_options);
 
         result.source = compiler.compile();
+        // OpenCL C requires every program-scope object to reside in the
+        // constant address space. SPIRV-Cross emits non-forwardable SPIR-V
+        // constants as file-scope `const` declarations, which some compilers
+        // accept but conforming implementations reject. Function-local const
+        // declarations are indented and intentionally remain private.
+        qualify_file_scope_constants(result.source);
         if (compiler.needs_converged_returns())
         {
             // Some OpenCL 1.x CPU compilers incorrectly execute code after a

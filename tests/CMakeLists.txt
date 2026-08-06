@@ -95,6 +95,7 @@ momoten_compile_test_shader(momoten_unsupported_test_spv unsupported_image.comp 
 momoten_compile_test_shader(momoten_atomic_test_spv atomic_compare_exchange.comp vulkan1.0)
 momoten_compile_test_shader(momoten_atomic_packed_test_spv atomic_packed.comp vulkan1.0)
 momoten_compile_test_shader(momoten_fp16_test_spv fp16_buffer.comp vulkan1.1)
+momoten_compile_test_shader(momoten_fp16_program_constant_test_spv fp16_program_constant.comp vulkan1.1)
 momoten_compile_test_shader(momoten_fp64_test_spv fp64_buffer.comp vulkan1.1)
 momoten_compile_test_shader(momoten_int16_test_spv int16_buffer.comp vulkan1.1)
 momoten_compile_test_shader(momoten_scalar_16bit_test_spv scalar_16bit_buffer.comp vulkan1.1)
@@ -118,7 +119,8 @@ add_test(NAME momoten_translator_simple
         "${momoten_subgroup_basic_test_spv}"
         "${momoten_integer_dot_product_test_spv}"
         "${momoten_workgroup_split_test_spv}"
-        "${momoten_fp64_test_spv}")
+        "${momoten_fp64_test_spv}"
+        "${momoten_fp16_program_constant_test_spv}")
 set_tests_properties(momoten_translator_simple PROPERTIES
     LABELS "momoten;translator")
 
@@ -139,7 +141,8 @@ if(TARGET momoten_amalgamated_translator)
             "${momoten_subgroup_basic_test_spv}"
             "${momoten_integer_dot_product_test_spv}"
             "${momoten_workgroup_split_test_spv}"
-            "${momoten_fp64_test_spv}")
+            "${momoten_fp64_test_spv}"
+            "${momoten_fp16_program_constant_test_spv}")
     set_tests_properties(momoten_amalgamated_translator_simple PROPERTIES
         LABELS "momoten;amalgamation;translator")
 endif()
@@ -157,6 +160,7 @@ if(MOMOTEN_CLANG AND TARGET momoten_spv_to_clc)
             -DSPV_FILE=${momoten_test_spv}
             -DATOMIC_SPV_FILE=${momoten_atomic_test_spv}
             -DFP16_SPV_FILE=${momoten_fp16_test_spv}
+            -DFP16_CONSTANT_SPV_FILE=${momoten_fp16_program_constant_test_spv}
             -DOUTPUT_DIR=${CMAKE_CURRENT_BINARY_DIR}/strict-cl10
             -P "${CMAKE_CURRENT_SOURCE_DIR}/translator/strict_cl10_test.cmake")
     set_tests_properties(momoten_opencl_c_1_0_syntax PROPERTIES

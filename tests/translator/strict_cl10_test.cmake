@@ -1,8 +1,8 @@
 # Copyright 2026 nihui
 # SPDX-License-Identifier: Apache-2.0
 
-if(NOT TRANSLATOR OR NOT CLANG OR NOT SPV_FILE OR NOT ATOMIC_SPV_FILE OR NOT FP16_SPV_FILE OR NOT OUTPUT_DIR)
-    message(FATAL_ERROR "TRANSLATOR, CLANG, SPV_FILE, ATOMIC_SPV_FILE, FP16_SPV_FILE and OUTPUT_DIR are required")
+if(NOT TRANSLATOR OR NOT CLANG OR NOT SPV_FILE OR NOT ATOMIC_SPV_FILE OR NOT FP16_SPV_FILE OR NOT FP16_CONSTANT_SPV_FILE OR NOT OUTPUT_DIR)
+    message(FATAL_ERROR "TRANSLATOR, CLANG, SPV_FILE, ATOMIC_SPV_FILE, FP16_SPV_FILE, FP16_CONSTANT_SPV_FILE and OUTPUT_DIR are required")
 endif()
 
 file(MAKE_DIRECTORY "${OUTPUT_DIR}")
@@ -33,3 +33,4 @@ endfunction()
 check_opencl_c_1_0(simple_buffer "${SPV_FILE}")
 check_opencl_c_1_0(atomic_compare_exchange "${ATOMIC_SPV_FILE}")
 check_opencl_c_1_0(fp16_buffer "${FP16_SPV_FILE}")
+check_opencl_c_1_0(fp16_program_constant "${FP16_CONSTANT_SPV_FILE}")

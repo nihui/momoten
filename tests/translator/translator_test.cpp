@@ -36,8 +36,8 @@ static int require(bool condition, const char* message)
 
 int main(int argc, char** argv)
 {
-    if (argc != 10)
-        return require(false, "expected positive, unsupported, atomic, fp16, int16, subgroup, integer-dot, workgroup-split and fp64 SPIR-V input paths");
+    if (argc != 11)
+        return require(false, "expected positive, unsupported, atomic, fp16, int16, subgroup, integer-dot, workgroup-split, fp64 and fp16 program-constant SPIR-V input paths");
 
     std::vector<uint32_t> words;
     if (!read_spirv(argv[1], words))
@@ -333,6 +333,20 @@ int main(int argc, char** argv)
                    "fp64 vector addition was not scalarized")
         || require(fp64_result.source.find(".0lf") == std::string::npos,
                    "fp64 literals retained the GLSL lf suffix"))
+        return 1;
+
+    std::vector<uint32_t> fp16_program_constant;
+    if (!read_spirv(argv[10], fp16_program_constant))
+        return require(false, "failed to read fp16 program-constant test SPIR-V");
+    momoten::TranslationResult fp16_program_constant_result;
+    if (require(momoten::translate_spirv_to_opencl_c(
+                    fp16_program_constant.data(), fp16_program_constant.size(),
+                    options, fp16_program_constant_result),
+                "fp16 program-constant SPIR-V was rejected")
+        || require(fp16_program_constant_result.source.find("\n__constant const half ") != std::string::npos,
+                   "program-scope half constant is missing the OpenCL constant address space")
+        || require(fp16_program_constant_result.source.find("\nconst half ") == std::string::npos,
+                   "unqualified program-scope half constant leaked into OpenCL source"))
         return 1;
 
     return 0;
