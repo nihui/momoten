@@ -10,6 +10,16 @@
 // OpenCL 1.1 query used opportunistically without raising the OpenCL 1.0
 // compile target. OpenCL 1.0 devices reject it and take the conservative path.
 static const cl_device_info MOMOTEN_CL_DEVICE_HOST_UNIFIED_MEMORY = 0x1035;
+// cl_nv_device_attribute_query. Keep the numeric value local so momoten can
+// build against OpenCL 1.0 header sets that predate the NVIDIA declaration.
+static const cl_device_info MOMOTEN_CL_DEVICE_WARP_SIZE_NV = 0x4003;
+
+// OpenCL exposes a device-wide maximum, but CL_KERNEL_WORK_GROUP_SIZE may be
+// lower after translating a register-heavy SPIR-V kernel. Vulkan applications
+// need a useful limit before pipeline compilation, so the restricted momoten
+// compute profile advertises a conservative value that ncnn can honor while
+// selecting and specializing its local size.
+static const size_t MOMOTEN_MAX_COMPUTE_WORKGROUP_INVOCATIONS = 256;
 
 void log_error(const char* operation, cl_int error)
 {
@@ -89,6 +99,28 @@ static uint32_t probe_native_subgroup_size(cl_device_id device,
     if (ret != CL_SUCCESS || subgroup_size == 0 || subgroup_size > 128 || (subgroup_size & (subgroup_size - 1)) != 0)
         return 0;
     return static_cast<uint32_t>(subgroup_size);
+}
+
+static uint32_t probe_emulated_basic_subgroup_size(
+    cl_device_id device, const std::string& extensions,
+    size_t max_workgroup_size)
+{
+    // A preferred workgroup-size multiple is only a scheduling hint and is
+    // not a subgroup contract. Use only a vendor query that explicitly
+    // reports the hardware execution width.
+    if (!extension_string_contains(extensions, "cl_nv_device_attribute_query"))
+        return 0;
+
+    cl_uint warp_size = 0;
+    if (momoten_detail::g_opencl.p_clGetDeviceInfo(
+            device, MOMOTEN_CL_DEVICE_WARP_SIZE_NV, sizeof(warp_size),
+            &warp_size, 0)
+            != CL_SUCCESS
+        || warp_size <= 1 || warp_size > 128
+        || (warp_size & (warp_size - 1)) != 0
+        || warp_size > max_workgroup_size)
+        return 0;
+    return warp_size;
 }
 
 static bool probe_integer_dot_product(
@@ -357,7 +389,16 @@ std::vector<VkPhysicalDevice> discover_opencl_devices(VkInstance instance)
             physical->address_bits = address_bits;
             physical->global_memory = get_device_value<cl_ulong>(devices[d], CL_DEVICE_GLOBAL_MEM_SIZE, 0);
             physical->max_allocation = get_device_value<cl_ulong>(devices[d], CL_DEVICE_MAX_MEM_ALLOC_SIZE, 0);
-            physical->max_workgroup_size = get_device_value<size_t>(devices[d], CL_DEVICE_MAX_WORK_GROUP_SIZE, 1);
+            physical->max_workgroup_size =
+                get_device_value<size_t>(devices[d], CL_DEVICE_MAX_WORK_GROUP_SIZE, 1);
+            physical->max_compute_workgroup_invocations = std::min(
+                physical->max_workgroup_size,
+                MOMOTEN_MAX_COMPUTE_WORKGROUP_INVOCATIONS);
+            if (momoten_detail::debug_enabled() && physical->max_compute_workgroup_invocations != physical->max_workgroup_size)
+                fprintf(stderr, "[momoten] compute profile caps %s workgroup invocations at %zu (OpenCL device maximum %zu)\n",
+                        physical->name.c_str(),
+                        physical->max_compute_workgroup_invocations,
+                        physical->max_workgroup_size);
             physical->max_parameter_size = get_device_value<size_t>(devices[d], CL_DEVICE_MAX_PARAMETER_SIZE, 0);
             physical->local_memory = get_device_value<cl_ulong>(devices[d], CL_DEVICE_LOCAL_MEM_SIZE, 0);
             physical->max_compute_units = get_device_value<cl_uint>(devices[d], CL_DEVICE_MAX_COMPUTE_UNITS, 1);
@@ -381,6 +422,33 @@ std::vector<VkPhysicalDevice> discover_opencl_devices(VkInstance instance)
             {
                 physical->shader_profile.subgroup_mode = momoten::SubgroupModeNative;
                 physical->shader_profile.subgroup_size = native_subgroup_size;
+            }
+            else
+            {
+                const uint32_t emulated_subgroup_size =
+                    probe_emulated_basic_subgroup_size(
+                        devices[d], physical->extensions,
+                        physical->max_workgroup_size);
+                if (emulated_subgroup_size != 0)
+                {
+                    physical->shader_profile.subgroup_mode =
+                        momoten::SubgroupModeEmulatedBasic;
+                    physical->shader_profile.subgroup_size =
+                        emulated_subgroup_size;
+                }
+            }
+            if (momoten_detail::debug_enabled())
+            {
+                const char* mode = physical->shader_profile.subgroup_mode
+                                           == momoten::SubgroupModeNative
+                                       ? "native"
+                                   : physical->shader_profile.subgroup_mode
+                                             == momoten::SubgroupModeEmulatedBasic
+                                       ? "emulated-basic"
+                                       : "singleton";
+                fprintf(stderr, "[momoten] subgroup profile for %s: %s, size %u\n",
+                        physical->name.c_str(), mode,
+                        physical->shader_profile.subgroup_size);
             }
             probe_integer_dot_product(
                 devices[d], physical->extensions,

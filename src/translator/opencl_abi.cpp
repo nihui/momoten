@@ -170,9 +170,13 @@ void CompilerOpenCL::emit_function_prototype(SPIRFunction& func, const Bitset& r
         args.push_back("__global const uchar* momo_push_constants");
 
     std::ostringstream declaration;
-    declaration << "__kernel __attribute__((reqd_work_group_size(" << local_size[0] << ", "
-                << local_size[1] << ", " << local_size[2] << "))) void "
-                << get_entry_point().name << "(";
+    declaration << "__kernel ";
+    if (!workgroup_splittable)
+    {
+        declaration << "__attribute__((reqd_work_group_size(" << local_size[0] << ", "
+                    << local_size[1] << ", " << local_size[2] << "))) ";
+    }
+    declaration << "void " << get_entry_point().name << "(";
     for (size_t i = 0; i < args.size(); i++)
     {
         if (i != 0)

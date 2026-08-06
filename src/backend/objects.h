@@ -75,6 +75,7 @@ struct VkPhysicalDevice_T
     cl_ulong global_memory;
     cl_ulong max_allocation;
     size_t max_workgroup_size;
+    size_t max_compute_workgroup_invocations;
     size_t max_work_item_sizes[3];
     size_t max_parameter_size;
     cl_ulong local_memory;
@@ -161,6 +162,8 @@ struct Pipeline
     cl_program program;
     cl_kernel kernel;
     momoten::KernelABI abi;
+    size_t opencl_local_size[3];
+    size_t workgroup_chunk_count;
     std::string source;
 };
 

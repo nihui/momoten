@@ -11,6 +11,7 @@
 #include <stdio.h>
 #include <string.h>
 
+#include <algorithm>
 #include <fstream>
 #include <string>
 #include <vector>
@@ -371,9 +372,9 @@ static int run_subgroup_basic_kernel(cl_context context, cl_command_queue queue,
                                      const momoten::TranslationResult& translated,
                                      cl_uint address_bits)
 {
-    if (translated.abi.subgroup_mode != momoten::SubgroupModeSingleton || translated.abi.subgroup_size != 1 || translated.abi.buffers.size() != 1)
+    if (translated.abi.subgroup_mode != momoten::SubgroupModeEmulatedBasic || translated.abi.subgroup_size != 8 || translated.abi.buffers.size() != 1)
     {
-        fprintf(stderr, "opencl_test: subgroup BASIC fixture did not use the singleton ABI\n");
+        fprintf(stderr, "opencl_test: subgroup BASIC fixture did not use the emulated ABI\n");
         return 1;
     }
 
@@ -413,7 +414,13 @@ static int run_subgroup_basic_kernel(cl_context context, cl_command_queue queue,
     {
         for (uint32_t i = 0; i < 4; i++)
         {
-            const uint32_t expected = 14001u + i * 100u;
+            const uint32_t subgroup_size = translated.abi.subgroup_size;
+            const uint32_t invocation_id = i % subgroup_size;
+            const uint32_t subgroup_id = i / subgroup_size;
+            const uint32_t subgroup_count = (4u + subgroup_size - 1) / subgroup_size;
+            const uint32_t expected = subgroup_size + invocation_id * 10u
+                                      + subgroup_id * 100u + subgroup_count * 1000u
+                                      + (invocation_id == 0 ? 10000u : 0u);
             if (output[i] != expected)
             {
                 fprintf(stderr, "opencl_test: subgroup output[%u]=%u expected=%u\n",
@@ -513,6 +520,133 @@ static int run_integer_dot_product_kernel(
     return status;
 }
 
+static int run_workgroup_split_kernel(cl_context context, cl_command_queue queue, cl_kernel kernel,
+                                      const momoten::TranslationResult& translated,
+                                      cl_uint address_bits)
+{
+    if (!translated.abi.workgroup_splittable || translated.abi.local_size[0] != 8
+        || translated.abi.local_size[1] != 16 || translated.abi.local_size[2] != 3
+        || translated.abi.buffers.size() != 1)
+    {
+        fprintf(stderr, "opencl_test: workgroup split fixture has an unexpected ABI\n");
+        return 1;
+    }
+
+    cl_device_id device = 0;
+    cl_int ret = clGetCommandQueueInfo(queue, CL_QUEUE_DEVICE, sizeof(device), &device, 0);
+    size_t kernel_limit = 0;
+    size_t device_limit = 0;
+    cl_uint dimensions = 0;
+    if (ret == CL_SUCCESS)
+        ret = clGetKernelWorkGroupInfo(kernel, device, CL_KERNEL_WORK_GROUP_SIZE,
+                                       sizeof(kernel_limit), &kernel_limit, 0);
+    if (ret == CL_SUCCESS)
+        ret = clGetDeviceInfo(device, CL_DEVICE_MAX_WORK_GROUP_SIZE,
+                              sizeof(device_limit), &device_limit, 0);
+    if (ret == CL_SUCCESS)
+        ret = clGetDeviceInfo(device, CL_DEVICE_MAX_WORK_ITEM_DIMENSIONS,
+                              sizeof(dimensions), &dimensions, 0);
+    if (ret != CL_SUCCESS || dimensions == 0)
+        return fail("workgroup split limit query", ret);
+
+    std::vector<size_t> dimension_limits(dimensions, 1);
+    ret = clGetDeviceInfo(device, CL_DEVICE_MAX_WORK_ITEM_SIZES,
+                          dimension_limits.size() * sizeof(size_t), dimension_limits.data(), 0);
+    if (ret != CL_SUCCESS)
+        return fail("clGetDeviceInfo(CL_DEVICE_MAX_WORK_ITEM_SIZES)", ret);
+
+    const size_t logical_size = 8 * 16 * 3;
+    size_t physical_size = std::min(logical_size, kernel_limit);
+    physical_size = std::min(physical_size, device_limit);
+    physical_size = std::min(physical_size, dimension_limits[0]);
+    physical_size = std::min<size_t>(physical_size, 256);
+    if (physical_size < logical_size && translated.abi.subgroup_size > 1)
+        physical_size -= physical_size % translated.abi.subgroup_size;
+    if (physical_size == 0 || physical_size >= logical_size)
+    {
+        fprintf(stderr, "opencl_test: failed to force a smaller physical workgroup\n");
+        return 1;
+    }
+    const size_t chunk_count = 1 + (logical_size - 1) / physical_size;
+    const size_t group_count[3] = {2, 3, 2};
+    const size_t invocation_count = logical_size * group_count[0] * group_count[1] * group_count[2];
+    std::vector<uint32_t> output(invocation_count * 6, 0xffffffffu);
+
+    cl_mem buffer = clCreateBuffer(context, CL_MEM_READ_WRITE | CL_MEM_COPY_HOST_PTR,
+                                   output.size() * sizeof(uint32_t), output.data(), &ret);
+    if (!buffer)
+        return fail("clCreateBuffer(workgroup split)", ret);
+
+    const cl_uint offset32 = 0;
+    const cl_ulong offset64 = 0;
+    const cl_uint size32 = static_cast<cl_uint>(output.size() * sizeof(uint32_t));
+    const cl_ulong size64 = static_cast<cl_ulong>(output.size() * sizeof(uint32_t));
+    const void* offset = address_bits == 64 ? static_cast<const void*>(&offset64) : static_cast<const void*>(&offset32);
+    const void* size = address_bits == 64 ? static_cast<const void*>(&size64) : static_cast<const void*>(&size32);
+    const size_t scalar_size = address_bits == 64 ? sizeof(cl_ulong) : sizeof(cl_uint);
+    const momoten::BufferArgument& argument = translated.abi.buffers[0];
+    ret = clSetKernelArg(kernel, argument.buffer_arg_index, sizeof(buffer), &buffer);
+    if (ret == CL_SUCCESS)
+        ret = clSetKernelArg(kernel, argument.offset_arg_index, scalar_size, offset);
+    if (ret == CL_SUCCESS)
+        ret = clSetKernelArg(kernel, argument.size_arg_index, scalar_size, size);
+
+    const size_t local_size[3] = {physical_size, 1, 1};
+    const size_t global_size[3] = {
+        group_count[0] * chunk_count * physical_size, group_count[1], group_count[2]};
+    if (ret == CL_SUCCESS)
+        ret = clEnqueueNDRangeKernel(queue, kernel, 3, 0, global_size, local_size, 0, 0, 0);
+    if (ret == CL_SUCCESS)
+        ret = clEnqueueReadBuffer(queue, buffer, CL_TRUE, 0,
+                                  output.size() * sizeof(uint32_t), output.data(), 0, 0, 0);
+
+    int status = 0;
+    if (ret != CL_SUCCESS)
+        status = fail("workgroup split kernel dispatch", ret);
+    else
+    {
+        for (size_t gz = 0; gz < group_count[2] && status == 0; gz++)
+        {
+            for (size_t gy = 0; gy < group_count[1] && status == 0; gy++)
+            {
+                for (size_t gx = 0; gx < group_count[0] && status == 0; gx++)
+                {
+                    const size_t group_index = gx + group_count[0] * (gy + group_count[1] * gz);
+                    for (size_t local_index = 0; local_index < logical_size; local_index++)
+                    {
+                        const uint32_t lx = static_cast<uint32_t>(local_index % 8);
+                        const uint32_t ly = static_cast<uint32_t>((local_index / 8) % 16);
+                        const uint32_t lz = static_cast<uint32_t>(local_index / (8 * 16));
+                        const size_t base = (group_index * logical_size + local_index) * 6;
+                        const uint32_t expected[6] = {
+                            lx | (ly << 8) | (lz << 16),
+                            static_cast<uint32_t>(gx | (gy << 8) | (gz << 16)),
+                            static_cast<uint32_t>((gx * 8 + lx) | ((gy * 16 + ly) << 8) | ((gz * 3 + lz) << 16)),
+                            static_cast<uint32_t>(group_count[0] | (group_count[1] << 8) | (group_count[2] << 16)),
+                            static_cast<uint32_t>(translated.abi.subgroup_size | ((local_index % translated.abi.subgroup_size) << 8) | ((local_index / translated.abi.subgroup_size) << 16)),
+                            static_cast<uint32_t>((logical_size / translated.abi.subgroup_size) | ((local_index % translated.abi.subgroup_size == 0 ? 1u : 0u) << 16))};
+                        for (size_t field = 0; field < 6; field++)
+                        {
+                            if (output[base + field] != expected[field])
+                            {
+                                fprintf(stderr, "opencl_test: split output[%zu]=0x%08x expected=0x%08x\n",
+                                        base + field, output[base + field], expected[field]);
+                                status = 1;
+                                break;
+                            }
+                        }
+                        if (status != 0)
+                            break;
+                    }
+                }
+            }
+        }
+    }
+
+    clReleaseMemObject(buffer);
+    return status;
+}
+
 typedef int (*OpenCLKernelTestRunner)(
     cl_context, cl_command_queue, cl_kernel,
     const momoten::TranslationResult&, cl_uint);
@@ -524,7 +658,8 @@ enum OpenCLTestFeature
     OpenCLTestAtomicPacked,
     OpenCLTestScalar16Bit,
     OpenCLTestSubgroupBasic,
-    OpenCLTestIntegerDotProduct
+    OpenCLTestIntegerDotProduct,
+    OpenCLTestWorkgroupSplit
 };
 
 struct OpenCLTestCase
@@ -546,7 +681,9 @@ static const OpenCLTestCase opencl_test_cases[] = {
     {"subgroup-basic", OpenCLTestSubgroupBasic, false, false,
      run_subgroup_basic_kernel},
     {"integer-dot-product", OpenCLTestIntegerDotProduct, false, true,
-     run_integer_dot_product_kernel}};
+     run_integer_dot_product_kernel},
+    {"workgroup-split", OpenCLTestWorkgroupSplit, false, false,
+     run_workgroup_split_kernel}};
 
 static const OpenCLTestCase* find_opencl_test_case(int argc, char** argv)
 {
@@ -568,7 +705,7 @@ int main(int argc, char** argv)
     const OpenCLTestCase* test_case = find_opencl_test_case(argc, argv);
     if (!test_case)
     {
-        fprintf(stderr, "opencl_test: expected SPIR-V input path and optional fp16, atomic-packed, scalar-16bit, subgroup-basic, or integer-dot-product mode\n");
+        fprintf(stderr, "opencl_test: expected SPIR-V input path and optional fp16, atomic-packed, scalar-16bit, subgroup-basic, integer-dot-product, or workgroup-split mode\n");
         return 1;
     }
 
@@ -594,6 +731,11 @@ int main(int argc, char** argv)
 
     momoten::TranslationOptions options;
     options.address_bits = address_bits;
+    if (test_case->feature == OpenCLTestSubgroupBasic || test_case->feature == OpenCLTestWorkgroupSplit)
+    {
+        options.subgroup_mode = momoten::SubgroupModeEmulatedBasic;
+        options.subgroup_size = 8;
+    }
     if (test_case->feature == OpenCLTestIntegerDotProduct)
     {
         cl_device_integer_dot_product_capabilities_khr capabilities = 0;

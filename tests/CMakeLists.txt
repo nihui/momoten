@@ -35,7 +35,8 @@ if(TARGET momoten_driver)
     add_executable(momoten_non_conformant_warning_test
         api/non_conformant_warning_test.cpp)
     target_compile_features(momoten_non_conformant_warning_test PRIVATE cxx_std_11)
-    target_link_libraries(momoten_non_conformant_warning_test PRIVATE momoten::driver)
+    target_link_libraries(momoten_non_conformant_warning_test PRIVATE
+        momoten::driver momoten_vulkan_headers)
     add_test(NAME momoten_non_conformant_warning
         COMMAND "${CMAKE_COMMAND}"
             -DTEST_EXECUTABLE=$<TARGET_FILE:momoten_non_conformant_warning_test>
@@ -92,6 +93,7 @@ momoten_compile_test_shader(momoten_int16_test_spv int16_buffer.comp vulkan1.1)
 momoten_compile_test_shader(momoten_scalar_16bit_test_spv scalar_16bit_buffer.comp vulkan1.1)
 momoten_compile_test_shader(momoten_subgroup_basic_test_spv subgroup_basic.comp vulkan1.1)
 momoten_compile_test_shader(momoten_integer_dot_product_test_spv integer_dot_product.comp vulkan1.1)
+momoten_compile_test_shader(momoten_workgroup_split_test_spv workgroup_split.comp vulkan1.1)
 
 add_custom_target(momoten-test-spv DEPENDS ${momoten_test_spv_files})
 
@@ -107,7 +109,8 @@ add_test(NAME momoten_translator_simple
         "${momoten_fp16_test_spv}"
         "${momoten_int16_test_spv}"
         "${momoten_subgroup_basic_test_spv}"
-        "${momoten_integer_dot_product_test_spv}")
+        "${momoten_integer_dot_product_test_spv}"
+        "${momoten_workgroup_split_test_spv}")
 set_tests_properties(momoten_translator_simple PROPERTIES
     LABELS "momoten;translator")
 
@@ -126,7 +129,8 @@ if(TARGET momoten_amalgamated_translator)
             "${momoten_fp16_test_spv}"
             "${momoten_int16_test_spv}"
             "${momoten_subgroup_basic_test_spv}"
-            "${momoten_integer_dot_product_test_spv}")
+            "${momoten_integer_dot_product_test_spv}"
+            "${momoten_workgroup_split_test_spv}")
     set_tests_properties(momoten_amalgamated_translator_simple PROPERTIES
         LABELS "momoten;amalgamation;translator")
 endif()
@@ -170,9 +174,13 @@ if(TARGET momoten_test_opencl)
     add_test(NAME momoten_opencl_integer_dot_product
         COMMAND momoten_opencl_test "${momoten_integer_dot_product_test_spv}"
             integer-dot-product)
+    add_test(NAME momoten_opencl_workgroup_split
+        COMMAND momoten_opencl_test "${momoten_workgroup_split_test_spv}"
+            workgroup-split)
     set_tests_properties(momoten_opencl_simple momoten_opencl_fp16
         momoten_opencl_atomic_packed momoten_opencl_scalar_16bit
-        momoten_opencl_subgroup_basic momoten_opencl_integer_dot_product PROPERTIES
+        momoten_opencl_subgroup_basic momoten_opencl_integer_dot_product
+        momoten_opencl_workgroup_split PROPERTIES
         LABELS "momoten;runtime;direct-opencl"
         SKIP_RETURN_CODE 77)
 else()
@@ -194,7 +202,7 @@ if(TARGET momoten_driver)
     add_executable(momoten_proc_registry_test api/proc_registry_test.cpp)
     target_compile_features(momoten_proc_registry_test PRIVATE cxx_std_11)
     target_link_libraries(momoten_proc_registry_test PRIVATE
-        momoten::driver ${CMAKE_DL_LIBS})
+        momoten::driver momoten_vulkan_headers ${CMAKE_DL_LIBS})
     add_test(NAME momoten_proc_registry
         COMMAND momoten_proc_registry_test $<TARGET_FILE:momoten_driver>)
     set_tests_properties(momoten_proc_registry PROPERTIES
@@ -203,7 +211,8 @@ if(TARGET momoten_driver)
 
     add_executable(momoten_profile_test api/profile_test.cpp)
     target_compile_features(momoten_profile_test PRIVATE cxx_std_11)
-    target_link_libraries(momoten_profile_test PRIVATE momoten::driver)
+    target_link_libraries(momoten_profile_test PRIVATE
+        momoten::driver momoten_vulkan_headers)
     add_test(NAME momoten_api_profile COMMAND momoten_profile_test)
     set_tests_properties(momoten_api_profile PROPERTIES
         LABELS "momoten;api;profile"
@@ -211,7 +220,8 @@ if(TARGET momoten_driver)
 
     add_executable(momoten_driver_test runtime/driver_test.cpp)
     target_compile_features(momoten_driver_test PRIVATE cxx_std_11)
-    target_link_libraries(momoten_driver_test PRIVATE momoten::driver)
+    target_link_libraries(momoten_driver_test PRIVATE
+        momoten::driver momoten_vulkan_headers)
     add_dependencies(momoten_driver_test momoten-test-spv)
 
     add_test(NAME momoten_driver_simple
@@ -245,7 +255,7 @@ if(TARGET momoten_amalgamated_driver)
         api/proc_registry_test.cpp)
     target_compile_features(momoten_amalgamated_proc_registry_test PRIVATE cxx_std_11)
     target_link_libraries(momoten_amalgamated_proc_registry_test PRIVATE
-        momoten_amalgamated_driver ${CMAKE_DL_LIBS})
+        momoten_amalgamated_driver momoten_vulkan_headers ${CMAKE_DL_LIBS})
     add_test(NAME momoten_amalgamated_proc_registry
         COMMAND momoten_amalgamated_proc_registry_test
             $<TARGET_FILE:momoten_amalgamated_driver>)
@@ -256,7 +266,7 @@ if(TARGET momoten_amalgamated_driver)
     add_executable(momoten_amalgamated_profile_test api/profile_test.cpp)
     target_compile_features(momoten_amalgamated_profile_test PRIVATE cxx_std_11)
     target_link_libraries(momoten_amalgamated_profile_test PRIVATE
-        momoten_amalgamated_driver)
+        momoten_amalgamated_driver momoten_vulkan_headers)
     add_test(NAME momoten_amalgamated_api_profile
         COMMAND momoten_amalgamated_profile_test)
     set_tests_properties(momoten_amalgamated_api_profile PROPERTIES
@@ -266,7 +276,7 @@ if(TARGET momoten_amalgamated_driver)
     add_executable(momoten_amalgamated_driver_test runtime/driver_test.cpp)
     target_compile_features(momoten_amalgamated_driver_test PRIVATE cxx_std_11)
     target_link_libraries(momoten_amalgamated_driver_test PRIVATE
-        momoten_amalgamated_driver)
+        momoten_amalgamated_driver momoten_vulkan_headers)
     add_dependencies(momoten_amalgamated_driver_test momoten-test-spv)
     add_test(NAME momoten_amalgamated_driver_simple
         COMMAND momoten_amalgamated_driver_test "${momoten_test_spv}"

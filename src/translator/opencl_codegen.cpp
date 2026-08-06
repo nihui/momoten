@@ -12,6 +12,20 @@ namespace momoten {
 void CompilerOpenCL::emit_entry_point_declarations()
 {
     CompilerGLSL::emit_entry_point_declarations();
+    if (workgroup_splittable)
+    {
+        const uint64_t invocation_count = static_cast<uint64_t>(local_size[0]) * local_size[1] * local_size[2];
+        const uint64_t xy_size = static_cast<uint64_t>(local_size[0]) * local_size[1];
+        statement("const uint momo_physical_local_size = (uint)get_local_size(0);");
+        statement("const uint momo_workgroup_chunk_count = (", invocation_count, "u + momo_physical_local_size - 1u) / momo_physical_local_size;");
+        statement("const uint momo_workgroup_chunk = (uint)(get_group_id(0) % (size_t)momo_workgroup_chunk_count);");
+        statement("const uint momo_virtual_local_invocation_index = momo_workgroup_chunk * momo_physical_local_size + (uint)get_local_id(0);");
+        statement("if (momo_virtual_local_invocation_index >= ", invocation_count, "u) return;");
+        statement("const uint3 momo_virtual_local_invocation_id = (uint3)(momo_virtual_local_invocation_index % ", local_size[0], "u, (momo_virtual_local_invocation_index / ", local_size[0], "u) % ", local_size[1], "u, momo_virtual_local_invocation_index / ", xy_size, "u);");
+        statement("const uint3 momo_virtual_workgroup_id = (uint3)((uint)(get_group_id(0) / (size_t)momo_workgroup_chunk_count), (uint)get_group_id(1), (uint)get_group_id(2));");
+        statement("const uint3 momo_virtual_num_workgroups = (uint3)((uint)(get_num_groups(0) / (size_t)momo_workgroup_chunk_count), (uint)get_num_groups(1), (uint)get_num_groups(2));");
+        statement("const uint3 momo_virtual_global_invocation_id = momo_virtual_workgroup_id * (uint3)(", local_size[0], "u, ", local_size[1], "u, ", local_size[2], "u) + momo_virtual_local_invocation_id;");
+    }
     if (uses_workgroup_storage)
         statement("volatile int momo_active = 1;");
 }
@@ -109,9 +123,16 @@ void CompilerOpenCL::emit_header()
     statement("#define memoryBarrierBuffer() mem_fence(CLK_GLOBAL_MEM_FENCE)");
     statement("#define memoryBarrierShared() mem_fence(CLK_LOCAL_MEM_FENCE)");
     statement("#define groupMemoryBarrier() mem_fence(CLK_LOCAL_MEM_FENCE | CLK_GLOBAL_MEM_FENCE)");
+    // Define the core OpenCL call before introducing the zero-argument
+    // GLSL compatibility macro so internal lowering can pass explicit flags
+    // without recursively expanding that macro.
+    statement("inline void momo_workgroup_barrier(uint flags)");
+    begin_scope();
+    statement("barrier(flags);");
+    end_scope();
     // SPIR-V generated from GLSL barrier() carries WorkgroupMemory
     // semantics. A global fence is neither required nor implied here.
-    statement("#define barrier() barrier(CLK_LOCAL_MEM_FENCE)");
+    statement("#define barrier() momo_workgroup_barrier(CLK_LOCAL_MEM_FENCE)");
     statement("");
     statement("inline float momo_half_to_float_scalar(ushort h)");
     begin_scope();
@@ -250,11 +271,22 @@ void CompilerOpenCL::emit_header()
     }
     statement("");
 
-    statement("#define gl_NumWorkGroups ((uint3)((uint)get_num_groups(0), (uint)get_num_groups(1), (uint)get_num_groups(2)))");
-    statement("#define gl_WorkGroupID ((uint3)((uint)get_group_id(0), (uint)get_group_id(1), (uint)get_group_id(2)))");
-    statement("#define gl_LocalInvocationID ((uint3)((uint)get_local_id(0), (uint)get_local_id(1), (uint)get_local_id(2)))");
-    statement("#define gl_GlobalInvocationID ((uint3)((uint)get_global_id(0), (uint)get_global_id(1), (uint)get_global_id(2)))");
-    statement("#define gl_LocalInvocationIndex ((uint)(get_local_id(2) * get_local_size(1) * get_local_size(0) + get_local_id(1) * get_local_size(0) + get_local_id(0)))");
+    if (workgroup_splittable)
+    {
+        statement("#define gl_NumWorkGroups momo_virtual_num_workgroups");
+        statement("#define gl_WorkGroupID momo_virtual_workgroup_id");
+        statement("#define gl_LocalInvocationID momo_virtual_local_invocation_id");
+        statement("#define gl_GlobalInvocationID momo_virtual_global_invocation_id");
+        statement("#define gl_LocalInvocationIndex momo_virtual_local_invocation_index");
+    }
+    else
+    {
+        statement("#define gl_NumWorkGroups ((uint3)((uint)get_num_groups(0), (uint)get_num_groups(1), (uint)get_num_groups(2)))");
+        statement("#define gl_WorkGroupID ((uint3)((uint)get_group_id(0), (uint)get_group_id(1), (uint)get_group_id(2)))");
+        statement("#define gl_LocalInvocationID ((uint3)((uint)get_local_id(0), (uint)get_local_id(1), (uint)get_local_id(2)))");
+        statement("#define gl_GlobalInvocationID ((uint3)((uint)get_global_id(0), (uint)get_global_id(1), (uint)get_global_id(2)))");
+        statement("#define gl_LocalInvocationIndex ((uint)(get_local_id(2) * get_local_size(1) * get_local_size(0) + get_local_id(1) * get_local_size(0) + get_local_id(0)))");
+    }
     statement("#define gl_WorkGroupSize ((uint3)(", local_size[0], "u, ", local_size[1], "u, ", local_size[2], "u))");
     statement("");
 }
@@ -359,7 +391,7 @@ std::string CompilerOpenCL::bitcast_glsl_op(const SPIRType& result_type, const S
 
 std::string CompilerOpenCL::builtin_to_glsl(BuiltIn builtin, StorageClass storage)
 {
-    const uint32_t invocation_count = local_size[0] * local_size[1] * local_size[2];
+    const uint64_t invocation_count = static_cast<uint64_t>(local_size[0]) * local_size[1] * local_size[2];
 
     switch (builtin)
     {
@@ -371,13 +403,37 @@ std::string CompilerOpenCL::builtin_to_glsl(BuiltIn builtin, StorageClass storag
         // constant instead of get_sub_group_size().
         return std::to_string(translation_options.subgroup_size) + "u";
     case BuiltInSubgroupLocalInvocationId:
-        return translation_options.subgroup_mode == SubgroupModeNative ? "((uint)get_sub_group_local_id())" : "0u";
+        if (translation_options.subgroup_mode == SubgroupModeNative)
+            return "((uint)get_sub_group_local_id())";
+        if (translation_options.subgroup_mode == SubgroupModeEmulatedBasic)
+            return "(gl_LocalInvocationIndex % " + std::to_string(translation_options.subgroup_size) + "u)";
+        return "0u";
     case BuiltInSubgroupId:
-        return translation_options.subgroup_mode == SubgroupModeNative ? "((uint)get_sub_group_id())" : "gl_LocalInvocationIndex";
+        if (translation_options.subgroup_mode == SubgroupModeNative)
+        {
+            if (workgroup_splittable)
+                return "(momo_workgroup_chunk * ((uint)get_local_size(0) / " + std::to_string(translation_options.subgroup_size) + "u) + (uint)get_sub_group_id())";
+            return "((uint)get_sub_group_id())";
+        }
+        if (translation_options.subgroup_mode == SubgroupModeEmulatedBasic)
+            return "(gl_LocalInvocationIndex / " + std::to_string(translation_options.subgroup_size) + "u)";
+        return "gl_LocalInvocationIndex";
     case BuiltInNumSubgroups:
     case BuiltInNumEnqueuedSubgroups:
         if (translation_options.subgroup_mode == SubgroupModeNative)
+        {
+            if (workgroup_splittable)
+            {
+                const uint64_t subgroup_count = (invocation_count + translation_options.subgroup_size - 1) / translation_options.subgroup_size;
+                return std::to_string(subgroup_count) + "u";
+            }
             return "((uint)get_num_sub_groups())";
+        }
+        if (translation_options.subgroup_mode == SubgroupModeEmulatedBasic)
+        {
+            const uint64_t subgroup_count = (invocation_count + translation_options.subgroup_size - 1) / translation_options.subgroup_size;
+            return std::to_string(subgroup_count) + "u";
+        }
         return std::to_string(invocation_count) + "u";
     default:
         return CompilerGLSL::builtin_to_glsl(builtin, storage);

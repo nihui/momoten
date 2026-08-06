@@ -1,0 +1,25 @@
+// Copyright 2026 nihui
+// SPDX-License-Identifier: Apache-2.0
+
+#version 450
+#extension GL_KHR_shader_subgroup_basic : require
+
+layout(local_size_x = 8, local_size_y = 16, local_size_z = 3) in;
+
+layout(set = 0, binding = 0, std430) writeonly buffer Output
+{
+    uint values[];
+} output_data;
+
+void main()
+{
+    uint group_index = gl_WorkGroupID.x + gl_NumWorkGroups.x * (gl_WorkGroupID.y + gl_NumWorkGroups.y * gl_WorkGroupID.z);
+    uint invocation_index = group_index * 384u + gl_LocalInvocationIndex;
+    uint base = invocation_index * 6u;
+    output_data.values[base] = gl_LocalInvocationID.x | (gl_LocalInvocationID.y << 8) | (gl_LocalInvocationID.z << 16);
+    output_data.values[base + 1u] = gl_WorkGroupID.x | (gl_WorkGroupID.y << 8) | (gl_WorkGroupID.z << 16);
+    output_data.values[base + 2u] = gl_GlobalInvocationID.x | (gl_GlobalInvocationID.y << 8) | (gl_GlobalInvocationID.z << 16);
+    output_data.values[base + 3u] = gl_NumWorkGroups.x | (gl_NumWorkGroups.y << 8) | (gl_NumWorkGroups.z << 16);
+    output_data.values[base + 4u] = gl_SubgroupSize | (gl_SubgroupInvocationID << 8) | (gl_SubgroupID << 16);
+    output_data.values[base + 5u] = gl_NumSubgroups | (uint(subgroupElect()) << 16);
+}

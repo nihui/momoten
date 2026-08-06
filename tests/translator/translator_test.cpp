@@ -36,8 +36,8 @@ static int require(bool condition, const char* message)
 
 int main(int argc, char** argv)
 {
-    if (argc != 8)
-        return require(false, "expected positive, unsupported, atomic, fp16, int16, subgroup and integer-dot SPIR-V input paths");
+    if (argc != 9)
+        return require(false, "expected positive, unsupported, atomic, fp16, int16, subgroup, integer-dot and workgroup-split SPIR-V input paths");
 
     std::vector<uint32_t> words;
     if (!read_spirv(argv[1], words))
@@ -60,7 +60,8 @@ int main(int argc, char** argv)
 
     if (require(result.abi.local_size[0] == 4 && result.abi.local_size[1] == 1 && result.abi.local_size[2] == 1,
                 "local size reflection failed")
-        || require(result.abi.buffers.size() == 2, "expected two storage buffers") || require(result.abi.buffers[0].binding == 0 && result.abi.buffers[1].binding == 1, "storage buffers are not ordered by binding") || require(result.abi.buffers[0].buffer_arg_index == 0 && result.abi.buffers[0].offset_arg_index == 1 && result.abi.buffers[0].size_arg_index == 2 && result.abi.buffers[1].buffer_arg_index == 3 && result.abi.buffers[1].offset_arg_index == 4 && result.abi.buffers[1].size_arg_index == 5, "storage-buffer pointer/offset/size ABI is incorrect") || require(result.abi.push_constant_arg_index == 6 && result.abi.push_constant_size == 4, "push-constant ABI is incorrect") || require(result.abi.entry_point == "momo_main", "translated kernel name is incorrect") || require(result.source.find("#define round(x) rint(x)") != std::string::npos, "GLSL nearest-even round compatibility macro was not emitted") || require(result.source.find("#define SPIRV_CROSS_UNROLL\n") != std::string::npos && result.source.find("#define SPIRV_CROSS_LOOP\n") != std::string::npos, "portable SPIR-V loop-control hint macros were not emitted") || require(result.source.find("SPIRV_CROSS_UNROLL\n        for") != std::string::npos && result.source.find("SPIRV_CROSS_LOOP\n        for") != std::string::npos, "SPIR-V loop-control hints were not preserved in the fixture") || require(result.source.find("__local float scratch[4]") != std::string::npos, "workgroup storage was not localized into the OpenCL kernel") || require(result.source.find("barrier(CLK_LOCAL_MEM_FENCE)") != std::string::npos, "workgroup barrier was not lowered to OpenCL C 1.0") || require(result.source.find("any((valid) != int4(0))") != std::string::npos && result.source.find("all((valid) != int4(0))") != std::string::npos, "boolean-vector any/all was not canonicalized for OpenCL sign-bit semantics") || require(result.source.find("__kernel __attribute__((reqd_work_group_size(4, 1, 1))) void momo_main") != std::string::npos, "OpenCL kernel declaration is missing") || require(result.source.find("momo_buffer_offset_0") != std::string::npos, "buffer offset argument is missing") || require(result.source.find("momo_buffer_size_0") != std::string::npos, "buffer byte-size argument is missing") || require(result.source.find("(__global uchar *)&(") == std::string::npos, "scalar storage load was wrapped in an unsupported robust-access guard") || require(result.source.find("volatile int momo_active = 1") != std::string::npos && result.source.find("if (momo_active != 0)") != std::string::npos, "workgroup return convergence and storage-store predication are missing") || require(result.source.find("apply_scale") == std::string::npos, "SPIR-V helper function was not inlined into kernel scope") || require(result.source.find("float load_scale(") != std::string::npos && result.source.find("__global const uchar* momo_push_constants") != std::string::npos, "retained helper did not receive the kernel resource ABI") || require(result.source.find("inout ") == std::string::npos, "GLSL inout qualifier leaked into OpenCL source") || require(result.source.find("layout(") == std::string::npos, "Vulkan GLSL layout syntax leaked into OpenCL source"))
+        || require(!result.abi.workgroup_splittable, "workgroup-storage kernel was marked splittable")
+        || require(result.abi.buffers.size() == 2, "expected two storage buffers") || require(result.abi.buffers[0].binding == 0 && result.abi.buffers[1].binding == 1, "storage buffers are not ordered by binding") || require(result.abi.buffers[0].buffer_arg_index == 0 && result.abi.buffers[0].offset_arg_index == 1 && result.abi.buffers[0].size_arg_index == 2 && result.abi.buffers[1].buffer_arg_index == 3 && result.abi.buffers[1].offset_arg_index == 4 && result.abi.buffers[1].size_arg_index == 5, "storage-buffer pointer/offset/size ABI is incorrect") || require(result.abi.push_constant_arg_index == 6 && result.abi.push_constant_size == 4, "push-constant ABI is incorrect") || require(result.abi.entry_point == "momo_main", "translated kernel name is incorrect") || require(result.source.find("#define round(x) rint(x)") != std::string::npos, "GLSL nearest-even round compatibility macro was not emitted") || require(result.source.find("#define SPIRV_CROSS_UNROLL\n") != std::string::npos && result.source.find("#define SPIRV_CROSS_LOOP\n") != std::string::npos, "portable SPIR-V loop-control hint macros were not emitted") || require(result.source.find("SPIRV_CROSS_UNROLL\n        for") != std::string::npos && result.source.find("SPIRV_CROSS_LOOP\n        for") != std::string::npos, "SPIR-V loop-control hints were not preserved in the fixture") || require(result.source.find("__local float scratch[4]") != std::string::npos, "workgroup storage was not localized into the OpenCL kernel") || require(result.source.find("momo_workgroup_barrier(CLK_LOCAL_MEM_FENCE)") != std::string::npos, "workgroup barrier was not lowered to OpenCL C 1.0") || require(result.source.find("any((valid) != int4(0))") != std::string::npos && result.source.find("all((valid) != int4(0))") != std::string::npos, "boolean-vector any/all was not canonicalized for OpenCL sign-bit semantics") || require(result.source.find("__kernel __attribute__((reqd_work_group_size(4, 1, 1))) void momo_main") != std::string::npos, "OpenCL kernel declaration is missing") || require(result.source.find("momo_buffer_offset_0") != std::string::npos, "buffer offset argument is missing") || require(result.source.find("momo_buffer_size_0") != std::string::npos, "buffer byte-size argument is missing") || require(result.source.find("(__global uchar *)&(") == std::string::npos, "scalar storage load was wrapped in an unsupported robust-access guard") || require(result.source.find("volatile int momo_active = 1") != std::string::npos && result.source.find("if (momo_active != 0)") != std::string::npos, "workgroup return convergence and storage-store predication are missing") || require(result.source.find("apply_scale") == std::string::npos, "SPIR-V helper function was not inlined into kernel scope") || require(result.source.find("float load_scale(") != std::string::npos && result.source.find("__global const uchar* momo_push_constants") != std::string::npos, "retained helper did not receive the kernel resource ABI") || require(result.source.find("inout ") == std::string::npos, "GLSL inout qualifier leaked into OpenCL source") || require(result.source.find("layout(") == std::string::npos, "Vulkan GLSL layout syntax leaked into OpenCL source"))
         return 1;
 
     momoten::TranslationResult repeated;
@@ -95,6 +96,11 @@ int main(int argc, char** argv)
     if (require(momoten::translate_spirv_to_opencl_c(
                     atomic.data(), atomic.size(), atomic_options, atomic_result),
                 "supported global int32/uint32 compare-exchange was rejected")
+        || require(atomic_result.abi.workgroup_splittable,
+                   "independent-work-item kernel was not marked splittable")
+        || require(atomic_result.source.find("reqd_work_group_size") == std::string::npos
+                       && atomic_result.source.find("momo_virtual_local_invocation_index") != std::string::npos,
+                   "splittable kernel did not receive the virtual-workgroup ABI")
         || require(atomic_result.abi.required_extensions.size() == 1 && atomic_result.abi.required_extensions[0] == "cl_khr_global_int32_base_atomics",
                    "atomic extension requirement was not reflected")
         || require(atomic_result.source.find(
@@ -167,6 +173,36 @@ int main(int argc, char** argv)
                    "singleton subgroup built-ins or election were not lowered"))
         return 1;
 
+    momoten::TranslationOptions emulated_options;
+    emulated_options.subgroup_mode = momoten::SubgroupModeEmulatedBasic;
+    emulated_options.subgroup_size = 8;
+    momoten::TranslationResult emulated_result;
+    if (require(momoten::translate_spirv_to_opencl_c(
+                    subgroup.data(), subgroup.size(), emulated_options,
+                    emulated_result),
+                "subgroup BASIC SPIR-V was rejected by the emulated path")
+        || require(emulated_result.abi.subgroup_mode == momoten::SubgroupModeEmulatedBasic && emulated_result.abi.subgroup_size == 8,
+                   "emulated subgroup ABI was not reflected")
+        || require(emulated_result.abi.required_extensions.empty(),
+                   "emulated subgroup unexpectedly requires an OpenCL extension")
+        || require(emulated_result.source.find("#pragma OPENCL EXTENSION cl_khr_subgroups") == std::string::npos,
+                   "emulated subgroup enabled a native OpenCL extension")
+        || require(emulated_result.source.find("% 8u") != std::string::npos && emulated_result.source.find("/ 8u") != std::string::npos && emulated_result.source.find("== 0u") != std::string::npos && emulated_result.source.find("barrier(") != std::string::npos && emulated_result.source.find("sub_group_barrier(") == std::string::npos,
+                   "emulated subgroup BASIC operations were not lowered"))
+        return 1;
+
+    momoten::TranslationOptions split_emulated_options;
+    split_emulated_options.subgroup_mode = momoten::SubgroupModeEmulatedBasic;
+    split_emulated_options.subgroup_size = 2;
+    momoten::TranslationResult split_emulated_result;
+    if (require(!momoten::translate_spirv_to_opencl_c(
+                    subgroup.data(), subgroup.size(), split_emulated_options,
+                    split_emulated_result),
+                "a multi-subgroup emulated control barrier was accepted")
+        || require(split_emulated_result.diagnostics.find("one logical subgroup per workgroup") != std::string::npos,
+                   "emulated control-barrier rejection was not diagnostic"))
+        return 1;
+
     momoten::TranslationOptions native_options;
     native_options.subgroup_mode = momoten::SubgroupModeNative;
     native_options.subgroup_size = 8;
@@ -226,6 +262,38 @@ int main(int argc, char** argv)
                    "integer dot-product instructions were not lowered to OpenCL builtins")
         || require(integer_dot_result.source.find("spirv_instruction") == std::string::npos,
                    "SPIRV-Cross GLSL integer-dot polyfill leaked into OpenCL source"))
+        return 1;
+
+    std::vector<uint32_t> workgroup_split;
+    if (!read_spirv(argv[8], workgroup_split))
+        return require(false, "failed to read workgroup-split test SPIR-V");
+    momoten::TranslationOptions split_options;
+    split_options.subgroup_mode = momoten::SubgroupModeEmulatedBasic;
+    split_options.subgroup_size = 8;
+    momoten::TranslationResult split_result;
+    if (require(momoten::translate_spirv_to_opencl_c(
+                    workgroup_split.data(), workgroup_split.size(), split_options,
+                    split_result),
+                "workgroup-split SPIR-V was rejected")
+        || require(split_result.abi.workgroup_splittable,
+                   "independent 3D workgroup was not marked splittable")
+        || require(split_result.source.find("reqd_work_group_size") == std::string::npos
+                       && split_result.source.find("momo_virtual_local_invocation_id") != std::string::npos,
+                   "3D virtual-workgroup source ABI is incomplete"))
+        return 1;
+
+    momoten::TranslationOptions native_split_options;
+    native_split_options.subgroup_mode = momoten::SubgroupModeNative;
+    native_split_options.subgroup_size = 8;
+    momoten::TranslationResult native_split_result;
+    if (require(momoten::translate_spirv_to_opencl_c(
+                    workgroup_split.data(), workgroup_split.size(), native_split_options,
+                    native_split_result),
+                "native-subgroup workgroup-split SPIR-V was rejected")
+        || require(native_split_result.source.find("momo_workgroup_chunk * ((uint)get_local_size(0) / 8u)") != std::string::npos,
+                   "native subgroup ID was not rebased across workgroup chunks")
+        || require(native_split_result.source.find("48u") != std::string::npos,
+                   "logical native subgroup count was not preserved"))
         return 1;
 
     return 0;

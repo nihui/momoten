@@ -26,7 +26,12 @@ enum SubgroupMode
     SubgroupModeSingleton = 0,
     // Map Vulkan subgroup built-ins and BASIC operations to cl_khr_subgroups.
     // The driver selects this only after probing and validating the device.
-    SubgroupModeNative = 1
+    SubgroupModeNative = 1,
+    // Emulate the Vulkan BASIC contract from the linear local invocation ID
+    // and a trusted, fixed hardware execution width. This path requires no
+    // OpenCL subgroup extension and deliberately does not expose vote,
+    // arithmetic, ballot or shuffle operations.
+    SubgroupModeEmulatedBasic = 2
 };
 
 struct SpecializationValue
@@ -57,6 +62,10 @@ struct KernelABI
     SubgroupMode subgroup_mode;
     uint32_t subgroup_size;
     bool integer_dot_product;
+    // True only when the logical Vulkan workgroup has no workgroup storage
+    // or synchronization barrier and may therefore be split across independent
+    // physical OpenCL workgroups by the driver.
+    bool workgroup_splittable;
     int push_constant_arg_index;
     size_t push_constant_size;
 

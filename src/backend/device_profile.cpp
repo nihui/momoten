@@ -100,14 +100,19 @@ bool validate_pipeline_abi(
     size_t invocations = 1;
     for (size_t d = 0; d < 3; d++)
     {
-        if (abi.local_size[d] == 0 || abi.local_size[d] > physical->max_work_item_sizes[d] || invocations > SIZE_MAX / abi.local_size[d])
+        if (abi.local_size[d] == 0 || invocations > SIZE_MAX / abi.local_size[d])
         {
-            diagnostic = "resolved local size exceeds CL_DEVICE_MAX_WORK_ITEM_SIZES";
+            diagnostic = "resolved local size is zero or its invocation count overflows";
+            return false;
+        }
+        if (!abi.workgroup_splittable && abi.local_size[d] > physical->max_work_item_sizes[d])
+        {
+            diagnostic = "non-splittable local size exceeds CL_DEVICE_MAX_WORK_ITEM_SIZES";
             return false;
         }
         invocations *= abi.local_size[d];
     }
-    if (invocations > physical->max_workgroup_size)
+    if (!abi.workgroup_splittable && invocations > physical->max_workgroup_size)
     {
         std::ostringstream message;
         message << "resolved workgroup has " << invocations

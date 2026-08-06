@@ -201,12 +201,17 @@ static void dump_pipeline_artifacts(const std::shared_ptr<ShaderModule>& module,
         << "local_size=" << translated.abi.local_size[0] << ','
         << translated.abi.local_size[1] << ',' << translated.abi.local_size[2] << '\n'
         << "subgroup_mode="
-        << (translated.abi.subgroup_mode == momoten::SubgroupModeNative ? "native" : "singleton") << '\n'
+        << (translated.abi.subgroup_mode == momoten::SubgroupModeNative
+                ? "native"
+            : translated.abi.subgroup_mode == momoten::SubgroupModeEmulatedBasic
+                ? "emulated-basic"
+                : "singleton")
+        << '\n'
         << "subgroup_size=" << translated.abi.subgroup_size << '\n'
         << "integer_dot_product=" << translated.abi.integer_dot_product << '\n'
+        << "workgroup_splittable=" << translated.abi.workgroup_splittable << '\n'
         << "push_constant_arg=" << translated.abi.push_constant_arg_index << '\n'
-        << "push_constant_size=" << translated.abi.push_constant_size << '\n'
-        << "build_options=(none)\n";
+        << "push_constant_size=" << translated.abi.push_constant_size << '\n';
     if (!translated.diagnostics.empty())
         abi << "diagnostics=" << translated.diagnostics << '\n';
     for (size_t i = 0; i < options.specializations.size(); i++)
@@ -296,6 +301,19 @@ VkResult impl_create_compute_pipelines(
         momoten::TranslationResult translated;
         const bool translation_succeeded = momoten::translate_spirv_to_opencl_c(
             module->words.data(), module->words.size(), options, translated);
+        size_t requested_workgroup_size = 1;
+        if (translation_succeeded)
+        {
+            for (size_t d = 0; d < 3; d++)
+            {
+                if (translated.abi.local_size[d] == 0 || requested_workgroup_size > SIZE_MAX / translated.abi.local_size[d])
+                {
+                    fprintf(stderr, "[momoten] translated workgroup invocation count overflows size_t\n");
+                    return VK_ERROR_FEATURE_NOT_PRESENT;
+                }
+                requested_workgroup_size *= translated.abi.local_size[d];
+            }
+        }
         dump_pipeline_artifacts(module, options, translated);
         if (!translation_succeeded)
         {
@@ -380,12 +398,51 @@ VkResult impl_create_compute_pipelines(
             momoten_detail::g_opencl.p_clReleaseProgram(program);
             return VK_ERROR_INITIALIZATION_FAILED;
         }
-        size_t requested_workgroup_size = 1;
-        for (size_t d = 0; d < 3; d++)
-            requested_workgroup_size *= translated.abi.local_size[d];
-        if (requested_workgroup_size > kernel_workgroup_size || kernel_local_memory > device->physical_device->local_memory)
+        size_t opencl_local_size[3] = {
+            translated.abi.local_size[0], translated.abi.local_size[1],
+            translated.abi.local_size[2]};
+        size_t workgroup_chunk_count = 1;
+        if (translated.abi.workgroup_splittable)
         {
-            fprintf(stderr, "[momoten] built kernel exceeds OpenCL workgroup/local-memory limits\n");
+            const size_t physical_limit = std::min(
+                std::min(kernel_workgroup_size,
+                         device->physical_device->max_compute_workgroup_invocations),
+                device->physical_device->max_work_item_sizes[0]);
+            size_t physical_workgroup_size = std::min(requested_workgroup_size, physical_limit);
+            if (requested_workgroup_size > physical_workgroup_size && translated.abi.subgroup_size > 1)
+                physical_workgroup_size -= physical_workgroup_size % translated.abi.subgroup_size;
+            if (physical_workgroup_size == 0)
+            {
+                fprintf(stderr, "[momoten] cannot split logical workgroup=%zu into a physical OpenCL workgroup: kernel maximum=%zu, profile maximum=%zu, x-dimension maximum=%zu, subgroup size=%u\n",
+                        requested_workgroup_size, kernel_workgroup_size,
+                        device->physical_device->max_compute_workgroup_invocations,
+                        device->physical_device->max_work_item_sizes[0],
+                        translated.abi.subgroup_size);
+                momoten_detail::g_opencl.p_clReleaseKernel(kernel);
+                momoten_detail::g_opencl.p_clReleaseProgram(program);
+                return VK_ERROR_FEATURE_NOT_PRESENT;
+            }
+            opencl_local_size[0] = physical_workgroup_size;
+            opencl_local_size[1] = 1;
+            opencl_local_size[2] = 1;
+            workgroup_chunk_count = 1 + (requested_workgroup_size - 1) / physical_workgroup_size;
+            if (momoten_detail::debug_enabled() && workgroup_chunk_count > 1)
+                fprintf(stderr, "[momoten] split logical workgroup=%zu (%u,%u,%u) into %zu OpenCL workgroups of %zu work-items\n",
+                        requested_workgroup_size, translated.abi.local_size[0],
+                        translated.abi.local_size[1], translated.abi.local_size[2],
+                        workgroup_chunk_count, physical_workgroup_size);
+        }
+
+        const bool workgroup_too_large = !translated.abi.workgroup_splittable && requested_workgroup_size > kernel_workgroup_size;
+        if (workgroup_too_large || kernel_local_memory > device->physical_device->local_memory)
+        {
+            fprintf(stderr, "[momoten] built kernel exceeds OpenCL limits: requested workgroup=%zu (%u,%u,%u), kernel maximum=%zu, kernel local memory=%llu, device local memory=%llu, splittable=%u\n",
+                    requested_workgroup_size,
+                    translated.abi.local_size[0], translated.abi.local_size[1],
+                    translated.abi.local_size[2], kernel_workgroup_size,
+                    static_cast<unsigned long long>(kernel_local_memory),
+                    static_cast<unsigned long long>(device->physical_device->local_memory),
+                    translated.abi.workgroup_splittable ? 1u : 0u);
             momoten_detail::g_opencl.p_clReleaseKernel(kernel);
             momoten_detail::g_opencl.p_clReleaseProgram(program);
             return VK_ERROR_FEATURE_NOT_PRESENT;
@@ -393,8 +450,7 @@ VkResult impl_create_compute_pipelines(
         if (translated.abi.subgroup_mode == momoten::SubgroupModeNative)
         {
             const size_t local_size[3] = {
-                translated.abi.local_size[0], translated.abi.local_size[1],
-                translated.abi.local_size[2]};
+                opencl_local_size[0], opencl_local_size[1], opencl_local_size[2]};
             size_t kernel_subgroup_size = 0;
             if (!momoten_detail::g_opencl.p_clGetKernelSubGroupInfoKHR || momoten_detail::g_opencl.p_clGetKernelSubGroupInfoKHR(kernel, device->physical_device->device, CL_KERNEL_MAX_SUB_GROUP_SIZE_FOR_NDRANGE_KHR, sizeof(local_size), local_size, sizeof(kernel_subgroup_size), &kernel_subgroup_size, 0) != CL_SUCCESS || kernel_subgroup_size != translated.abi.subgroup_size)
             {
@@ -411,6 +467,10 @@ VkResult impl_create_compute_pipelines(
         pipeline->program = program;
         pipeline->kernel = kernel;
         pipeline->abi = translated.abi;
+        pipeline->opencl_local_size[0] = opencl_local_size[0];
+        pipeline->opencl_local_size[1] = opencl_local_size[1];
+        pipeline->opencl_local_size[2] = opencl_local_size[2];
+        pipeline->workgroup_chunk_count = workgroup_chunk_count;
         pipeline->source.swap(translated.source);
         pipelines[i] = g_pipelines.make_handle(pipeline);
     }

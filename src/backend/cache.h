@@ -20,7 +20,8 @@ struct ProgramCacheKey
 uint64_t fnv1a64(const void* data, size_t size, uint64_t hash);
 uint64_t fnv1a64_string(const std::string& value, uint64_t hash);
 bool ensure_cache_directory(const std::string& path);
-ProgramCacheKey make_program_cache_key(cl_device_id device, const std::string& source);
+ProgramCacheKey make_program_cache_key(
+    cl_device_id device, const std::string& source);
 bool read_program_binary(const ProgramCacheKey& key, std::vector<unsigned char>& binary);
 void write_program_binary(const ProgramCacheKey& key, const std::vector<unsigned char>& binary);
 

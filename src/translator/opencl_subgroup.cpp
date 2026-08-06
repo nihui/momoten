@@ -21,7 +21,13 @@ bool CompilerOpenCL::emit_basic_subgroup_instruction(
     if (evaluate_constant_u32(ops[2]) != ScopeSubgroup)
         throw std::runtime_error("OpGroupNonUniformElect requires Subgroup scope");
 
-    const char* expression = translation_options.subgroup_mode == SubgroupModeNative ? "sub_group_elect()" : "true";
+    std::string expression;
+    if (translation_options.subgroup_mode == SubgroupModeNative)
+        expression = "sub_group_elect()";
+    else if (translation_options.subgroup_mode == SubgroupModeEmulatedBasic)
+        expression = "((gl_LocalInvocationIndex % " + std::to_string(translation_options.subgroup_size) + "u) == 0u)";
+    else
+        expression = "true";
     emit_op(ops[0], ops[1], expression, true);
     return true;
 }
@@ -68,10 +74,24 @@ bool CompilerOpenCL::emit_subgroup_barrier_instruction(
         return true;
     }
 
+    if (opcode == OpControlBarrier && translation_options.subgroup_mode == SubgroupModeEmulatedBasic)
+    {
+        const uint64_t invocation_count = static_cast<uint64_t>(local_size[0]) * local_size[1] * local_size[2];
+        if (invocation_count > translation_options.subgroup_size)
+            throw std::runtime_error("emulated BASIC subgroup control barrier requires one logical subgroup per workgroup");
+
+        // The workgroup is exactly one logical subgroup (possibly partially
+        // occupied), so an OpenCL workgroup barrier has the same participants.
+        // Use a valid core-OpenCL fence flag even when SPIR-V requests only
+        // execution convergence.
+        statement("momo_workgroup_barrier(", flags.empty() ? "CLK_LOCAL_MEM_FENCE" : flags, ");");
+        return true;
+    }
+
     // With singleton subgroups there is no peer invocation to wait for. A
     // legacy fence is nevertheless needed to retain the requested ordering
-    // for this invocation. OpMemoryBarrier uses the same fence in native mode
-    // because it must not introduce the control convergence of a barrier.
+    // for this invocation. OpMemoryBarrier uses the same fence in native and
+    // emulated modes because it must not introduce control convergence.
     if (!flags.empty())
     {
         if (semantics & MemorySemanticsAcquireReleaseMask || semantics & MemorySemanticsSequentiallyConsistentMask || (!(semantics & MemorySemanticsAcquireMask) && !(semantics & MemorySemanticsReleaseMask)))

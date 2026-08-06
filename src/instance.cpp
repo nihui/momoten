@@ -198,7 +198,7 @@ void impl_get_physical_device_properties(
     limits.maxComputeWorkGroupCount[1] = 65535;
     limits.maxComputeWorkGroupCount[2] = 65535;
     limits.maxComputeWorkGroupInvocations = static_cast<uint32_t>(
-        std::min<size_t>(physical->max_workgroup_size, 0xffffffffu));
+        std::min<size_t>(physical->max_compute_workgroup_invocations, 0xffffffffu));
     for (size_t i = 0; i < 3; i++)
         limits.maxComputeWorkGroupSize[i] = static_cast<uint32_t>(
             std::min<size_t>(physical->max_work_item_sizes[i], 0xffffffffu));

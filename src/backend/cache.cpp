@@ -61,7 +61,8 @@ bool ensure_cache_directory(const std::string& path)
     return stat(path.c_str(), &status) == 0 && (status.st_mode & S_IFDIR) != 0;
 }
 
-ProgramCacheKey make_program_cache_key(cl_device_id device, const std::string& source)
+ProgramCacheKey make_program_cache_key(
+    cl_device_id device, const std::string& source)
 {
     ProgramCacheKey key = {};
     key.first = 1469598103934665603ull;
@@ -77,7 +78,6 @@ ProgramCacheKey make_program_cache_key(cl_device_id device, const std::string& s
     }
     key.first = fnv1a64_string(source, key.first);
     key.second = fnv1a64_string(source, key.second);
-
     const char* directory_value = getenv("MOMOTEN_CACHE");
     if (!directory_value || !directory_value[0])
         directory_value = getenv("NCNN_MOMOTEN_CACHE");

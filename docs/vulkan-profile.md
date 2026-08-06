@@ -20,6 +20,8 @@ when available to distinguish integrated and discrete GPUs; OpenCL 1.0 devices
 remain supported and conservatively report a GPU without unified-memory
 information as discrete.
 
+The OpenCL device-wide maximum workgroup size is not a sufficient Vulkan limit because a translated kernel can have a lower `CL_KERNEL_WORK_GROUP_SIZE` after OpenCL resource allocation. The restricted compute profile therefore reports at most 256 `maxComputeWorkGroupInvocations`, allowing clients such as ncnn to choose a stable local size before pipeline compilation. Pipeline creation always queries the compiled kernel limit and local-memory use. If a shader has neither workgroup storage nor a control or memory barrier, momoten may preserve its logical Vulkan workgroup while splitting it into smaller, independent physical OpenCL workgroups. The generated kernel reconstructs the Vulkan workgroup and invocation built-ins, and the physical chunk size is chosen from the kernel-specific limit, the OpenCL X-dimension limit and the advertised profile limit. Chunk boundaries are subgroup-aligned whenever the subgroup size is greater than one. Shaders with cross-invocation workgroup state remain on the exact one-to-one path and are rejected when the compiled OpenCL kernel cannot support their requested local size.
+
 The translator accepts Vulkan GLCompute SPIR-V and emits conservative OpenCL C
 1.0 source. The supported shader subset includes:
 
@@ -30,11 +32,9 @@ The translator accepts Vulkan GLCompute SPIR-V and emits conservative OpenCL C
 - fixed 32-bit workgroup arrays and workgroup barriers;
 - ncnn-style 32-bit-carrier packed fp16/int8 forms;
 - conditional native half storage and arithmetic with `cl_khr_fp16`;
-- Vulkan 1.1 subgroup BASIC operations and built-ins through an exact
-  size-one subgroup fallback on OpenCL C 1.0;
-- optional native subgroup BASIC lowering when `cl_khr_subgroups`,
-  `cl_khr_subgroup_non_uniform_vote` and the kernel subgroup query are all
-  available and the probed subgroup width satisfies the Vulkan contract;
+- Vulkan 1.1 subgroup BASIC operations and built-ins through an exact size-one subgroup fallback on OpenCL C 1.0;
+- optional BASIC emulation from a trustworthy fixed hardware execution-width query, initially `CL_DEVICE_WARP_SIZE_NV` from `cl_nv_device_attribute_query`; scheduling hints such as the preferred workgroup-size multiple are never treated as subgroup widths;
+- optional native subgroup BASIC lowering when `cl_khr_subgroups`, `cl_khr_subgroup_non_uniform_vote` and the kernel subgroup query are all available and the probed subgroup width satisfies the Vulkan contract;
 - the float32/float16 matrix subset currently used by ncnn Vulkan shaders;
 - optional global 32-bit compare-exchange with
   `cl_khr_global_int32_base_atomics`;
@@ -73,6 +73,8 @@ their SPIR-V instructions are rejected until exact lowerings exist. Images,
 samplers, native 8-bit/integer-16-bit storage, device-scope barriers, general
 atomics, graphics pipelines and general matrix operations are likewise outside
 the current profile and must be rejected rather than silently approximated.
+
+The emulated BASIC profile derives `SubgroupLocalInvocationId`, `SubgroupId`, `NumSubgroups` and election from the linear local invocation ID. A subgroup control barrier is lowered to a core OpenCL workgroup barrier only when the complete workgroup is one logical subgroup. A shader that combines an emulated subgroup control barrier with multiple logical subgroups per workgroup is rejected during translation because OpenCL C 1.0 cannot express that barrier exactly. Subgroup-scoped memory barriers remain per-invocation memory fences.
 
 Image-format queries return `VK_ERROR_FORMAT_NOT_SUPPORTED`. Current ncnn uses
 that result for `GpuInfo::support_image_storage()` and automatically selects

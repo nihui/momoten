@@ -40,7 +40,7 @@ class CompilerOpenCL : public CompilerGLSL
 {
 public:
     CompilerOpenCL(const uint32_t* words, size_t word_count, const TranslationOptions& options,
-                   bool requires_global_int32_atomics);
+                   bool requires_global_int32_atomics, bool contains_synchronization_barrier);
 
     void prepare(KernelABI& abi);
     bool needs_converged_returns() const;
@@ -97,6 +97,7 @@ private:
     bool requires_fp16;
     bool requires_integer_dot_product;
     bool uses_workgroup_storage;
+    bool workgroup_splittable;
     std::vector<ResourceInfo> resources;
     std::map<uint32_t, size_t> resource_indices;
     uint32_t push_constant_variable_id;

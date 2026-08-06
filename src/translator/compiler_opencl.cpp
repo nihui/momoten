@@ -10,7 +10,7 @@
 namespace momoten {
 
 KernelABI::KernelABI()
-    : address_bits(0), subgroup_mode(SubgroupModeSingleton), subgroup_size(1), integer_dot_product(false), push_constant_arg_index(-1), push_constant_size(0)
+    : address_bits(0), subgroup_mode(SubgroupModeSingleton), subgroup_size(1), integer_dot_product(false), workgroup_splittable(false), push_constant_arg_index(-1), push_constant_size(0)
 {
     local_size[0] = 1;
     local_size[1] = 1;
@@ -26,8 +26,8 @@ TranslationOptions::TranslationOptions()
 }
 
 CompilerOpenCL::CompilerOpenCL(const uint32_t* words, size_t word_count, const TranslationOptions& options_,
-                               bool requires_global_int32_atomics_)
-    : CompilerGLSL(words, word_count), translation_options(options_), requires_global_int32_atomics(requires_global_int32_atomics_), requires_fp16(false), requires_integer_dot_product(false), uses_workgroup_storage(false), push_constant_variable_id(0)
+                               bool requires_global_int32_atomics_, bool contains_synchronization_barrier)
+    : CompilerGLSL(words, word_count), translation_options(options_), requires_global_int32_atomics(requires_global_int32_atomics_), requires_fp16(false), requires_integer_dot_product(false), uses_workgroup_storage(false), workgroup_splittable(!contains_synchronization_barrier), push_constant_variable_id(0)
 {
 }
 
@@ -35,12 +35,14 @@ void CompilerOpenCL::prepare(KernelABI& abi)
 {
     if (translation_options.address_bits != 32 && translation_options.address_bits != 64)
         throw std::runtime_error("OpenCL address bits must be 32 or 64");
-    if (translation_options.subgroup_mode != SubgroupModeSingleton && translation_options.subgroup_mode != SubgroupModeNative)
+    if (translation_options.subgroup_mode != SubgroupModeSingleton && translation_options.subgroup_mode != SubgroupModeNative && translation_options.subgroup_mode != SubgroupModeEmulatedBasic)
         throw std::runtime_error("invalid Vulkan subgroup translation mode");
     if (translation_options.subgroup_size == 0 || (translation_options.subgroup_size & (translation_options.subgroup_size - 1)) != 0)
         throw std::runtime_error("Vulkan subgroup size must be a nonzero power of two");
     if (translation_options.subgroup_mode == SubgroupModeSingleton && translation_options.subgroup_size != 1)
         throw std::runtime_error("singleton Vulkan subgroup size must be one");
+    if (translation_options.subgroup_mode == SubgroupModeEmulatedBasic && translation_options.subgroup_size == 1)
+        throw std::runtime_error("emulated BASIC Vulkan subgroup size must be greater than one");
 
     set_entry_point(translation_options.entry_point, ExecutionModelGLCompute);
     validate_capabilities();
@@ -50,6 +52,7 @@ void CompilerOpenCL::prepare(KernelABI& abi)
         override_workgroup_size();
 
     localize_workgroup_variables();
+    workgroup_splittable = workgroup_splittable && !uses_workgroup_storage;
 
     reflect_resources(abi);
     if (requires_global_int32_atomics)
@@ -71,6 +74,7 @@ void CompilerOpenCL::prepare(KernelABI& abi)
     abi.subgroup_mode = translation_options.subgroup_mode;
     abi.subgroup_size = translation_options.subgroup_size;
     abi.integer_dot_product = requires_integer_dot_product;
+    abi.workgroup_splittable = workgroup_splittable;
     abi.local_size[0] = get_execution_mode_argument(ExecutionModeLocalSize, 0);
     abi.local_size[1] = get_execution_mode_argument(ExecutionModeLocalSize, 1);
     abi.local_size[2] = get_execution_mode_argument(ExecutionModeLocalSize, 2);
@@ -243,8 +247,9 @@ bool translate_spirv_to_opencl_c(const uint32_t* words, size_t word_count,
     {
         const std::vector<uint32_t> optimized = specialize_and_optimize_spirv(words, word_count, options);
         const bool requires_global_int32_atomics = spirv_contains_opcode(optimized, OpAtomicCompareExchange);
+        const bool contains_synchronization_barrier = spirv_contains_opcode(optimized, OpControlBarrier) || spirv_contains_opcode(optimized, OpMemoryBarrier);
         CompilerOpenCL compiler(optimized.data(), optimized.size(), options,
-                                requires_global_int32_atomics);
+                                requires_global_int32_atomics, contains_synchronization_barrier);
         compiler.prepare(result.abi);
 
         CompilerGLSL::Options common_options;

@@ -33,7 +33,7 @@ functional extension support.
 
 Shader fixtures are registered through the `momoten_compile_test_shader`
 CMake helper. Direct-OpenCL runtime modes are described by one test-case table,
-which keeps device requirements and dispatch callbacks together.
+which keeps device requirements and dispatch callbacks together. The workgroup-split fixture forces a logical `8x16x3` workgroup through a smaller physical OpenCL workgroup and validates reconstructed 3D invocation, workgroup and emulated BASIC subgroup built-ins.
 
 Run the generic suite with:
 

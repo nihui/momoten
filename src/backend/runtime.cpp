@@ -224,17 +224,40 @@ cl_int replay_dispatch(VkDevice device, const RecordedCommand& command)
         }
     }
 
-    size_t global_size[3];
-    size_t local_size[3];
-    for (size_t d = 0; d < 3; d++)
+    size_t global_size[3] = {0, 0, 0};
+    size_t local_size[3] = {
+        pipeline->opencl_local_size[0],
+        pipeline->opencl_local_size[1],
+        pipeline->opencl_local_size[2]};
+    if (pipeline->abi.workgroup_splittable)
     {
-        local_size[d] = pipeline->abi.local_size[d];
-        if (command.group_count[d] != 0 && local_size[d] > SIZE_MAX / command.group_count[d])
+        if (pipeline->workgroup_chunk_count == 0 || local_size[0] == 0
+            || command.group_count[0] > SIZE_MAX / pipeline->workgroup_chunk_count)
         {
             if (push_buffer) momoten_detail::g_opencl.p_clReleaseMemObject(push_buffer);
             return CL_INVALID_GLOBAL_WORK_SIZE;
         }
-        global_size[d] = local_size[d] * command.group_count[d];
+        const size_t physical_group_count_x = static_cast<size_t>(command.group_count[0]) * pipeline->workgroup_chunk_count;
+        if (physical_group_count_x > SIZE_MAX / local_size[0])
+        {
+            if (push_buffer) momoten_detail::g_opencl.p_clReleaseMemObject(push_buffer);
+            return CL_INVALID_GLOBAL_WORK_SIZE;
+        }
+        global_size[0] = physical_group_count_x * local_size[0];
+        global_size[1] = command.group_count[1];
+        global_size[2] = command.group_count[2];
+    }
+    else
+    {
+        for (size_t d = 0; d < 3; d++)
+        {
+            if (command.group_count[d] != 0 && local_size[d] > SIZE_MAX / command.group_count[d])
+            {
+                if (push_buffer) momoten_detail::g_opencl.p_clReleaseMemObject(push_buffer);
+                return CL_INVALID_GLOBAL_WORK_SIZE;
+            }
+            global_size[d] = local_size[d] * command.group_count[d];
+        }
     }
 
     cl_int ret = momoten_detail::g_opencl.p_clEnqueueNDRangeKernel(device->command_queue, pipeline->kernel, 3, 0,
