@@ -1,0 +1,45 @@
+# Copyright 2026 nihui
+# SPDX-License-Identifier: Apache-2.0
+
+# group path
+#
+# The global file order is the amalgamation order. Translator entries must be
+# contiguous and precede driver entries. CMake also derives the modular target
+# source lists from every .cpp entry in this file. Included .inc files are
+# dependencies; amalgamation expands them at each include site.
+
+translator include/momoten/spv_to_clc.h
+translator src/translator/translator_internal.h
+translator src/translator/spirv_prepare.cpp
+translator src/translator/compiler_opencl.cpp
+translator src/translator/opencl_abi.cpp
+translator src/translator/opencl_prelude.cpp
+translator src/translator/opencl_integer_dot.cpp
+translator src/translator/opencl_subgroup.cpp
+translator src/translator/opencl_matrix.cpp
+translator src/translator/opencl_codegen.cpp
+
+driver src/backend/opencl_loader.h
+driver src/vulkan_internal.h
+driver src/vulkan_procs.inc
+driver src/backend/device_profile.h
+driver src/backend/objects.h
+driver src/backend/cache.h
+driver src/backend/device.h
+driver src/backend/runtime.h
+driver src/backend/program.h
+driver src/abi_guard.h
+driver src/backend/loader.cpp
+driver src/backend/cache.cpp
+driver src/backend/device_profile.cpp
+driver src/backend/device.cpp
+driver src/backend/program.cpp
+driver src/backend/runtime.cpp
+driver src/instance.cpp
+driver src/device.cpp
+driver src/memory.cpp
+driver src/pipeline.cpp
+driver src/command.cpp
+driver src/queue.cpp
+driver src/sync.cpp
+driver src/entrypoints.cpp

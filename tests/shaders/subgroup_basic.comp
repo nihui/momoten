@@ -1,0 +1,25 @@
+// Copyright 2026 nihui
+// SPDX-License-Identifier: Apache-2.0
+
+#version 450
+#extension GL_KHR_shader_subgroup_basic : require
+
+layout(local_size_x = 4, local_size_y = 1, local_size_z = 1) in;
+
+layout(set = 0, binding = 0, std430) writeonly buffer Output
+{
+    uint values[];
+} output_data;
+
+void main()
+{
+    uint value = gl_SubgroupSize;
+    value += gl_SubgroupInvocationID * 10u;
+    value += gl_SubgroupID * 100u;
+    value += gl_NumSubgroups * 1000u;
+    if (subgroupElect())
+        value += 10000u;
+    subgroupMemoryBarrierBuffer();
+    subgroupBarrier();
+    output_data.values[gl_GlobalInvocationID.x] = value;
+}

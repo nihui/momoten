@@ -1,0 +1,38 @@
+// Copyright 2026 nihui
+// SPDX-License-Identifier: Apache-2.0
+
+#version 450
+#extension GL_EXT_shader_16bit_storage : require
+#extension GL_EXT_shader_explicit_arithmetic_types_float16 : require
+#extension GL_EXT_shader_explicit_arithmetic_types_int16 : require
+
+layout(local_size_x = 4, local_size_y = 1, local_size_z = 1) in;
+
+layout(set = 0, binding = 0, std430) readonly buffer HalfBuffer
+{
+    float16_t values[];
+} half_buffer;
+
+layout(set = 0, binding = 1, std430) readonly buffer UshortBuffer
+{
+    uint16_t values[];
+} ushort_buffer;
+
+layout(set = 0, binding = 2, std430) writeonly buffer OutputBuffer
+{
+    float values[];
+} output_buffer;
+
+layout(set = 0, binding = 3, std430) writeonly buffer HalfOutputBuffer
+{
+    float16_t values[];
+} half_output_buffer;
+
+void main()
+{
+    uint i = gl_GlobalInvocationID.x;
+    float value = float(half_buffer.values[i + 1u]) +
+                  float(ushort_buffer.values[i + 1u]);
+    output_buffer.values[i] = value;
+    half_output_buffer.values[i] = float16_t(value);
+}

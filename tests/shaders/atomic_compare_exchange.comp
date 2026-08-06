@@ -1,0 +1,35 @@
+// Copyright 2026 nihui
+// SPDX-License-Identifier: Apache-2.0
+
+#version 450
+
+layout(local_size_x = 1, local_size_y = 1, local_size_z = 1) in;
+
+layout(set = 0, binding = 0, std430) buffer CounterBuffer
+{
+    uint values[];
+} counter_buffer;
+
+layout(set = 0, binding = 1, std430) buffer SignedCounterBuffer
+{
+    int values[];
+} signed_counter_buffer;
+
+layout(set = 0, binding = 2, std430) readonly buffer MatrixBuffer
+{
+    mat4 values[];
+} matrix_buffer;
+
+layout(set = 0, binding = 3, std430) writeonly buffer VectorBuffer
+{
+    vec4 values[];
+} vector_buffer;
+
+void main()
+{
+    atomicCompSwap(counter_buffer.values[0], 0u, 1u);
+    atomicCompSwap(signed_counter_buffer.values[0], 0, 1);
+    mat4 matrix_value = mat4(matrix_buffer.values[0][0], matrix_buffer.values[0][1],
+                             matrix_buffer.values[0][2], matrix_buffer.values[0][3]);
+    vector_buffer.values[0] = vec4(1.0) * matrix_value + matrix_value * vec4(1.0);
+}

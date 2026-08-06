@@ -1,0 +1,42 @@
+// Copyright 2026 nihui
+// SPDX-License-Identifier: Apache-2.0
+
+#version 450
+
+layout(local_size_x = 4, local_size_y = 1, local_size_z = 1) in;
+
+layout(set = 0, binding = 0, std430) buffer PackedBuffer
+{
+    int values[];
+} packed_buffer;
+
+ivec4 unpack_int4x8(int value)
+{
+    return ivec4((value << 24) >> 24,
+                 (value << 16) >> 24,
+                 (value << 8) >> 24,
+                 value >> 24);
+}
+
+int pack_int4x8(ivec4 value)
+{
+    return int((uint(value.x) & 0xffu) |
+               ((uint(value.y) & 0xffu) << 8) |
+               ((uint(value.z) & 0xffu) << 16) |
+               ((uint(value.w) & 0xffu) << 24));
+}
+
+void main()
+{
+    uint lane = gl_GlobalInvocationID.x & 3u;
+    int old_value;
+    int new_value;
+    do
+    {
+        old_value = atomicCompSwap(packed_buffer.values[0], 0, 0);
+        ivec4 unpacked = unpack_int4x8(old_value);
+        unpacked[lane] = int(lane + 1u);
+        new_value = pack_int4x8(unpacked);
+    }
+    while (atomicCompSwap(packed_buffer.values[0], old_value, new_value) != old_value);
+}

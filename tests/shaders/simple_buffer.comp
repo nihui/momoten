@@ -1,0 +1,76 @@
+// Copyright 2026 nihui
+// SPDX-License-Identifier: Apache-2.0
+
+#version 450
+#extension GL_EXT_control_flow_attributes : require
+
+layout(local_size_x = 4, local_size_y = 1, local_size_z = 1) in;
+
+layout(constant_id = 0) const uint element_count = 16;
+
+layout(set = 0, binding = 0, std430) readonly buffer InputBuffer
+{
+    float values[];
+} input_buffer;
+
+layout(set = 0, binding = 1, std430) writeonly buffer OutputBuffer
+{
+    float values[];
+} output_buffer;
+
+layout(push_constant) uniform Parameters
+{
+    float scale;
+} params;
+
+shared float scratch[4];
+
+float apply_scale(inout float value, float scale)
+{
+    value *= scale;
+    // Keep both SPIR-V loop-control hints live without changing the result.
+    [[unroll]] for (uint j = 0u; j < 2u; j++)
+        value += j == 1u ? scale : 0.0;
+    [[dont_unroll]] for (uint j = 0u; j < 2u; j++)
+        value -= j == 1u ? scale : 0.0;
+    mat4 identity = mat4(vec4(1.0, 0.0, 0.0, 0.0),
+                         vec4(0.0, 1.0, 0.0, 0.0),
+                         vec4(0.0, 0.0, 1.0, 0.0),
+                         vec4(0.0, 0.0, 0.0, 1.0));
+    vec4 row_value = vec4(value, 0.0, 0.0, 0.0) * identity;
+    value = (identity * row_value).x;
+    // Exercise the Vulkan/GLSL nearest-even round semantic in both the direct
+    // OpenCL and Vulkan-wrapper runtime tests. With the 2.5 scale below this
+    // deliberately covers positive and negative halfway inputs.
+    return round(value);
+}
+
+float load_scale(uint index)
+{
+    // Keep an early-return helper that directly references a Vulkan resource.
+    // Barrier-bearing modules are intentionally not passed through the global
+    // MergeReturn optimization, so this exercises retained-helper ABI wiring.
+    if (index == ~0u)
+        return 0.0;
+    return params.scale;
+}
+
+void main()
+{
+    uint i = gl_GlobalInvocationID.x;
+    if (i < element_count)
+    {
+        float value = input_buffer.values[i];
+        uint lane = gl_LocalInvocationID.x;
+        bvec4 valid;
+        valid.x = i < element_count;
+        valid.y = false;
+        valid.z = false;
+        valid.w = false;
+        if (!any(valid) || all(valid))
+            value = 1000.0;
+        scratch[lane] = apply_scale(value, load_scale(i));
+        barrier();
+        output_buffer.values[i] = scratch[3u - lane];
+    }
+}

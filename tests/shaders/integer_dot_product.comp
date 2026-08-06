@@ -1,0 +1,57 @@
+// Copyright 2026 nihui
+// SPDX-License-Identifier: Apache-2.0
+
+#version 450
+#extension GL_EXT_integer_dot_product : require
+
+layout(local_size_x = 1, local_size_y = 1, local_size_z = 1) in;
+
+layout(std430, set = 0, binding = 0) readonly buffer InputBuffer
+{
+    uint values[];
+} input_data;
+
+layout(std430, set = 0, binding = 1) writeonly buffer OutputBuffer
+{
+    uint values[];
+} output_data;
+
+void main()
+{
+    int signed_a = int(input_data.values[0]);
+    int signed_b = int(input_data.values[1]);
+    uint unsigned_a = input_data.values[2];
+    uint unsigned_b = input_data.values[3];
+    output_data.values[0] = uint(dotPacked4x8EXT(signed_a, signed_b));
+    output_data.values[1] = dotPacked4x8EXT(unsigned_a, unsigned_b);
+    output_data.values[2] = uint(dotPacked4x8EXT(signed_a, unsigned_b));
+    output_data.values[3] = uint(dotPacked4x8EXT(unsigned_a, signed_b));
+    output_data.values[4] = uint(dotPacked4x8AccSatEXT(
+        signed_a, signed_b, -2147483600));
+    output_data.values[5] = dotPacked4x8AccSatEXT(
+        unsigned_a, unsigned_b, 4294967245u);
+    output_data.values[6] = uint(dotPacked4x8AccSatEXT(
+        signed_a, unsigned_b, 2147483597));
+
+    ivec2 signed_vector_a = ivec2(int(input_data.values[4]), int(input_data.values[5]));
+    ivec2 signed_vector_b = ivec2(int(input_data.values[6]), int(input_data.values[7]));
+    uvec2 unsigned_vector_a = uvec2(input_data.values[8]);
+    uvec2 unsigned_vector_b = uvec2(input_data.values[8], input_data.values[6]);
+    output_data.values[7] = uint(dotEXT(signed_vector_a, signed_vector_b));
+    output_data.values[8] = dotEXT(unsigned_vector_a, unsigned_vector_b);
+    output_data.values[9] = uint(dotEXT(
+        ivec2(int(input_data.values[9]), int(input_data.values[5])),
+        unsigned_vector_b));
+
+    output_data.values[10] = uint(dotAccSatEXT(
+        ivec2(int(input_data.values[5])),
+        ivec2(int(input_data.values[5]), int(input_data.values[10])), 123));
+    output_data.values[11] = uint(dotAccSatEXT(
+        ivec2(int(input_data.values[9]), int(input_data.values[11])),
+        ivec2(int(input_data.values[5])), 0));
+    output_data.values[12] = dotAccSatEXT(
+        unsigned_vector_a, unsigned_vector_b, 0u);
+    output_data.values[13] = uint(dotAccSatEXT(
+        ivec2(int(input_data.values[10]), int(input_data.values[5])),
+        unsigned_vector_a, 321));
+}
