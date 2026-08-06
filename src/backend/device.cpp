@@ -10,9 +10,6 @@
 // OpenCL 1.1 query used opportunistically without raising the OpenCL 1.0
 // compile target. OpenCL 1.0 devices reject it and take the conservative path.
 static const cl_device_info MOMOTEN_CL_DEVICE_HOST_UNIFIED_MEMORY = 0x1035;
-// cl_nv_device_attribute_query. Keep the numeric value local so momoten can
-// build against OpenCL 1.0 header sets that predate the NVIDIA declaration.
-static const cl_device_info MOMOTEN_CL_DEVICE_WARP_SIZE_NV = 0x4003;
 
 // OpenCL exposes a device-wide maximum, but CL_KERNEL_WORK_GROUP_SIZE may be
 // lower after translating a register-heavy SPIR-V kernel. Vulkan applications
@@ -44,20 +41,18 @@ static bool extension_string_contains(const std::string& extensions, const char*
     return padded.find(required) != std::string::npos;
 }
 
-static uint32_t probe_native_subgroup_size(cl_device_id device,
+static uint32_t probe_opencl_subgroup_size(cl_device_id device,
                                            const std::string& extensions,
                                            size_t max_workgroup_size,
                                            size_t max_work_item_size_x)
 {
-    if (!extension_string_contains(extensions, "cl_khr_subgroups") || !extension_string_contains(extensions, "cl_khr_subgroup_non_uniform_vote") || !momoten_detail::g_opencl.p_clGetKernelSubGroupInfoKHR)
+    if (!extension_string_contains(extensions, "cl_khr_subgroups") || !momoten_detail::g_opencl.p_clGetKernelSubGroupInfoKHR)
         return 0;
 
     static const char source[] = "#pragma OPENCL EXTENSION cl_khr_subgroups : enable\n"
-                                 "#pragma OPENCL EXTENSION cl_khr_subgroup_non_uniform_vote : enable\n"
                                  "__kernel void momo_subgroup_probe(__global uint* output)\n"
                                  "{\n"
-                                 "    if (sub_group_elect())\n"
-                                 "        output[get_sub_group_id()] = get_sub_group_size();\n"
+                                 "    output[get_global_id(0)] = get_sub_group_size();\n"
                                  "}\n";
 
     cl_int ret = CL_SUCCESS;
@@ -95,32 +90,61 @@ static uint32_t probe_native_subgroup_size(cl_device_id device,
     momoten_detail::g_opencl.p_clReleaseContext(context);
 
     // Vulkan subgroupSize is restricted to a power of two no greater than
-    // 128. A failed or unusual probe is kept on the exact singleton path.
+    // 128. A failed or unusual query lets the caller use the emulated fallback.
     if (ret != CL_SUCCESS || subgroup_size == 0 || subgroup_size > 128 || (subgroup_size & (subgroup_size - 1)) != 0)
         return 0;
     return static_cast<uint32_t>(subgroup_size);
 }
 
 static uint32_t probe_emulated_basic_subgroup_size(
-    cl_device_id device, const std::string& extensions,
-    size_t max_workgroup_size)
+    cl_device_id device, size_t max_workgroup_size)
 {
-    // A preferred workgroup-size multiple is only a scheduling hint and is
-    // not a subgroup contract. Use only a vendor query that explicitly
-    // reports the hardware execution width.
-    if (!extension_string_contains(extensions, "cl_nv_device_attribute_query"))
+    // This value selects a logical subgroup implemented by momoten; it is not
+    // reported as a native OpenCL subgroup contract. The kernel scheduling
+    // hint gives the emulation a portable, performance-oriented width without
+    // relying on vendor names or device-specific queries.
+    static const char source[] = "__kernel void momo_workgroup_probe(void) {}\n";
+
+    cl_int ret = CL_SUCCESS;
+    cl_context context = momoten_detail::g_opencl.p_clCreateContext(
+        0, 1, &device, 0, 0, &ret);
+    if (!context || ret != CL_SUCCESS)
         return 0;
 
-    cl_uint warp_size = 0;
-    if (momoten_detail::g_opencl.p_clGetDeviceInfo(
-            device, MOMOTEN_CL_DEVICE_WARP_SIZE_NV, sizeof(warp_size),
-            &warp_size, 0)
-            != CL_SUCCESS
-        || warp_size <= 1 || warp_size > 128
-        || (warp_size & (warp_size - 1)) != 0
-        || warp_size > max_workgroup_size)
+    const char* source_pointer = source;
+    const size_t source_size = sizeof(source) - 1;
+    cl_program program = momoten_detail::g_opencl.p_clCreateProgramWithSource(
+        context, 1, &source_pointer, &source_size, &ret);
+    if (!program || ret != CL_SUCCESS)
+    {
+        momoten_detail::g_opencl.p_clReleaseContext(context);
         return 0;
-    return warp_size;
+    }
+
+    ret = momoten_detail::g_opencl.p_clBuildProgram(program, 1, &device, 0, 0, 0);
+    cl_kernel kernel = ret == CL_SUCCESS ? momoten_detail::g_opencl.p_clCreateKernel(program, "momo_workgroup_probe", &ret) : 0;
+
+    size_t preferred_multiple = 0;
+    if (kernel && ret == CL_SUCCESS)
+    {
+        ret = momoten_detail::g_opencl.p_clGetKernelWorkGroupInfo(
+            kernel, device, CL_KERNEL_PREFERRED_WORK_GROUP_SIZE_MULTIPLE,
+            sizeof(preferred_multiple), &preferred_multiple, 0);
+    }
+
+    if (kernel)
+        momoten_detail::g_opencl.p_clReleaseKernel(kernel);
+    momoten_detail::g_opencl.p_clReleaseProgram(program);
+    momoten_detail::g_opencl.p_clReleaseContext(context);
+
+    const size_t candidate = std::min<size_t>(preferred_multiple, std::min<size_t>(max_workgroup_size, 128));
+    if (ret != CL_SUCCESS || candidate <= 1)
+        return 0;
+
+    uint32_t logical_size = 1;
+    while (logical_size <= candidate / 2)
+        logical_size <<= 1;
+    return logical_size;
 }
 
 static bool probe_integer_dot_product(
@@ -415,20 +439,28 @@ std::vector<VkPhysicalDevice> discover_opencl_devices(VkInstance instance)
                 physical->max_work_item_sizes[i] = work_item_sizes[i];
             physical->shader_profile = momoten_detail::ShaderDeviceProfile();
             physical->shader_profile.fp16 = extension_string_contains(physical->extensions, "cl_khr_fp16");
-            const uint32_t native_subgroup_size = probe_native_subgroup_size(
+            const uint32_t opencl_subgroup_size = probe_opencl_subgroup_size(
                 devices[d], physical->extensions, physical->max_workgroup_size,
                 physical->max_work_item_sizes[0]);
-            if (native_subgroup_size != 0)
+            const bool native_basic =
+                opencl_subgroup_size != 0
+                && extension_string_contains(
+                    physical->extensions,
+                    "cl_khr_subgroup_non_uniform_vote");
+            if (native_basic)
             {
                 physical->shader_profile.subgroup_mode = momoten::SubgroupModeNative;
-                physical->shader_profile.subgroup_size = native_subgroup_size;
+                physical->shader_profile.subgroup_size = opencl_subgroup_size;
             }
             else
             {
-                const uint32_t emulated_subgroup_size =
-                    probe_emulated_basic_subgroup_size(
-                        devices[d], physical->extensions,
-                        physical->max_workgroup_size);
+                uint32_t emulated_subgroup_size = opencl_subgroup_size;
+                if (emulated_subgroup_size == 0)
+                {
+                    emulated_subgroup_size =
+                        probe_emulated_basic_subgroup_size(
+                            devices[d], physical->max_workgroup_size);
+                }
                 if (emulated_subgroup_size != 0)
                 {
                     physical->shader_profile.subgroup_mode =
