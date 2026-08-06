@@ -192,6 +192,14 @@ static int run_fp16_kernel(cl_context context, cl_command_queue queue, cl_kernel
     return status;
 }
 
+static int compile_only_int16_kernel(cl_context, cl_command_queue, cl_kernel,
+                                     const momoten::TranslationResult&, cl_uint)
+{
+    // Reaching the runner means the translated source built successfully and
+    // the OpenCL implementation accepted the generated kernel entry point.
+    return 0;
+}
+
 static int run_atomic_packed_kernel(cl_context context, cl_command_queue queue, cl_kernel kernel,
                                     const momoten::TranslationResult& translated,
                                     cl_uint address_bits)
@@ -655,6 +663,7 @@ enum OpenCLTestFeature
 {
     OpenCLTestBaseline,
     OpenCLTestFp16,
+    OpenCLTestInt16,
     OpenCLTestAtomicPacked,
     OpenCLTestScalar16Bit,
     OpenCLTestSubgroupBasic,
@@ -674,6 +683,7 @@ struct OpenCLTestCase
 static const OpenCLTestCase opencl_test_cases[] = {
     {0, OpenCLTestBaseline, false, false, 0},
     {"fp16", OpenCLTestFp16, true, false, run_fp16_kernel},
+    {"int16", OpenCLTestInt16, false, false, compile_only_int16_kernel},
     {"atomic-packed", OpenCLTestAtomicPacked, false, false,
      run_atomic_packed_kernel},
     {"scalar-16bit", OpenCLTestScalar16Bit, true, false,
@@ -705,7 +715,7 @@ int main(int argc, char** argv)
     const OpenCLTestCase* test_case = find_opencl_test_case(argc, argv);
     if (!test_case)
     {
-        fprintf(stderr, "opencl_test: expected SPIR-V input path and optional fp16, atomic-packed, scalar-16bit, subgroup-basic, integer-dot-product, or workgroup-split mode\n");
+        fprintf(stderr, "opencl_test: expected SPIR-V input path and optional fp16, int16, atomic-packed, scalar-16bit, subgroup-basic, integer-dot-product, or workgroup-split mode\n");
         return 1;
     }
 

@@ -23,5 +23,7 @@ void main()
     u16vec4 value = input_buffer.values[i];
     uint packed = packUint2x16(value.xy);
     u16vec2 unpacked = unpackUint2x16(packed);
-    output_buffer.values[i] = u16vec4(unpacked, value.zw) + u16vec4(uint16_t(1));
+    i16vec4 signed_value = i16vec4(value) + i16vec4(int16_t(0), int16_t(1), int16_t(2), int16_t(-3));
+    u16vec4 unsigned_bias = u16vec4(uint16_t(2), uint16_t(3), uint16_t(5), uint16_t(7));
+    output_buffer.values[i] = u16vec4(unpacked, value.zw) + u16vec4(signed_value) + unsigned_bias;
 }

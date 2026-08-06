@@ -47,6 +47,12 @@ void CompilerOpenCL::emit_header()
     backend.support_precise_qualifier = false;
     backend.unsized_array_supported = true;
     backend.float_literal_suffix = true;
+    // GLSL accepts the 16-bit integer literal suffixes "s" and "us", but
+    // OpenCL C does not. Leaving the suffixes empty makes the generic
+    // constant emitter use explicit short(...) and ushort(...) conversions,
+    // which are valid in the OpenCL C 1.0 baseline.
+    backend.int16_t_literal_suffix = "";
+    backend.uint16_t_literal_suffix = "";
     backend.boolean_mix_function = "select";
 
     statement("/* Generated from Vulkan Shader SPIR-V by momoten. */");

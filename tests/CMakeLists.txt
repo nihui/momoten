@@ -165,6 +165,8 @@ if(TARGET momoten_test_opencl)
         COMMAND momoten_opencl_test "${momoten_test_spv}")
     add_test(NAME momoten_opencl_fp16
         COMMAND momoten_opencl_test "${momoten_fp16_test_spv}" fp16)
+    add_test(NAME momoten_opencl_int16
+        COMMAND momoten_opencl_test "${momoten_int16_test_spv}" int16)
     add_test(NAME momoten_opencl_atomic_packed
         COMMAND momoten_opencl_test "${momoten_atomic_packed_test_spv}" atomic-packed)
     add_test(NAME momoten_opencl_scalar_16bit
@@ -178,6 +180,7 @@ if(TARGET momoten_test_opencl)
         COMMAND momoten_opencl_test "${momoten_workgroup_split_test_spv}"
             workgroup-split)
     set_tests_properties(momoten_opencl_simple momoten_opencl_fp16
+        momoten_opencl_int16
         momoten_opencl_atomic_packed momoten_opencl_scalar_16bit
         momoten_opencl_subgroup_basic momoten_opencl_integer_dot_product
         momoten_opencl_workgroup_split PROPERTIES

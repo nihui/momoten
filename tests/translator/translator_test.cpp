@@ -152,7 +152,13 @@ int main(int argc, char** argv)
         || require(int16_result.source.find("__global ushort4 *") != std::string::npos,
                    "uint16 storage buffer was not lowered to ushort4")
         || require(int16_result.source.find("as_uint(") != std::string::npos && int16_result.source.find("as_ushort2(") != std::string::npos,
-                   "equal-size scalar/vector bitcasts were not lowered with OpenCL as_type builtins"))
+                   "equal-size scalar/vector bitcasts were not lowered with OpenCL as_type builtins")
+        || require(int16_result.source.find("short(0)") != std::string::npos && int16_result.source.find("short(-3)") != std::string::npos,
+                   "signed 16-bit constants were not emitted with OpenCL conversions")
+        || require(int16_result.source.find("ushort(2)") != std::string::npos && int16_result.source.find("ushort(7)") != std::string::npos,
+                   "unsigned 16-bit constants were not emitted with OpenCL conversions")
+        || require(int16_result.source.find("0s") == std::string::npos && int16_result.source.find("2us") == std::string::npos,
+                   "GLSL-only 16-bit integer literal suffix leaked into OpenCL source"))
         return 1;
 
     std::vector<uint32_t> subgroup;
