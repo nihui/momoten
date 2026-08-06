@@ -22,10 +22,7 @@ The canonical implementation is split by dependency direction:
    reflects Vulkan resources into kernel arguments. Generic OpenCL lowering
    remains in `opencl_codegen.cpp`; integer dot product, subgroup and matrix
    lowerings have independent implementation units.
-4. `src/backend` owns vendor discovery, the explicit `OpenCLApi` function
-   table, device discovery, program cache and command replay. The neutral
-   `ShaderDeviceProfile` in `device_profile.h` is the single internal source
-   for Vulkan feature/property reporting and translator target options.
+4. `src/backend` owns vendor discovery, the explicit `OpenCLApi` function table, device discovery, program cache, memory coherence and command replay. `memory_state.cpp` is the device-memory-coordinate range state machine; `memory_sync.cpp` maps those states to OpenCL transfers; `replay.cpp` executes recorded commands and owns the event chain; and `runtime.cpp` only manages pending submissions and fence state. The neutral `ShaderDeviceProfile` in `device_profile.h` is the single internal source for capability probing, Vulkan feature/property reporting and translator target options.
 
 The resulting dependency direction is:
 
@@ -47,11 +44,7 @@ into `momoten_driver`. Shared translator declarations live in
 `src/translator/translator_internal.h`. `src/vulkan_internal.h` contains only
 the lightweight handle utilities, common command-buffer state enum, and
 generated `impl_*` declarations. Backend object definitions live in
-`src/backend/objects.h`; device discovery in `device.h`; command replay and
-submissions in `runtime.h`; program-cache keys and disk operations in
-`cache.h`; and OpenCL program creation in `program.h`. All of these headers are
-private. `vulkan_internal.h` never includes a backend header, so the include
-graph does not rely on an include-guard cycle.
+`src/backend/objects.h`, while recorded command data lives in `command_stream.h`. Device discovery lives in `device.h`; memory coherence in `memory_sync.h`; command replay in `replay.h`; pending submissions in `runtime.h`; program-cache keys and disk operations in `cache.h`; OpenCL program creation in `program.h`; and translation/build orchestration in `pipeline_build.h`. All of these headers are private. Handle tables and destructors are defined by their owning frontend modules rather than a generic objects implementation file. `vulkan_internal.h` never includes a backend header, so the include graph does not rely on an include-guard cycle.
 
 `src/source_manifest.txt` is the canonical ordered list of translator and
 driver parts. CMake derives modular target sources from its `.cpp` entries and

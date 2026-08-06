@@ -10,7 +10,7 @@
 namespace momoten {
 
 KernelABI::KernelABI()
-    : address_bits(0), subgroup_mode(SubgroupModeSingleton), subgroup_size(1), integer_dot_product(false), workgroup_splittable(false), push_constant_arg_index(-1), push_constant_size(0)
+    : address_bits(0), subgroup_mode(SubgroupModeSingleton), subgroup_size(1), fp64(false), integer_dot_product(false), workgroup_splittable(false), push_constant_arg_index(-1), push_constant_size(0)
 {
     local_size[0] = 1;
     local_size[1] = 1;
@@ -27,7 +27,7 @@ TranslationOptions::TranslationOptions()
 
 CompilerOpenCL::CompilerOpenCL(const uint32_t* words, size_t word_count, const TranslationOptions& options_,
                                bool requires_global_int32_atomics_, bool contains_synchronization_barrier)
-    : CompilerGLSL(words, word_count), translation_options(options_), requires_global_int32_atomics(requires_global_int32_atomics_), requires_fp16(false), requires_integer_dot_product(false), uses_workgroup_storage(false), workgroup_splittable(!contains_synchronization_barrier), push_constant_variable_id(0)
+    : CompilerGLSL(words, word_count), translation_options(options_), requires_global_int32_atomics(requires_global_int32_atomics_), requires_fp16(false), requires_fp64(false), requires_integer_dot_product(false), uses_workgroup_storage(false), workgroup_splittable(!contains_synchronization_barrier), push_constant_variable_id(0)
 {
 }
 
@@ -59,6 +59,8 @@ void CompilerOpenCL::prepare(KernelABI& abi)
         abi.required_extensions.push_back("cl_khr_global_int32_base_atomics");
     if (requires_fp16)
         abi.required_extensions.push_back("cl_khr_fp16");
+    if (requires_fp64)
+        abi.required_extensions.push_back("cl_khr_fp64");
     if (requires_integer_dot_product)
         abi.required_extensions.push_back("cl_khr_integer_dot_product");
     if (translation_options.subgroup_mode == SubgroupModeNative)
@@ -71,6 +73,7 @@ void CompilerOpenCL::prepare(KernelABI& abi)
 
     abi.entry_point = "momo_main";
     abi.address_bits = translation_options.address_bits;
+    abi.fp64 = requires_fp64;
     abi.subgroup_mode = translation_options.subgroup_mode;
     abi.subgroup_size = translation_options.subgroup_size;
     abi.integer_dot_product = requires_integer_dot_product;
@@ -127,6 +130,11 @@ void CompilerOpenCL::validate_capabilities()
         if (capability == CapabilityFloat16)
         {
             requires_fp16 = true;
+            continue;
+        }
+        if (capability == CapabilityFloat64)
+        {
+            requires_fp64 = true;
             continue;
         }
 

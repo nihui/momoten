@@ -5,6 +5,7 @@
 #define MOMOTEN_BACKEND_DEVICE_PROFILE_H
 
 #include "../vulkan_internal.h"
+#include "opencl_loader.h"
 #include "momoten/spv_to_clc.h"
 
 #include <cstdint>
@@ -38,6 +39,7 @@ struct IntegerDotProductProfile
 struct ShaderDeviceProfile
 {
     bool fp16;
+    bool fp64;
     momoten::SubgroupMode subgroup_mode;
     uint32_t subgroup_size;
     uint32_t subgroup_operations;
@@ -48,15 +50,21 @@ struct ShaderDeviceProfile
 
 struct EnabledShaderProfile
 {
+    bool fp64;
     bool integer_dot_product;
 
     EnabledShaderProfile();
 };
 
+ShaderDeviceProfile probe_shader_device_profile(
+    cl_device_id device, const std::string& extensions,
+    size_t max_workgroup_size, size_t max_work_item_size_x);
+
 void configure_translation_options(
     VkDevice device, momoten::TranslationOptions& options);
 bool validate_pipeline_abi(
     VkDevice device, const momoten::KernelABI& abi, std::string& diagnostic);
+std::string opencl_build_options(const momoten::KernelABI& abi);
 
 } // namespace momoten_detail
 

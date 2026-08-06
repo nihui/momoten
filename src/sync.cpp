@@ -8,6 +8,14 @@
 #include <chrono>
 #include <thread>
 
+momoten_detail::HandleTable<VkFence, Fence> g_fences;
+
+Fence::~Fence()
+{
+    if (event)
+        momoten_detail::g_opencl.p_clReleaseEvent(event);
+}
+
 namespace momoten_detail {
 
 VkResult impl_create_fence(

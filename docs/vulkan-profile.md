@@ -32,8 +32,9 @@ The translator accepts Vulkan GLCompute SPIR-V and emits conservative OpenCL C
 - fixed 32-bit workgroup arrays and workgroup barriers;
 - ncnn-style 32-bit-carrier packed fp16/int8 forms;
 - conditional native half storage and arithmetic with `cl_khr_fp16`;
+- conditional double scalar/vector storage and arithmetic with `cl_khr_fp64`;
 - Vulkan 1.1 subgroup BASIC operations and built-ins through an exact size-one subgroup fallback on OpenCL C 1.0;
-- optional BASIC emulation from a trustworthy fixed hardware execution-width query, initially `CL_DEVICE_WARP_SIZE_NV` from `cl_nv_device_attribute_query`; scheduling hints such as the preferred workgroup-size multiple are never treated as subgroup widths;
+- optional BASIC emulation using either the width returned by the standard `cl_khr_subgroups` kernel query or a logical power-of-two width derived from `CL_KERNEL_PREFERRED_WORK_GROUP_SIZE_MULTIPLE`; the latter is explicitly an emulation choice rather than a native subgroup contract;
 - optional native subgroup BASIC lowering when `cl_khr_subgroups`, `cl_khr_subgroup_non_uniform_vote` and the kernel subgroup query are all available and the probed subgroup width satisfies the Vulkan contract;
 - the float32/float16 matrix subset currently used by ncnn Vulkan shaders;
 - optional global 32-bit compare-exchange with
@@ -50,6 +51,8 @@ are rejected explicitly instead of being ignored.
 When `cl_khr_fp16` is present, the implementation reports only the relevant
 `storageBuffer16BitAccess` and `shaderFloat16` Vulkan features. It does not
 report uniform, push-constant or I/O 16-bit storage.
+
+When `cl_khr_fp64` is present and `CL_DEVICE_DOUBLE_FP_CONFIG` is nonzero, the implementation reports the core `shaderFloat64` feature. The translator accepts SPIR-V `Float64` scalar, vec2, vec3 and vec4 arithmetic in its restricted compute profile; matrix operations, fp64 atomics and unrelated 64-bit integer capabilities remain outside the profile. Double storage-buffer values are read and written through layout-identical `ulong` bit patterns with `as_double` and `as_ulong`, avoiding typed global-pointer aliasing while preserving the Vulkan buffer representation. OpenCL C 3.0 implementations with `__opencl_c_fp64` use the core feature directly, while older language modes retain a guarded `cl_khr_fp64` pragma. fp64 programs currently use the standard `-cl-opt-disable` build option because some online compilers are unstable when optimizing long double-precision arithmetic chains; this is a conservative functional baseline rather than an acceleration claim.
 
 `VK_KHR_shader_integer_dot_product` is exposed only after the selected OpenCL
 device reports packed 4x8-bit support and successfully compiles every required

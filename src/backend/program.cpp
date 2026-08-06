@@ -72,10 +72,14 @@ static cl_program install_memory_cached_program(
 }
 
 cl_program create_and_build_program(
-    VkDevice device, const std::string& source, cl_int& result)
+    VkDevice device, const std::string& source,
+    const std::string& build_options, cl_int& result)
 {
+    std::string cache_material = source;
+    cache_material.push_back('\0');
+    cache_material += build_options;
     const ProgramCacheKey key = make_program_cache_key(
-        device->physical_device->device, source);
+        device->physical_device->device, cache_material);
     cl_program memory_cached = find_memory_cached_program(device, key);
     if (memory_cached)
     {
@@ -97,7 +101,8 @@ cl_program create_and_build_program(
         if (program && result == CL_SUCCESS && binary_status == CL_SUCCESS)
         {
             result = g_opencl.p_clBuildProgram(
-                program, 1, &device->physical_device->device, 0, 0, 0);
+                program, 1, &device->physical_device->device,
+                build_options.empty() ? 0 : build_options.c_str(), 0, 0);
             if (result == CL_SUCCESS)
             {
                 if (debug_enabled())
@@ -124,7 +129,8 @@ cl_program create_and_build_program(
     if (!program)
         return 0;
     result = g_opencl.p_clBuildProgram(
-        program, 1, &device->physical_device->device, 0, 0, 0);
+        program, 1, &device->physical_device->device,
+        build_options.empty() ? 0 : build_options.c_str(), 0, 0);
     if (result != CL_SUCCESS)
         return program;
 

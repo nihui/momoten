@@ -44,6 +44,31 @@ static bool extension_enabled(const VkDeviceCreateInfo* create_info,
     return false;
 }
 
+static VkResult enable_core_features(
+    VkPhysicalDevice physical, const VkPhysicalDeviceFeatures& requested,
+    bool& fp64)
+{
+    VkPhysicalDeviceFeatures remaining = requested;
+    fp64 = false;
+    if (remaining.shaderFloat64)
+    {
+        if (!physical->shader_profile.fp64)
+            return VK_ERROR_FEATURE_NOT_PRESENT;
+        fp64 = true;
+        remaining.shaderFloat64 = VK_FALSE;
+    }
+
+    const VkBool32* features =
+        reinterpret_cast<const VkBool32*>(&remaining);
+    for (size_t i = 0;
+         i < sizeof(VkPhysicalDeviceFeatures) / sizeof(VkBool32); i++)
+    {
+        if (features[i] != VK_FALSE)
+            return VK_ERROR_FEATURE_NOT_PRESENT;
+    }
+    return VK_SUCCESS;
+}
+
 VkResult impl_create_device(
     VkPhysicalDevice physical, const VkDeviceCreateInfo* create_info,
     const VkAllocationCallbacks* allocator, VkDevice* device)
@@ -58,16 +83,14 @@ VkResult impl_create_device(
         return VK_ERROR_FEATURE_NOT_PRESENT;
     if (create_info->enabledLayerCount)
         return VK_ERROR_LAYER_NOT_PRESENT;
+    momoten_detail::EnabledShaderProfile enabled_shader_profile;
+    bool core_features_specified = create_info->pEnabledFeatures != 0;
     if (create_info->pEnabledFeatures)
     {
-        const VkBool32* features = reinterpret_cast<const VkBool32*>(
-            create_info->pEnabledFeatures);
-        for (size_t i = 0;
-             i < sizeof(VkPhysicalDeviceFeatures) / sizeof(VkBool32); i++)
-        {
-            if (features[i] != VK_FALSE)
-                return VK_ERROR_FEATURE_NOT_PRESENT;
-        }
+        const VkResult result = enable_core_features(
+            physical, *create_info->pEnabledFeatures, enabled_shader_profile.fp64);
+        if (result != VK_SUCCESS)
+            return result;
     }
     if (create_info->queueCreateInfoCount != 1
         || !create_info->pQueueCreateInfos)
@@ -90,12 +113,22 @@ VkResult impl_create_device(
             return VK_ERROR_EXTENSION_NOT_PRESENT;
     }
 
-    momoten_detail::EnabledShaderProfile enabled_shader_profile;
     const VkBaseInStructure* feature = reinterpret_cast<const VkBaseInStructure*>(create_info->pNext);
     while (feature)
     {
-        if (feature->sType
-            == VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_16BIT_STORAGE_FEATURES)
+        if (feature->sType == VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2)
+        {
+            if (core_features_specified)
+                return VK_ERROR_INITIALIZATION_FAILED;
+            const VkPhysicalDeviceFeatures2* features2 = reinterpret_cast<const VkPhysicalDeviceFeatures2*>(feature);
+            const VkResult result = enable_core_features(
+                physical, features2->features, enabled_shader_profile.fp64);
+            if (result != VK_SUCCESS)
+                return result;
+            core_features_specified = true;
+        }
+        else if (feature->sType
+                 == VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_16BIT_STORAGE_FEATURES)
         {
             const VkPhysicalDevice16BitStorageFeatures* storage = reinterpret_cast<const VkPhysicalDevice16BitStorageFeatures*>(feature);
             if ((storage->storageBuffer16BitAccess
@@ -136,6 +169,13 @@ VkResult impl_create_device(
             return VK_ERROR_FEATURE_NOT_PRESENT;
         }
         feature = feature->pNext;
+    }
+
+    if (!core_features_specified)
+    {
+        // ncnn queries core shader features but creates the device with a null
+        // pEnabledFeatures pointer. Preserve that established simplevk path.
+        enabled_shader_profile.fp64 = physical->shader_profile.fp64;
     }
 
     cl_int ret = CL_SUCCESS;

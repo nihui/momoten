@@ -2,8 +2,18 @@
 // SPDX-License-Identifier: Apache-2.0
 
 #include "backend/device.h"
+#include "backend/memory_sync.h"
 #include "backend/objects.h"
 #include "vulkan_internal.h"
+
+momoten_detail::HandleTable<VkDeviceMemory, DeviceMemory> g_device_memories;
+momoten_detail::HandleTable<VkBuffer, Buffer> g_buffers;
+
+DeviceMemory::~DeviceMemory()
+{
+    if (memory)
+        momoten_detail::g_opencl.p_clReleaseMemObject(memory);
+}
 
 namespace momoten_detail {
 
@@ -33,9 +43,17 @@ VkResult impl_allocate_memory(
     value->size = info->allocationSize;
     value->memory_type_index = info->memoryTypeIndex;
     value->host_visible = info->memoryTypeIndex == 1;
+    value->mapped = false;
+    value->mapped_offset = 0;
+    value->mapped_size = 0;
     value->memory = cl_memory;
+    value->range_map.reset(value->size);
     if (value->host_visible)
         value->shadow.resize(static_cast<size_t>(value->size));
+    {
+        std::lock_guard<std::mutex> lock(device->allocation_mutex);
+        device->allocations.push_back(value);
+    }
     *memory = g_device_memories.make_handle(value);
     return VK_SUCCESS;
 }
@@ -50,31 +68,134 @@ void impl_free_memory(
 
 VkResult impl_map_memory(
     VkDevice device, VkDeviceMemory memory, VkDeviceSize offset, VkDeviceSize size,
-    VkMemoryMapFlags, void** data)
+    VkMemoryMapFlags flags, void** data)
 {
     const std::shared_ptr<DeviceMemory> value = g_device_memories.get_handle(memory);
-    if (!value || value->device != device || !data || !value->host_visible || offset > value->size)
+    if (!value || value->device != device || !data || !value->host_visible
+        || flags != 0 || offset >= value->size)
         return VK_ERROR_MEMORY_MAP_FAILED;
-    const VkDeviceSize mapped_size = size == VK_WHOLE_SIZE ? value->size - offset : size;
-    if (mapped_size > value->size - offset || offset > static_cast<VkDeviceSize>(SIZE_MAX))
+    const VkDeviceSize mapped_size = size == VK_WHOLE_SIZE
+                                         ? value->size - offset
+                                         : size;
+    if (mapped_size == 0 || mapped_size > value->size - offset
+        || offset > static_cast<VkDeviceSize>(SIZE_MAX))
         return VK_ERROR_MEMORY_MAP_FAILED;
+    {
+        std::lock_guard<std::mutex> lock(value->mutex);
+        if (value->mapped)
+            return VK_ERROR_MEMORY_MAP_FAILED;
+    }
+
+    std::lock_guard<std::mutex> queue_lock(device->queue_mutex);
+    const cl_int ret = synchronize_memory_to_host(
+        device, value, offset, mapped_size);
+    if (ret != CL_SUCCESS)
+    {
+        log_error("map memory readback", ret);
+        return VK_ERROR_MEMORY_MAP_FAILED;
+    }
+
+    {
+        std::lock_guard<std::mutex> lock(value->mutex);
+        value->mapped = true;
+        value->mapped_offset = offset;
+        value->mapped_size = mapped_size;
+        value->range_map.set(
+            offset, mapped_size, momoten_detail::MEMORY_AUTHORITY_HOST);
+    }
     *data = value->shadow.data() + static_cast<size_t>(offset);
     return VK_SUCCESS;
 }
 
-void impl_unmap_memory(VkDevice, VkDeviceMemory)
+void impl_unmap_memory(VkDevice device, VkDeviceMemory memory)
 {
+    const std::shared_ptr<DeviceMemory> value = g_device_memories.get_handle(memory);
+    if (!value || value->device != device)
+        return;
+    std::lock_guard<std::mutex> lock(value->mutex);
+    if (!value->mapped)
+        return;
+    value->range_map.set(
+        value->mapped_offset, value->mapped_size,
+        momoten_detail::MEMORY_AUTHORITY_HOST);
+    value->mapped = false;
+    value->mapped_offset = 0;
+    value->mapped_size = 0;
+}
+
+struct ResolvedMappedRange
+{
+    std::shared_ptr<DeviceMemory> memory;
+    VkDeviceSize offset;
+    VkDeviceSize size;
+};
+
+static bool resolve_mapped_range(
+    VkDevice device, const VkMappedMemoryRange& range,
+    ResolvedMappedRange& resolved)
+{
+    if (range.sType != VK_STRUCTURE_TYPE_MAPPED_MEMORY_RANGE)
+        return false;
+    const std::shared_ptr<DeviceMemory> memory = g_device_memories.get_handle(range.memory);
+    if (!memory || memory->device != device || !memory->host_visible
+        || range.offset >= memory->size)
+        return false;
+    const VkDeviceSize size = range.size == VK_WHOLE_SIZE
+                                  ? memory->size - range.offset
+                                  : range.size;
+    if (size == 0 || size > memory->size - range.offset)
+        return false;
+
+    std::lock_guard<std::mutex> lock(memory->mutex);
+    if (!memory->mapped || range.offset < memory->mapped_offset
+        || range.offset - memory->mapped_offset > memory->mapped_size
+        || size > memory->mapped_size - (range.offset - memory->mapped_offset))
+        return false;
+    resolved.memory = memory;
+    resolved.offset = range.offset;
+    resolved.size = size;
+    return true;
 }
 
 VkResult impl_flush_mapped_memory_ranges(
-    VkDevice, uint32_t, const VkMappedMemoryRange*)
+    VkDevice device, uint32_t count, const VkMappedMemoryRange* ranges)
 {
+    if (count && !ranges)
+        return VK_ERROR_MEMORY_MAP_FAILED;
+    std::vector<ResolvedMappedRange> resolved(count);
+    for (uint32_t i = 0; i < count; i++)
+    {
+        if (!resolve_mapped_range(device, ranges[i], resolved[i]))
+            return VK_ERROR_MEMORY_MAP_FAILED;
+    }
+    for (uint32_t i = 0; i < count; i++)
+        mark_host_range(resolved[i].memory, resolved[i].offset, resolved[i].size);
     return VK_SUCCESS;
 }
 
 VkResult impl_invalidate_mapped_memory_ranges(
-    VkDevice, uint32_t, const VkMappedMemoryRange*)
+    VkDevice device, uint32_t count, const VkMappedMemoryRange* ranges)
 {
+    if (count && !ranges)
+        return VK_ERROR_MEMORY_MAP_FAILED;
+    std::vector<ResolvedMappedRange> resolved(count);
+    for (uint32_t i = 0; i < count; i++)
+    {
+        if (!resolve_mapped_range(device, ranges[i], resolved[i]))
+            return VK_ERROR_MEMORY_MAP_FAILED;
+    }
+
+    std::lock_guard<std::mutex> queue_lock(device->queue_mutex);
+    for (uint32_t i = 0; i < count; i++)
+    {
+        const cl_int ret = synchronize_memory_to_host(
+            device, resolved[i].memory, resolved[i].offset, resolved[i].size);
+        if (ret != CL_SUCCESS)
+        {
+            log_error("invalidate memory readback", ret);
+            return VK_ERROR_MEMORY_MAP_FAILED;
+        }
+    }
     return VK_SUCCESS;
 }
 

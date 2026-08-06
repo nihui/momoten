@@ -34,3 +34,26 @@ file(READ "${SOURCE_ROOT}/src/source_manifest.txt" manifest)
 if(NOT manifest MATCHES "driver[ \t]+src/vulkan_procs.inc")
     message(FATAL_ERROR "vulkan_procs.inc is absent from source_manifest.txt")
 endif()
+foreach(backend_part memory_sync replay runtime pipeline_build)
+    if(NOT manifest MATCHES
+       "driver[ \t]+src/backend/${backend_part}\\.cpp")
+        message(FATAL_ERROR
+            "backend/${backend_part}.cpp is absent from source_manifest.txt")
+    endif()
+endforeach()
+
+if(EXISTS "${SOURCE_ROOT}/src/backend/objects.cpp")
+    message(FATAL_ERROR
+        "generic objects.cpp must not mix unrelated object lifetimes")
+endif()
+
+file(READ "${SOURCE_ROOT}/src/backend/runtime.cpp" runtime)
+if(runtime MATCHES "replay_(copy|dispatch|barrier)|range_map|Enqueue(Read|Write)Buffer")
+    message(FATAL_ERROR
+        "runtime.cpp contains command replay or memory-coherence implementation")
+endif()
+
+file(READ "${SOURCE_ROOT}/src/backend/objects.h" objects)
+if(objects MATCHES "struct RecordedCommand")
+    message(FATAL_ERROR "objects.h contains command-stream definitions")
+endif()

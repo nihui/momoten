@@ -17,7 +17,7 @@ The implementation is independent of ncnn. ncnn is one consumer: its simplevk lo
 ```text
 include/momoten/       build-tree translator API and version metadata
 src/translator/         SPIR-V optimization and OpenCL C translation
-src/backend/            OpenCL loader, device profile, program cache and replay
+src/backend/            OpenCL loader, profiles, memory sync, replay and program build
 src/*.cpp               internal impl_* Vulkan modules split by responsibility
 src/vulkan_procs.inc    canonical direct-export and proc-registry declarations
 src/entrypoints.cpp     guarded C ABI wrappers and proc availability policy
@@ -115,7 +115,7 @@ See [docs/testing.md](docs/testing.md) and the ncnn-specific [integration guide]
 
 ## Supported profile
 
-momoten implements a deliberately narrow, buffer-oriented compute subset of the API. It is not a complete Vulkan implementation. The OpenCL host API and generated kernel source use OpenCL 1.0 as their compatibility baseline. FP32 storage-buffer compute is the baseline; native FP16 storage and arithmetic are exposed only when the selected OpenCL device reports `cl_khr_fp16`. Integer dot product is exposed conditionally through `cl_khr_integer_dot_product`, with acceleration properties copied from the OpenCL device rather than assumed from extension presence. Unsupported Vulkan or SPIR-V features fail explicitly.
+momoten implements a deliberately narrow, buffer-oriented compute subset of the API. It is not a complete Vulkan implementation. The OpenCL host API and generated kernel source use OpenCL 1.0 as their compatibility baseline. FP32 storage-buffer compute is the baseline; native FP16 storage and arithmetic are exposed only when the selected OpenCL device reports `cl_khr_fp16`. `shaderFloat64` is exposed when the device reports `cl_khr_fp64` together with a nonzero `CL_DEVICE_DOUBLE_FP_CONFIG`; the current restricted fp64 path covers scalar/vector arithmetic and storage buffers, represents storage through exact `ulong` bitcasts, and uses conservative OpenCL compilation. Integer dot product is exposed conditionally through `cl_khr_integer_dot_product`, with acceleration properties copied from the OpenCL device rather than assumed from extension presence. Unsupported Vulkan or SPIR-V features fail explicitly.
 
 See [docs/vulkan-profile.md](docs/vulkan-profile.md) for the current boundary and hardware-validation status.
 

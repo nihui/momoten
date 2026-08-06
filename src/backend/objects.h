@@ -5,7 +5,9 @@
 #define MOMOTEN_BACKEND_OBJECTS_H
 
 #include "../vulkan_internal.h"
+#include "command_stream.h"
 #include "device_profile.h"
+#include "memory_state.h"
 #include "opencl_loader.h"
 #include "momoten/spv_to_clc.h"
 
@@ -15,41 +17,6 @@
 #include <string>
 #include <utility>
 #include <vector>
-
-struct DescriptorValue
-{
-    std::shared_ptr<struct Buffer> buffer;
-    VkDeviceSize offset;
-    VkDeviceSize range;
-
-    DescriptorValue()
-        : offset(0), range(VK_WHOLE_SIZE)
-    {
-    }
-};
-
-struct RecordedCommand
-{
-    enum Type
-    {
-        CopyBuffer,
-        Dispatch
-    } type;
-
-    std::shared_ptr<struct Buffer> src_buffer;
-    std::shared_ptr<struct Buffer> dst_buffer;
-    std::vector<VkBufferCopy> copy_regions;
-    std::shared_ptr<struct Pipeline> pipeline;
-    std::map<uint32_t, DescriptorValue> descriptors;
-    std::vector<unsigned char> push_constants;
-    uint32_t group_count[3];
-
-    RecordedCommand()
-        : type(CopyBuffer)
-    {
-        group_count[0] = group_count[1] = group_count[2] = 0;
-    }
-};
 
 struct VkInstance_T
 {
@@ -102,6 +69,8 @@ struct VkDevice_T
     VkQueue queue;
     std::mutex queue_mutex;
     std::vector<PendingSubmission> pending_submissions;
+    std::mutex allocation_mutex;
+    std::vector<std::weak_ptr<struct DeviceMemory> > allocations;
     std::mutex program_cache_mutex;
     std::map<std::pair<uint64_t, uint64_t>, cl_program> program_cache;
     size_t program_cache_capacity;
@@ -121,8 +90,13 @@ struct DeviceMemory
     VkDeviceSize size;
     uint32_t memory_type_index;
     bool host_visible;
+    bool mapped;
+    VkDeviceSize mapped_offset;
+    VkDeviceSize mapped_size;
     cl_mem memory;
     std::vector<unsigned char> shadow;
+    std::mutex mutex;
+    momoten_detail::MemoryRangeMap range_map;
 };
 
 struct Buffer
@@ -164,7 +138,6 @@ struct Pipeline
     momoten::KernelABI abi;
     size_t opencl_local_size[3];
     size_t workgroup_chunk_count;
-    std::string source;
 };
 
 struct DescriptorUpdateTemplate

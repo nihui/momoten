@@ -47,6 +47,9 @@ void CompilerOpenCL::emit_header()
     backend.support_precise_qualifier = false;
     backend.unsized_array_supported = true;
     backend.float_literal_suffix = true;
+    // OpenCL C double constants use the unsuffixed form. The GLSL "lf"
+    // suffix emitted by the default SPIRV-Cross backend is not valid here.
+    backend.double_literal_suffix = false;
     // GLSL accepts the 16-bit integer literal suffixes "s" and "us", but
     // OpenCL C does not. Leaving the suffixes empty makes the generic
     // constant emitter use explicit short(...) and ushort(...) conversions,
@@ -61,6 +64,12 @@ void CompilerOpenCL::emit_header()
         statement("#pragma OPENCL EXTENSION cl_khr_global_int32_base_atomics : enable");
     if (requires_fp16)
         statement("#pragma OPENCL EXTENSION cl_khr_fp16 : enable");
+    if (requires_fp64)
+    {
+        statement("#if !defined(__opencl_c_fp64)");
+        statement("#pragma OPENCL EXTENSION cl_khr_fp64 : enable");
+        statement("#endif");
+    }
     if (requires_integer_dot_product)
         statement("#pragma OPENCL EXTENSION cl_khr_integer_dot_product : enable");
     if (translation_options.subgroup_mode == SubgroupModeNative)
@@ -79,6 +88,11 @@ void CompilerOpenCL::emit_header()
     emit_constructor_macros("long");
     emit_constructor_macros("ulong");
     emit_constructor_macros("float");
+    if (requires_fp64)
+    {
+        emit_constructor_macros("double");
+        emit_fp64_vector_helpers();
+    }
     if (requires_fp16)
         emit_constructor_macros("half");
     // Vulkan std430 mat4 has 16-byte alignment and 64-byte stride. An
@@ -458,6 +472,147 @@ std::string CompilerOpenCL::to_member_reference(uint32_t base, const SPIRType& t
     return CompilerGLSL::to_member_reference(base, type, index, ptr_chain_is_resolved);
 }
 
+bool CompilerOpenCL::emit_fp64_vector_instruction(
+    const Instruction& instruction, const uint32_t* ops)
+{
+    const Op opcode = static_cast<Op>(instruction.op);
+    static const char components[] = "xyzw";
+
+    if (opcode == OpDot && instruction.length >= 4)
+    {
+        const SPIRType& operand_type = expression_type(ops[2]);
+        if (operand_type.basetype != SPIRType::Double || operand_type.width != 64
+            || operand_type.columns != 1 || operand_type.vecsize < 2
+            || operand_type.vecsize > 4)
+            return false;
+
+        const std::string suffix = std::to_string(operand_type.vecsize);
+        const std::string expression = "momo_fp64_dot" + suffix + "(" +
+                                       to_expression(ops[2]) + ", " +
+                                       to_expression(ops[3]) + ")";
+        emit_op(ops[0], ops[1], expression,
+                should_forward(ops[2]) && should_forward(ops[3]));
+        inherit_expression_dependencies(ops[1], ops[2]);
+        inherit_expression_dependencies(ops[1], ops[3]);
+        return true;
+    }
+
+    switch (opcode)
+    {
+    case OpCompositeConstruct:
+    case OpFAdd:
+    case OpFSub:
+    case OpFMul:
+    case OpFDiv:
+    case OpFNegate:
+    case OpVectorTimesScalar:
+        break;
+    default:
+        return false;
+    }
+
+    if (instruction.length < 3)
+        return false;
+    const SPIRType& result_type = get<SPIRType>(ops[0]);
+    if (result_type.basetype != SPIRType::Double || result_type.width != 64
+        || result_type.columns != 1 || result_type.vecsize < 2
+        || result_type.vecsize > 4)
+        return false;
+
+    const std::string suffix = std::to_string(result_type.vecsize);
+    if (opcode == OpCompositeConstruct)
+    {
+        std::vector<std::string> arguments;
+        bool forward = true;
+        const uint32_t constituent_count = instruction.length - 2;
+        for (uint32_t i = 0; i < constituent_count; i++)
+        {
+            const uint32_t constituent = ops[2 + i];
+            const SPIRType& constituent_type = expression_type(constituent);
+            forward = forward && should_forward(constituent);
+            if (constituent_type.columns != 1 || constituent_type.vecsize > 4)
+                throw std::runtime_error("fp64 vector construction requires scalar or vector constituents");
+            const std::string value = to_expression(constituent);
+            if (constituent_type.vecsize == 1)
+            {
+                arguments.push_back(value);
+            }
+            else
+            {
+                for (uint32_t component = 0; component < constituent_type.vecsize; component++)
+                    arguments.push_back("(" + value + ")." + components[component]);
+            }
+            inherit_expression_dependencies(ops[1], constituent);
+        }
+        if (arguments.size() != result_type.vecsize)
+            throw std::runtime_error("fp64 vector construction has an inconsistent component count");
+
+        std::string expression = "momo_make_double" + suffix + "(";
+        for (size_t i = 0; i < arguments.size(); i++)
+        {
+            if (i != 0)
+                expression += ", ";
+            expression += arguments[i];
+        }
+        expression += ")";
+        emit_op(ops[0], ops[1], expression, forward);
+        return true;
+    }
+
+    const char* operation = 0;
+    switch (opcode)
+    {
+    case OpFAdd:
+        operation = "add";
+        break;
+    case OpFSub:
+        operation = "sub";
+        break;
+    case OpFMul:
+        operation = "mul";
+        break;
+    case OpFDiv:
+        operation = "div";
+        break;
+    default:
+        break;
+    }
+    if (operation)
+    {
+        const std::string expression = std::string("momo_fp64_") + operation + suffix + "(" +
+                                       to_expression(ops[2]) + ", " +
+                                       to_expression(ops[3]) + ")";
+        emit_op(ops[0], ops[1], expression,
+                should_forward(ops[2]) && should_forward(ops[3]));
+        inherit_expression_dependencies(ops[1], ops[2]);
+        inherit_expression_dependencies(ops[1], ops[3]);
+        return true;
+    }
+
+    if (opcode == OpFNegate)
+    {
+        const std::string expression = "momo_fp64_neg" + suffix + "(" +
+                                       to_expression(ops[2]) + ")";
+        emit_op(ops[0], ops[1], expression, should_forward(ops[2]));
+        inherit_expression_dependencies(ops[1], ops[2]);
+        return true;
+    }
+
+    if (opcode == OpVectorTimesScalar)
+    {
+        const std::string expression = "momo_fp64_scale" + suffix + "(" +
+                                       to_expression(ops[2]) + ", " +
+                                       to_expression(ops[3]) + ")";
+        emit_op(ops[0], ops[1], expression,
+                should_forward(ops[2]) && should_forward(ops[3]));
+        inherit_expression_dependencies(ops[1], ops[2]);
+        inherit_expression_dependencies(ops[1], ops[3]);
+        return true;
+    }
+
+    return false;
+}
+
 void CompilerOpenCL::emit_instruction(const Instruction& instruction)
 {
     const Op opcode = static_cast<Op>(instruction.op);
@@ -467,6 +622,9 @@ void CompilerOpenCL::emit_instruction(const Instruction& instruction)
         return;
 
     if ((opcode == OpAccessChain || opcode == OpInBoundsAccessChain) && emit_matrix_access_chain(instruction, ops))
+        return;
+
+    if (emit_fp64_vector_instruction(instruction, ops))
         return;
 
     if (emit_integer_dot_product_instruction(instruction, ops))
@@ -659,11 +817,13 @@ void CompilerOpenCL::emit_store_statement(uint32_t lhs_expression, uint32_t rhs_
     const bool resource_store = backing && resource_indices.find(backing->self) != resource_indices.end();
 
     bool scalar_half_store = false;
+    bool scalar_double_store = false;
     bool vector_store = false;
     if (resource_store)
     {
         const SPIRType& value_type = expression_type(rhs_expression);
         scalar_half_store = value_type.basetype == SPIRType::Half && value_type.vecsize == 1 && value_type.columns == 1 && value_type.array.empty();
+        scalar_double_store = value_type.basetype == SPIRType::Double && value_type.width == 64 && value_type.vecsize == 1 && value_type.columns == 1 && value_type.array.empty();
         vector_store = value_type.columns == 1 && value_type.array.empty() && (value_type.vecsize == 2 || value_type.vecsize == 3 || value_type.vecsize == 4);
 
         // OpenCL C does not permit taking the address of a vector element.
@@ -684,7 +844,17 @@ void CompilerOpenCL::emit_store_statement(uint32_t lhs_expression, uint32_t rhs_
         begin_scope();
     }
 
-    if (scalar_half_store)
+    if (scalar_double_store)
+    {
+        // Treat fp64 descriptor storage as its exact 64-bit representation.
+        // This avoids address-space casts from the byte-oriented kernel ABI
+        // to double pointers while preserving the Vulkan buffer bit layout.
+        const std::string lhs = to_dereferenced_expression(lhs_expression);
+        const std::string rhs = to_expression(rhs_expression);
+        statement(lhs, " = as_ulong(", rhs, ");");
+        register_write(lhs_expression);
+    }
+    else if (scalar_half_store)
     {
         // Some OpenCL 1.x CPU backends speculate native scalar-half stores
         // for inactive tail lanes and can generate invalid host accesses.
@@ -707,6 +877,8 @@ void CompilerOpenCL::emit_store_statement(uint32_t lhs_expression, uint32_t rhs_
         element_type.vecsize = 1;
         const std::string storage_type = value_type.basetype == SPIRType::Half
                                              ? "ushort"
+                                         : value_type.basetype == SPIRType::Double && value_type.width == 64
+                                             ? "ulong"
                                              : type_to_glsl(element_type);
         flush_variable_declaration(rhs_expression);
         const std::string lhs = to_dereferenced_expression(lhs_expression);
@@ -717,6 +889,8 @@ void CompilerOpenCL::emit_store_statement(uint32_t lhs_expression, uint32_t rhs_
             std::string component_value = "(" + rhs + ")." + components[component];
             if (value_type.basetype == SPIRType::Half)
                 component_value = "as_ushort(" + component_value + ")";
+            else if (value_type.basetype == SPIRType::Double && value_type.width == 64)
+                component_value = "as_ulong(" + component_value + ")";
             statement("*((volatile __global ", storage_type, " *)&(", lhs,
                       ") + ", component, ") = ", component_value, ";");
         }
@@ -786,6 +960,24 @@ std::string CompilerOpenCL::constant_expression_vector(const SPIRConstant& const
 {
     std::string expression = CompilerGLSL::constant_expression_vector(constant, vector);
     const SPIRType& type = get<SPIRType>(constant.constant_type);
+    if (type.basetype == SPIRType::Double && type.width == 64 && type.columns == 1 && type.vecsize >= 2 && type.vecsize <= 4)
+    {
+        const std::string constructor = "double" + std::to_string(type.vecsize) + "(";
+        if (expression.compare(0, constructor.size(), constructor) == 0)
+        {
+            const size_t arguments_begin = constructor.size();
+            const size_t arguments_end = expression.rfind(')');
+            if (arguments_end != std::string::npos)
+            {
+                const std::string arguments = expression.substr(arguments_begin, arguments_end - arguments_begin);
+                const bool splat = arguments.find(',') == std::string::npos;
+                expression.replace(0, constructor.size(),
+                                   std::string(splat ? "momo_splat_double" : "momo_make_double")
+                                       + std::to_string(type.vecsize) + "(");
+            }
+        }
+        return expression;
+    }
     if (type.basetype != SPIRType::Half)
         return expression;
 
@@ -874,6 +1066,8 @@ bool CompilerOpenCL::emit_robust_buffer_load(const Instruction& instruction, con
                 element_type.vecsize = 1;
                 const std::string storage_type = storage_element.basetype == SPIRType::Half
                                                      ? "ushort"
+                                                 : storage_element.basetype == SPIRType::Double && storage_element.width == 64
+                                                     ? "ulong"
                                                      : type_to_glsl(element_type);
                 const size_t component = std::string("xyzw").find(lvalue[dot + 1]);
                 std::string expression;
@@ -891,6 +1085,8 @@ bool CompilerOpenCL::emit_robust_buffer_load(const Instruction& instruction, con
                 }
                 if (storage_element.basetype == SPIRType::Half)
                     expression = "as_half(" + expression + ")";
+                else if (storage_element.basetype == SPIRType::Double && storage_element.width == 64)
+                    expression = "as_double(" + expression + ")";
                 cast_from_variable_load(pointer_id, expression, type);
                 emit_op(result_type, result_id, expression, false);
                 register_read(result_id, pointer_id, false);
@@ -909,6 +1105,16 @@ bool CompilerOpenCL::emit_robust_buffer_load(const Instruction& instruction, con
     // SPIRV-Cross emit ordinary valid scalar loads directly.
     if (type.vecsize == 1 && type.columns == 1)
     {
+        if (type.basetype == SPIRType::Double && type.width == 64)
+        {
+            flush_variable_declaration(pointer_id);
+            std::string expression = "as_double(" + to_dereferenced_expression(pointer_id, false) + ")";
+            cast_from_variable_load(pointer_id, expression, type);
+            emit_op(result_type, result_id, expression, false);
+            register_read(result_id, pointer_id, false);
+            inherit_expression_dependencies(result_id, pointer_id);
+            return true;
+        }
         if (type.width != 16 || (type.basetype != SPIRType::Half && type.basetype != SPIRType::UShort && type.basetype != SPIRType::Short && type.basetype != SPIRType::UInt && type.basetype != SPIRType::Int))
             return false;
 
@@ -938,8 +1144,12 @@ bool CompilerOpenCL::emit_robust_buffer_load(const Instruction& instruction, con
         element_type.vecsize = 1;
         const std::string storage_type = type.basetype == SPIRType::Half
                                              ? "ushort"
+                                         : type.basetype == SPIRType::Double && type.width == 64
+                                             ? "ulong"
                                              : type_to_glsl(element_type);
-        std::string expression = type_to_glsl(type) + "(";
+        std::string expression = type.basetype == SPIRType::Double && type.width == 64
+                                     ? "momo_make_double" + std::to_string(type.vecsize) + "("
+                                     : type_to_glsl(type) + "(";
         for (uint32_t component = 0; component < type.vecsize; component++)
         {
             if (component != 0)
@@ -960,6 +1170,8 @@ bool CompilerOpenCL::emit_robust_buffer_load(const Instruction& instruction, con
             }
             if (type.basetype == SPIRType::Half)
                 component_load = "as_half(" + component_load + ")";
+            else if (type.basetype == SPIRType::Double && type.width == 64)
+                component_load = "as_double(" + component_load + ")";
             expression += component_load;
         }
         expression += ")";

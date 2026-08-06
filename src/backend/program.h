@@ -14,7 +14,8 @@ namespace momoten_detail {
 
 void print_program_build_log(cl_program program, cl_device_id device);
 cl_program create_and_build_program(
-    VkDevice device, const std::string& source, cl_int& result);
+    VkDevice device, const std::string& source,
+    const std::string& build_options, cl_int& result);
 
 } // namespace momoten_detail
 

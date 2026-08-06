@@ -6,8 +6,6 @@
 
 #include "objects.h"
 
-cl_int replay_copy(VkDevice device, const RecordedCommand& command);
-cl_int replay_dispatch(VkDevice device, const RecordedCommand& command);
 void assign_fence_event(const std::shared_ptr<Fence>& fence, cl_event event);
 bool fence_is_signaled(const std::shared_ptr<Fence>& fence);
 void retire_pending_submissions(VkDevice device, bool all);

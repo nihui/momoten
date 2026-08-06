@@ -36,8 +36,8 @@ static int require(bool condition, const char* message)
 
 int main(int argc, char** argv)
 {
-    if (argc != 9)
-        return require(false, "expected positive, unsupported, atomic, fp16, int16, subgroup, integer-dot and workgroup-split SPIR-V input paths");
+    if (argc != 10)
+        return require(false, "expected positive, unsupported, atomic, fp16, int16, subgroup, integer-dot, workgroup-split and fp64 SPIR-V input paths");
 
     std::vector<uint32_t> words;
     if (!read_spirv(argv[1], words))
@@ -300,6 +300,39 @@ int main(int argc, char** argv)
                    "native subgroup ID was not rebased across workgroup chunks")
         || require(native_split_result.source.find("48u") != std::string::npos,
                    "logical native subgroup count was not preserved"))
+        return 1;
+
+    std::vector<uint32_t> fp64;
+    if (!read_spirv(argv[9], fp64))
+        return require(false, "failed to read fp64 test SPIR-V");
+    momoten::TranslationResult fp64_result;
+    if (require(momoten::translate_spirv_to_opencl_c(
+                    fp64.data(), fp64.size(), options, fp64_result),
+                "fp64 SPIR-V was rejected")
+        || require(fp64_result.abi.fp64,
+                   "fp64 ABI requirement was not reflected")
+        || require(fp64_result.abi.required_extensions.size() == 1 && fp64_result.abi.required_extensions[0] == "cl_khr_fp64",
+                   "fp64 OpenCL extension requirement is incomplete")
+        || require(fp64_result.abi.buffers.size() == 2,
+                   "fp64 storage-buffer reflection is incomplete")
+        || require(fp64_result.source.find("#if !defined(__opencl_c_fp64)") != std::string::npos,
+                   "fp64 feature-macro guard was not emitted")
+        || require(fp64_result.source.find("#pragma OPENCL EXTENSION cl_khr_fp64 : enable") != std::string::npos,
+                   "fp64 extension pragma was not emitted")
+        || require(fp64_result.source.find("#define double4(...)") != std::string::npos,
+                   "fp64 vector constructors were not emitted")
+        || require(fp64_result.source.find("__global ulong *") != std::string::npos,
+                   "fp64 storage buffer was not lowered to its ulong bit representation")
+        || require(fp64_result.source.find("as_double(") != std::string::npos,
+                   "fp64 storage-buffer loads were not bitcast from ulong")
+        || require(fp64_result.source.find("as_ulong(") != std::string::npos,
+                   "fp64 storage-buffer stores were not bitcast to ulong")
+        || require(fp64_result.source.find("static inline double4 momo_fp64_add4") != std::string::npos,
+                   "fp64 vector arithmetic helpers were not emitted")
+        || require(fp64_result.source.find("momo_fp64_add4(") != std::string::npos,
+                   "fp64 vector addition was not scalarized")
+        || require(fp64_result.source.find(".0lf") == std::string::npos,
+                   "fp64 literals retained the GLSL lf suffix"))
         return 1;
 
     return 0;

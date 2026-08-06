@@ -6,6 +6,14 @@
 
 #include <cstring>
 
+momoten_detail::HandleTable<VkCommandPool, CommandPool> g_command_pools;
+
+CommandPool::~CommandPool()
+{
+    for (size_t i = 0; i < buffers.size(); i++)
+        delete buffers[i];
+}
+
 namespace momoten_detail {
 
 VkResult impl_create_command_pool(
@@ -339,20 +347,85 @@ void impl_cmd_copy_buffer(
 }
 
 void impl_cmd_pipeline_barrier(
-    VkCommandBuffer buffer, VkPipelineStageFlags, VkPipelineStageFlags, VkDependencyFlags,
+    VkCommandBuffer buffer, VkPipelineStageFlags src_stage_mask,
+    VkPipelineStageFlags dst_stage_mask, VkDependencyFlags dependency_flags,
     uint32_t memory_barrier_count, const VkMemoryBarrier* memory_barriers,
     uint32_t buffer_barrier_count, const VkBufferMemoryBarrier* buffer_barriers,
     uint32_t image_barrier_count, const VkImageMemoryBarrier*)
 {
-    if (!command_buffer_is_recording(buffer) || (memory_barrier_count && !memory_barriers) || (buffer_barrier_count && !buffer_barriers) || image_barrier_count)
-    {
-        record_command_buffer_error(buffer, image_barrier_count
-                                                ? VK_ERROR_FEATURE_NOT_PRESENT
-                                                : VK_ERROR_INITIALIZATION_FAILED);
-        return;
-    }
-    // The baseline uses one in-order OpenCL queue. Host-shadow visibility is
-    // handled at each copy/dispatch boundary during replay.
+    record_command(buffer, [&]() {
+        if (!command_buffer_is_recording(buffer)
+            || (memory_barrier_count && !memory_barriers)
+            || (buffer_barrier_count && !buffer_barriers))
+        {
+            record_command_buffer_error(buffer, VK_ERROR_INITIALIZATION_FAILED);
+            return;
+        }
+        if (image_barrier_count
+            || (dependency_flags & ~VK_DEPENDENCY_BY_REGION_BIT) != 0)
+        {
+            record_command_buffer_error(buffer, VK_ERROR_FEATURE_NOT_PRESENT);
+            return;
+        }
+
+        RecordedCommand command;
+        command.type = RecordedCommand::Barrier;
+        command.src_stage_mask = src_stage_mask;
+        command.dst_stage_mask = dst_stage_mask;
+        command.memory_barriers.reserve(memory_barrier_count);
+        for (uint32_t i = 0; i < memory_barrier_count; i++)
+        {
+            if (memory_barriers[i].sType
+                != VK_STRUCTURE_TYPE_MEMORY_BARRIER)
+            {
+                record_command_buffer_error(
+                    buffer, VK_ERROR_INITIALIZATION_FAILED);
+                return;
+            }
+            RecordedMemoryBarrier barrier;
+            barrier.src_access_mask = memory_barriers[i].srcAccessMask;
+            barrier.dst_access_mask = memory_barriers[i].dstAccessMask;
+            command.memory_barriers.push_back(barrier);
+        }
+
+        command.buffer_barriers.reserve(buffer_barrier_count);
+        for (uint32_t i = 0; i < buffer_barrier_count; i++)
+        {
+            const VkBufferMemoryBarrier& source = buffer_barriers[i];
+            const std::shared_ptr<Buffer> value = g_buffers.get_handle(source.buffer);
+            if (source.sType
+                    != VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER
+                || !value || value->device != buffer->device
+                || source.offset >= value->size
+                || (source.srcQueueFamilyIndex != VK_QUEUE_FAMILY_IGNORED
+                    && source.srcQueueFamilyIndex != 0)
+                || (source.dstQueueFamilyIndex != VK_QUEUE_FAMILY_IGNORED
+                    && source.dstQueueFamilyIndex != 0))
+            {
+                record_command_buffer_error(
+                    buffer, VK_ERROR_INITIALIZATION_FAILED);
+                return;
+            }
+            const VkDeviceSize size = source.size == VK_WHOLE_SIZE
+                                          ? value->size - source.offset
+                                          : source.size;
+            if (size == 0 || size > value->size - source.offset)
+            {
+                record_command_buffer_error(
+                    buffer, VK_ERROR_INITIALIZATION_FAILED);
+                return;
+            }
+
+            RecordedBufferBarrier barrier;
+            barrier.src_access_mask = source.srcAccessMask;
+            barrier.dst_access_mask = source.dstAccessMask;
+            barrier.buffer = value;
+            barrier.offset = source.offset;
+            barrier.size = size;
+            command.buffer_barriers.push_back(barrier);
+        }
+        buffer->commands.push_back(command);
+    });
 }
 
 } // namespace momoten_detail

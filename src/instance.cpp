@@ -111,10 +111,13 @@ VkResult impl_enumerate_physical_devices(
 }
 
 void impl_get_physical_device_features(
-    VkPhysicalDevice, VkPhysicalDeviceFeatures* features)
+    VkPhysicalDevice physical, VkPhysicalDeviceFeatures* features)
 {
     if (features)
+    {
         memset(features, 0, sizeof(*features));
+        features->shaderFloat64 = physical && physical->shader_profile.fp64 ? VK_TRUE : VK_FALSE;
+    }
 }
 
 void impl_get_physical_device_features2(

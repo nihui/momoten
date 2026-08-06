@@ -47,7 +47,7 @@ static bool device_has_extension(cl_device_id device, const char* extension)
     return padded.find(" " + std::string(extension) + " ") != std::string::npos;
 }
 
-static cl_device_id find_compiler_device(bool require_fp16, bool require_integer_dot_product)
+static cl_device_id find_compiler_device(bool require_fp16, bool require_fp64, bool require_integer_dot_product)
 {
     cl_uint platform_count = 0;
     if (clGetPlatformIDs(0, 0, &platform_count) != CL_SUCCESS || platform_count == 0)
@@ -76,7 +76,7 @@ static cl_device_id find_compiler_device(bool require_fp16, bool require_integer
             if (clGetDeviceInfo(devices[d], CL_DEVICE_COMPILER_AVAILABLE,
                                 sizeof(compiler_available), &compiler_available, 0)
                     == CL_SUCCESS
-                && compiler_available == CL_TRUE && (!require_fp16 || device_has_extension(devices[d], "cl_khr_fp16")) && (!require_integer_dot_product || device_has_extension(devices[d], "cl_khr_integer_dot_product")))
+                && compiler_available == CL_TRUE && (!require_fp16 || device_has_extension(devices[d], "cl_khr_fp16")) && (!require_fp64 || device_has_extension(devices[d], "cl_khr_fp64")) && (!require_integer_dot_product || device_has_extension(devices[d], "cl_khr_integer_dot_product")))
                 return devices[d];
         }
     }
@@ -187,6 +187,87 @@ static int run_fp16_kernel(cl_context context, cl_command_queue queue, cl_kernel
     }
 
     clReleaseMemObject(buffers[2]);
+    clReleaseMemObject(buffers[1]);
+    clReleaseMemObject(buffers[0]);
+    return status;
+}
+
+static int run_fp64_kernel(cl_context context, cl_command_queue queue, cl_kernel kernel,
+                           const momoten::TranslationResult& translated,
+                           cl_uint address_bits)
+{
+    if (!translated.abi.fp64 || translated.abi.buffers.size() != 2
+        || translated.abi.buffers[0].binding != 0
+        || translated.abi.buffers[1].binding != 1)
+    {
+        fprintf(stderr, "opencl_test: fp64 fixture expected input/output storage buffers and an fp64 ABI\n");
+        return 1;
+    }
+
+    double input[4] = {0.0, 1.0, 2.0, 3.0};
+    double output[4] = {};
+    cl_int ret = CL_SUCCESS;
+    cl_mem buffers[2] = {};
+    buffers[0] = clCreateBuffer(context, CL_MEM_READ_ONLY | CL_MEM_COPY_HOST_PTR,
+                                sizeof(input), input, &ret);
+    if (!buffers[0])
+        return fail("clCreateBuffer(fp64 input)", ret);
+    buffers[1] = clCreateBuffer(context, CL_MEM_READ_WRITE | CL_MEM_COPY_HOST_PTR,
+                                sizeof(output), output, &ret);
+    if (!buffers[1])
+    {
+        clReleaseMemObject(buffers[0]);
+        return fail("clCreateBuffer(fp64 output)", ret);
+    }
+
+    const cl_uint offset32 = 0;
+    const cl_ulong offset64 = 0;
+    const cl_uint size32 = sizeof(input);
+    const cl_ulong size64 = sizeof(input);
+    const void* offset = address_bits == 64 ? static_cast<const void*>(&offset64) : static_cast<const void*>(&offset32);
+    const void* size = address_bits == 64 ? static_cast<const void*>(&size64) : static_cast<const void*>(&size32);
+    const size_t offset_size = address_bits == 64 ? sizeof(offset64) : sizeof(offset32);
+    for (size_t i = 0; i < translated.abi.buffers.size() && ret == CL_SUCCESS; i++)
+    {
+        const momoten::BufferArgument& argument = translated.abi.buffers[i];
+        if (argument.binding >= 2)
+        {
+            ret = CL_INVALID_ARG_INDEX;
+            break;
+        }
+        ret = clSetKernelArg(kernel, argument.buffer_arg_index,
+                             sizeof(buffers[argument.binding]), &buffers[argument.binding]);
+        if (ret == CL_SUCCESS)
+            ret = clSetKernelArg(kernel, argument.offset_arg_index, offset_size, offset);
+        if (ret == CL_SUCCESS)
+            ret = clSetKernelArg(kernel, argument.size_arg_index, offset_size, size);
+    }
+
+    const size_t global_size[3] = {4, 1, 1};
+    const size_t local_size[3] = {translated.abi.local_size[0], translated.abi.local_size[1],
+                                  translated.abi.local_size[2]};
+    if (ret == CL_SUCCESS)
+        ret = clEnqueueNDRangeKernel(queue, kernel, 3, 0, global_size, local_size, 0, 0, 0);
+    if (ret == CL_SUCCESS)
+        ret = clEnqueueReadBuffer(queue, buffers[1], CL_TRUE, 0, sizeof(output), output, 0, 0, 0);
+
+    int status = 0;
+    if (ret != CL_SUCCESS)
+        status = fail("fp64 kernel dispatch", ret);
+    else
+    {
+        const double expected[4] = {3.0, 11.0, 27.0, 51.0};
+        for (uint32_t i = 0; i < 4; i++)
+        {
+            if (output[i] != expected[i])
+            {
+                fprintf(stderr, "opencl_test: fp64 output[%u]=%.17g expected=%.17g\n",
+                        i, output[i], expected[i]);
+                status = 1;
+            }
+        }
+    }
+
     clReleaseMemObject(buffers[1]);
     clReleaseMemObject(buffers[0]);
     return status;
@@ -663,6 +744,7 @@ enum OpenCLTestFeature
 {
     OpenCLTestBaseline,
     OpenCLTestFp16,
+    OpenCLTestFp64,
     OpenCLTestInt16,
     OpenCLTestAtomicPacked,
     OpenCLTestScalar16Bit,
@@ -676,23 +758,25 @@ struct OpenCLTestCase
     const char* mode;
     OpenCLTestFeature feature;
     bool requires_fp16;
+    bool requires_fp64;
     bool requires_integer_dot_product;
     OpenCLKernelTestRunner runner;
 };
 
 static const OpenCLTestCase opencl_test_cases[] = {
-    {0, OpenCLTestBaseline, false, false, 0},
-    {"fp16", OpenCLTestFp16, true, false, run_fp16_kernel},
-    {"int16", OpenCLTestInt16, false, false, compile_only_int16_kernel},
-    {"atomic-packed", OpenCLTestAtomicPacked, false, false,
+    {0, OpenCLTestBaseline, false, false, false, 0},
+    {"fp16", OpenCLTestFp16, true, false, false, run_fp16_kernel},
+    {"fp64", OpenCLTestFp64, false, true, false, run_fp64_kernel},
+    {"int16", OpenCLTestInt16, false, false, false, compile_only_int16_kernel},
+    {"atomic-packed", OpenCLTestAtomicPacked, false, false, false,
      run_atomic_packed_kernel},
-    {"scalar-16bit", OpenCLTestScalar16Bit, true, false,
+    {"scalar-16bit", OpenCLTestScalar16Bit, true, false, false,
      run_scalar_16bit_kernel},
-    {"subgroup-basic", OpenCLTestSubgroupBasic, false, false,
+    {"subgroup-basic", OpenCLTestSubgroupBasic, false, false, false,
      run_subgroup_basic_kernel},
-    {"integer-dot-product", OpenCLTestIntegerDotProduct, false, true,
+    {"integer-dot-product", OpenCLTestIntegerDotProduct, false, false, true,
      run_integer_dot_product_kernel},
-    {"workgroup-split", OpenCLTestWorkgroupSplit, false, false,
+    {"workgroup-split", OpenCLTestWorkgroupSplit, false, false, false,
      run_workgroup_split_kernel}};
 
 static const OpenCLTestCase* find_opencl_test_case(int argc, char** argv)
@@ -715,12 +799,12 @@ int main(int argc, char** argv)
     const OpenCLTestCase* test_case = find_opencl_test_case(argc, argv);
     if (!test_case)
     {
-        fprintf(stderr, "opencl_test: expected SPIR-V input path and optional fp16, int16, atomic-packed, scalar-16bit, subgroup-basic, integer-dot-product, or workgroup-split mode\n");
+        fprintf(stderr, "opencl_test: expected SPIR-V input path and optional fp16, fp64, int16, atomic-packed, scalar-16bit, subgroup-basic, integer-dot-product, or workgroup-split mode\n");
         return 1;
     }
 
     cl_device_id device = find_compiler_device(
-        test_case->requires_fp16, test_case->requires_integer_dot_product);
+        test_case->requires_fp16, test_case->requires_fp64, test_case->requires_integer_dot_product);
     if (!device)
     {
         fprintf(stderr, "opencl_test: no compatible OpenCL device with an online compiler; skipping\n");

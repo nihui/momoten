@@ -61,6 +61,7 @@ struct KernelABI
     std::vector<std::string> required_extensions;
     SubgroupMode subgroup_mode;
     uint32_t subgroup_size;
+    bool fp64;
     bool integer_dot_product;
     // True only when the logical Vulkan workgroup has no workgroup storage
     // or synchronization barrier and may therefore be split across independent

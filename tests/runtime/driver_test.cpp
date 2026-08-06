@@ -341,6 +341,14 @@ int main(int argc, char** argv)
     vkCmdPushConstants(command_buffer, pipeline_layout, VK_SHADER_STAGE_COMPUTE_BIT,
                        0, sizeof(scale), &scale);
     vkCmdDispatch(command_buffer, 2, 1, 1);
+    VkMemoryBarrier dispatch_barrier = {};
+    dispatch_barrier.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
+    dispatch_barrier.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
+    dispatch_barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+    vkCmdPipelineBarrier(command_buffer,
+                         VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                         VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0,
+                         1, &dispatch_barrier, 0, 0, 0, 0);
 
     // Record a second dispatch with both descriptors and push constants
     // changed. Each dispatch must retain its own immutable Vulkan state

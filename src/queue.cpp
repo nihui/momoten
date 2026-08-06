@@ -2,7 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 #include "backend/device.h"
+#include "backend/memory_sync.h"
 #include "backend/objects.h"
+#include "backend/replay.h"
 #include "backend/runtime.h"
 #include "vulkan_internal.h"
 
@@ -40,6 +42,8 @@ VkResult impl_queue_submit(
         }
     }
 
+    prepare_mapped_memory_for_submit(device);
+    ReplayState replay(device);
     for (uint32_t s = 0; s < submit_count; s++)
     {
         for (uint32_t b = 0; b < submits[s].commandBufferCount; b++)
@@ -47,11 +51,17 @@ VkResult impl_queue_submit(
             VkCommandBuffer command_buffer = submits[s].pCommandBuffers[b];
             for (size_t c = 0; c < command_buffer->commands.size(); c++)
             {
-                cl_int ret = command_buffer->commands[c].type == RecordedCommand::CopyBuffer
-                                 ? replay_copy(device, command_buffer->commands[c])
-                                 : replay_dispatch(device, command_buffer->commands[c]);
+                const RecordedCommand& command = command_buffer->commands[c];
+                cl_int ret = CL_SUCCESS;
+                if (command.type == RecordedCommand::CopyBuffer)
+                    ret = replay_copy(replay, command);
+                else if (command.type == RecordedCommand::Dispatch)
+                    ret = replay_dispatch(replay, command);
+                else
+                    ret = replay_barrier(replay, command);
                 if (ret != CL_SUCCESS)
                 {
+                    abort_replay(replay);
                     log_error("command replay", ret);
                     return VK_ERROR_DEVICE_LOST;
                 }
@@ -60,10 +70,11 @@ VkResult impl_queue_submit(
     }
 
     cl_event event = 0;
-    cl_int ret = momoten_detail::g_opencl.p_clEnqueueMarker(device->command_queue, &event);
+    cl_int ret = finish_replay(replay, event);
     if (ret != CL_SUCCESS)
     {
-        log_error("clEnqueueMarker", ret);
+        abort_replay(replay);
+        log_error("finish command replay", ret);
         return VK_ERROR_DEVICE_LOST;
     }
     ret = momoten_detail::g_opencl.p_clFlush(device->command_queue);

@@ -72,6 +72,8 @@ protected:
 
 private:
     bool emit_robust_buffer_load(const Instruction& instruction, const uint32_t* ops);
+    void emit_fp64_vector_helpers();
+    bool emit_fp64_vector_instruction(const Instruction& instruction, const uint32_t* ops);
     void emit_integer_dot_product_helpers();
     bool emit_integer_dot_product_instruction(const Instruction& instruction, const uint32_t* ops);
     bool emit_basic_subgroup_instruction(const Instruction& instruction, const uint32_t* ops);
@@ -95,6 +97,7 @@ private:
     TranslationOptions translation_options;
     bool requires_global_int32_atomics;
     bool requires_fp16;
+    bool requires_fp64;
     bool requires_integer_dot_product;
     bool uses_workgroup_storage;
     bool workgroup_splittable;

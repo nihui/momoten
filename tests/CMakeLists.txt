@@ -1,6 +1,15 @@
 # Copyright 2026 nihui
 # SPDX-License-Identifier: Apache-2.0
 
+add_executable(momoten_memory_state_test
+    runtime/memory_state_test.cpp
+    "${CMAKE_CURRENT_SOURCE_DIR}/../src/backend/memory_state.cpp")
+target_compile_features(momoten_memory_state_test PRIVATE cxx_std_11)
+target_link_libraries(momoten_memory_state_test PRIVATE
+    momoten_vulkan_headers)
+add_test(NAME momoten_memory_state COMMAND momoten_memory_state_test)
+set_tests_properties(momoten_memory_state PROPERTIES
+    LABELS "momoten;runtime;memory")
 if(TARGET momoten_driver AND NOT CMAKE_CROSSCOMPILING)
     add_test(NAME momoten_no_system_opencl_dependency
         COMMAND "${CMAKE_COMMAND}"
@@ -11,16 +20,13 @@ if(TARGET momoten_driver AND NOT CMAKE_CROSSCOMPILING)
 endif()
 
 if(TARGET momoten_driver)
+    set(momoten_32bit_driver_sources)
+    foreach(momoten_driver_source IN LISTS momoten_driver_sources)
+        list(APPEND momoten_32bit_driver_sources
+            "${CMAKE_CURRENT_SOURCE_DIR}/../${momoten_driver_source}")
+    endforeach()
     add_library(momoten_32bit_handle_compile OBJECT
-        "${CMAKE_CURRENT_SOURCE_DIR}/../src/backend/runtime.cpp"
-        "${CMAKE_CURRENT_SOURCE_DIR}/../src/instance.cpp"
-        "${CMAKE_CURRENT_SOURCE_DIR}/../src/device.cpp"
-        "${CMAKE_CURRENT_SOURCE_DIR}/../src/memory.cpp"
-        "${CMAKE_CURRENT_SOURCE_DIR}/../src/pipeline.cpp"
-        "${CMAKE_CURRENT_SOURCE_DIR}/../src/command.cpp"
-        "${CMAKE_CURRENT_SOURCE_DIR}/../src/queue.cpp"
-        "${CMAKE_CURRENT_SOURCE_DIR}/../src/sync.cpp"
-        "${CMAKE_CURRENT_SOURCE_DIR}/../src/entrypoints.cpp")
+        ${momoten_32bit_driver_sources})
     target_compile_features(momoten_32bit_handle_compile PRIVATE cxx_std_11)
     target_compile_definitions(momoten_32bit_handle_compile PRIVATE
         CL_TARGET_OPENCL_VERSION=100
@@ -89,6 +95,7 @@ momoten_compile_test_shader(momoten_unsupported_test_spv unsupported_image.comp 
 momoten_compile_test_shader(momoten_atomic_test_spv atomic_compare_exchange.comp vulkan1.0)
 momoten_compile_test_shader(momoten_atomic_packed_test_spv atomic_packed.comp vulkan1.0)
 momoten_compile_test_shader(momoten_fp16_test_spv fp16_buffer.comp vulkan1.1)
+momoten_compile_test_shader(momoten_fp64_test_spv fp64_buffer.comp vulkan1.1)
 momoten_compile_test_shader(momoten_int16_test_spv int16_buffer.comp vulkan1.1)
 momoten_compile_test_shader(momoten_scalar_16bit_test_spv scalar_16bit_buffer.comp vulkan1.1)
 momoten_compile_test_shader(momoten_subgroup_basic_test_spv subgroup_basic.comp vulkan1.1)
@@ -110,7 +117,8 @@ add_test(NAME momoten_translator_simple
         "${momoten_int16_test_spv}"
         "${momoten_subgroup_basic_test_spv}"
         "${momoten_integer_dot_product_test_spv}"
-        "${momoten_workgroup_split_test_spv}")
+        "${momoten_workgroup_split_test_spv}"
+        "${momoten_fp64_test_spv}")
 set_tests_properties(momoten_translator_simple PROPERTIES
     LABELS "momoten;translator")
 
@@ -130,7 +138,8 @@ if(TARGET momoten_amalgamated_translator)
             "${momoten_int16_test_spv}"
             "${momoten_subgroup_basic_test_spv}"
             "${momoten_integer_dot_product_test_spv}"
-            "${momoten_workgroup_split_test_spv}")
+            "${momoten_workgroup_split_test_spv}"
+            "${momoten_fp64_test_spv}")
     set_tests_properties(momoten_amalgamated_translator_simple PROPERTIES
         LABELS "momoten;amalgamation;translator")
 endif()
@@ -165,6 +174,8 @@ if(TARGET momoten_test_opencl)
         COMMAND momoten_opencl_test "${momoten_test_spv}")
     add_test(NAME momoten_opencl_fp16
         COMMAND momoten_opencl_test "${momoten_fp16_test_spv}" fp16)
+    add_test(NAME momoten_opencl_fp64
+        COMMAND momoten_opencl_test "${momoten_fp64_test_spv}" fp64)
     add_test(NAME momoten_opencl_int16
         COMMAND momoten_opencl_test "${momoten_int16_test_spv}" int16)
     add_test(NAME momoten_opencl_atomic_packed
@@ -180,6 +191,7 @@ if(TARGET momoten_test_opencl)
         COMMAND momoten_opencl_test "${momoten_workgroup_split_test_spv}"
             workgroup-split)
     set_tests_properties(momoten_opencl_simple momoten_opencl_fp16
+        momoten_opencl_fp64
         momoten_opencl_int16
         momoten_opencl_atomic_packed momoten_opencl_scalar_16bit
         momoten_opencl_subgroup_basic momoten_opencl_integer_dot_product
