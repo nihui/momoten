@@ -13,8 +13,10 @@ void CompilerOpenCL::emit_integer_dot_product_helpers()
     // extension only accelerates 4x8-bit inputs. Accumulate exact magnitudes
     // in three uint limbs so saturating operations remain correct without
     // requiring optional OpenCL int64 support.
+    // These helpers deliberately use ordinary definitions rather than inline;
+    // see emit_header() for the OpenCL C 1.0 linkage constraint.
     statement("typedef struct { uint lo; uint mid; uint hi; } momo_u96;");
-    statement("inline void momo_u96_add_u32(__private momo_u96* value, uint addend)");
+    statement("void momo_u96_add_u32(__private momo_u96* value, uint addend)");
     begin_scope();
     statement("uint old_lo = value->lo;");
     statement("value->lo += addend;");
@@ -25,7 +27,7 @@ void CompilerOpenCL::emit_integer_dot_product_helpers()
     statement("if (value->mid < old_mid) value->hi++;");
     end_scope();
     end_scope();
-    statement("inline void momo_u96_add_product(__private momo_u96* value, uint a, uint b)");
+    statement("void momo_u96_add_product(__private momo_u96* value, uint a, uint b)");
     begin_scope();
     statement("uint product_lo = a * b;");
     statement("uint product_hi = mul_hi(a, b);");
@@ -39,14 +41,14 @@ void CompilerOpenCL::emit_integer_dot_product_helpers()
     statement("value->mid += carry_lo;");
     statement("value->hi += carry_hi + (value->mid < old_mid);");
     end_scope();
-    statement("inline int momo_u96_compare(momo_u96 a, momo_u96 b)");
+    statement("int momo_u96_compare(momo_u96 a, momo_u96 b)");
     begin_scope();
     statement("if (a.hi != b.hi) return a.hi > b.hi ? 1 : -1;");
     statement("if (a.mid != b.mid) return a.mid > b.mid ? 1 : -1;");
     statement("if (a.lo != b.lo) return a.lo > b.lo ? 1 : -1;");
     statement("return 0;");
     end_scope();
-    statement("inline momo_u96 momo_u96_subtract(momo_u96 a, momo_u96 b)");
+    statement("momo_u96 momo_u96_subtract(momo_u96 a, momo_u96 b)");
     begin_scope();
     statement("momo_u96 result;");
     statement("result.lo = a.lo - b.lo;");
@@ -58,20 +60,20 @@ void CompilerOpenCL::emit_integer_dot_product_helpers()
     statement("result.hi = a.hi - b.hi - borrow_mid - borrow_carry;");
     statement("return result;");
     end_scope();
-    statement("inline uint momo_abs_int_bits(int value)");
+    statement("uint momo_abs_int_bits(int value)");
     begin_scope();
     statement("return value < 0 ? 0u - as_uint(value) : as_uint(value);");
     end_scope();
-    statement("inline void momo_u96_add_ss_product(__private momo_u96* positive, __private momo_u96* negative, int a, int b)");
+    statement("void momo_u96_add_ss_product(__private momo_u96* positive, __private momo_u96* negative, int a, int b)");
     begin_scope();
     statement("__private momo_u96* destination = ((a < 0) != (b < 0)) ? negative : positive;");
     statement("momo_u96_add_product(destination, momo_abs_int_bits(a), momo_abs_int_bits(b));");
     end_scope();
-    statement("inline void momo_u96_add_su_product(__private momo_u96* positive, __private momo_u96* negative, int a, uint b)");
+    statement("void momo_u96_add_su_product(__private momo_u96* positive, __private momo_u96* negative, int a, uint b)");
     begin_scope();
     statement("momo_u96_add_product(a < 0 ? negative : positive, momo_abs_int_bits(a), b);");
     end_scope();
-    statement("inline int momo_finalize_signed_dot(momo_u96 positive, momo_u96 negative, int accumulator)");
+    statement("int momo_finalize_signed_dot(momo_u96 positive, momo_u96 negative, int accumulator)");
     begin_scope();
     statement("if (accumulator < 0) momo_u96_add_u32(&negative, 0u - as_uint(accumulator));");
     statement("else momo_u96_add_u32(&positive, as_uint(accumulator));");
@@ -83,7 +85,7 @@ void CompilerOpenCL::emit_integer_dot_product_helpers()
     statement("    return magnitude.lo > 0x7fffffffu ? as_int(0x7fffffffu) : as_int(magnitude.lo);");
     statement("return magnitude.lo > 0x80000000u ? as_int(0x80000000u) : as_int(0u - magnitude.lo);");
     end_scope();
-    statement("inline uint momo_finalize_unsigned_dot(momo_u96 value, uint accumulator)");
+    statement("uint momo_finalize_unsigned_dot(momo_u96 value, uint accumulator)");
     begin_scope();
     statement("momo_u96_add_u32(&value, accumulator);");
     statement("return value.hi != 0u || value.mid != 0u ? 0xffffffffu : value.lo;");
@@ -112,20 +114,20 @@ void CompilerOpenCL::emit_integer_dot_product_helpers()
         unsigned_sum += ";";
         mixed_sum += ";";
 
-        statement("inline uint momo_sdot32_" + suffix + "(int" + suffix + " a, int" + suffix + " b)");
+        statement("uint momo_sdot32_" + suffix + "(int" + suffix + " a, int" + suffix + " b)");
         begin_scope();
         statement(signed_sum);
         end_scope();
-        statement("inline uint momo_udot32_" + suffix + "(uint" + suffix + " a, uint" + suffix + " b)");
+        statement("uint momo_udot32_" + suffix + "(uint" + suffix + " a, uint" + suffix + " b)");
         begin_scope();
         statement(unsigned_sum);
         end_scope();
-        statement("inline uint momo_sudot32_" + suffix + "(int" + suffix + " a, uint" + suffix + " b)");
+        statement("uint momo_sudot32_" + suffix + "(int" + suffix + " a, uint" + suffix + " b)");
         begin_scope();
         statement(mixed_sum);
         end_scope();
 
-        statement("inline int momo_sdot_acc_sat32_" + suffix + "(int" + suffix + " a, int" + suffix + " b, int accumulator)");
+        statement("int momo_sdot_acc_sat32_" + suffix + "(int" + suffix + " a, int" + suffix + " b, int accumulator)");
         begin_scope();
         statement("momo_u96 positive = { 0u, 0u, 0u };");
         statement("momo_u96 negative = { 0u, 0u, 0u };");
@@ -134,7 +136,7 @@ void CompilerOpenCL::emit_integer_dot_product_helpers()
         statement("return momo_finalize_signed_dot(positive, negative, accumulator);");
         end_scope();
 
-        statement("inline uint momo_udot_acc_sat32_" + suffix + "(uint" + suffix + " a, uint" + suffix + " b, uint accumulator)");
+        statement("uint momo_udot_acc_sat32_" + suffix + "(uint" + suffix + " a, uint" + suffix + " b, uint accumulator)");
         begin_scope();
         statement("momo_u96 value = { 0u, 0u, 0u };");
         for (uint32_t i = 0; i < count; i++)
@@ -142,7 +144,7 @@ void CompilerOpenCL::emit_integer_dot_product_helpers()
         statement("return momo_finalize_unsigned_dot(value, accumulator);");
         end_scope();
 
-        statement("inline int momo_sudot_acc_sat32_" + suffix + "(int" + suffix + " a, uint" + suffix + " b, int accumulator)");
+        statement("int momo_sudot_acc_sat32_" + suffix + "(int" + suffix + " a, uint" + suffix + " b, int accumulator)");
         begin_scope();
         statement("momo_u96 positive = { 0u, 0u, 0u };");
         statement("momo_u96 negative = { 0u, 0u, 0u };");

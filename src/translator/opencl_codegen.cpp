@@ -143,18 +143,11 @@ void CompilerOpenCL::emit_header()
     statement("#define memoryBarrierBuffer() mem_fence(CLK_GLOBAL_MEM_FENCE)");
     statement("#define memoryBarrierShared() mem_fence(CLK_LOCAL_MEM_FENCE)");
     statement("#define groupMemoryBarrier() mem_fence(CLK_LOCAL_MEM_FENCE | CLK_GLOBAL_MEM_FENCE)");
-    // Define the core OpenCL call before introducing the zero-argument
-    // GLSL compatibility macro so internal lowering can pass explicit flags
-    // without recursively expanding that macro.
-    statement("inline void momo_workgroup_barrier(uint flags)");
-    begin_scope();
-    statement("barrier(flags);");
-    end_scope();
-    // SPIR-V generated from GLSL barrier() carries WorkgroupMemory
-    // semantics. A global fence is neither required nor implied here.
-    statement("#define barrier() momo_workgroup_barrier(CLK_LOCAL_MEM_FENCE)");
     statement("");
-    statement("inline float momo_half_to_float_scalar(ushort h)");
+    // Keep generated function helpers as ordinary definitions. OpenCL C 1.0
+    // rejects static functions, while C99-style plain inline definitions can
+    // leave unresolved external references on drivers that do not inline.
+    statement("float momo_half_to_float_scalar(ushort h)");
     begin_scope();
     statement("uint sign = ((uint)h & 0x8000u) << 16;");
     statement("uint exponent = ((uint)h >> 10) & 0x1fu;");
@@ -183,7 +176,7 @@ void CompilerOpenCL::emit_header()
     statement("return as_float(bits);");
     end_scope();
     statement("");
-    statement("inline ushort momo_float_to_half_scalar(float value)");
+    statement("ushort momo_float_to_half_scalar(float value)");
     begin_scope();
     statement("uint bits = as_uint(value);");
     statement("uint sign = (bits >> 16) & 0x8000u;");
@@ -258,11 +251,11 @@ void CompilerOpenCL::emit_header()
     statement("return (short)momo_load_ushort((volatile __global const ushort*)value, base, size);");
     end_scope();
     statement("");
-    statement("inline float2 momo_unpack_half2x16(uint value)");
+    statement("float2 momo_unpack_half2x16(uint value)");
     begin_scope();
     statement("return (float2)(momo_half_to_float_scalar((ushort)value), momo_half_to_float_scalar((ushort)(value >> 16)));");
     end_scope();
-    statement("inline uint momo_pack_half2x16(float2 value)");
+    statement("uint momo_pack_half2x16(float2 value)");
     begin_scope();
     statement("return (uint)momo_float_to_half_scalar(value.x) | ((uint)momo_float_to_half_scalar(value.y) << 16);");
     end_scope();
@@ -655,18 +648,8 @@ void CompilerOpenCL::emit_instruction(const Instruction& instruction)
         break;
     }
 
-    if (opcode == OpControlBarrier || opcode == OpMemoryBarrier)
-    {
-        if (emit_subgroup_barrier_instruction(instruction, ops))
-            return;
-
-        validate_barrier_instruction(opcode, ops);
-        // CompilerGLSL performs the required expression flushes around
-        // workgroup synchronization. The header maps its small fixed set
-        // of GLSL barrier names to OpenCL C 1.0 fences.
-        CompilerGLSL::emit_instruction(instruction);
+    if (emit_barrier_instruction(instruction, ops))
         return;
-    }
 
     if (opcode == OpAny || opcode == OpAll)
     {

@@ -77,7 +77,7 @@ private:
     void emit_integer_dot_product_helpers();
     bool emit_integer_dot_product_instruction(const Instruction& instruction, const uint32_t* ops);
     bool emit_basic_subgroup_instruction(const Instruction& instruction, const uint32_t* ops);
-    bool emit_subgroup_barrier_instruction(const Instruction& instruction, const uint32_t* ops);
+    bool emit_barrier_instruction(const Instruction& instruction, const uint32_t* ops);
     bool access_chain_contains_matrix(uint32_t base, const uint32_t* indices, uint32_t count);
     bool emit_matrix_access_chain(const Instruction& instruction, const uint32_t* ops);
     static const char* function_pointer_address_space(StorageClass storage);

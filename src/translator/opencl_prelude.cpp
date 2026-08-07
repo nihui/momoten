@@ -17,6 +17,8 @@ void CompilerOpenCL::emit_constructor_macros(const char* base)
 
 void CompilerOpenCL::emit_fp64_vector_helpers()
 {
+    // OpenCL C 1.0 does not permit static function definitions, and plain
+    // C99 inline linkage can leave an unresolved symbol on some drivers.
     static const char components[] = "xyzw";
     static const char* operation_names[] = {"add", "sub", "mul", "div"};
     static const char operation_tokens[] = "+-*/";
@@ -37,7 +39,7 @@ void CompilerOpenCL::emit_fp64_vector_helpers()
             splat_arguments += "value";
         }
 
-        statement("static inline double", suffix, " momo_make_double", suffix, "(", parameters, ")");
+        statement("double", suffix, " momo_make_double", suffix, "(", parameters, ")");
         begin_scope();
         statement("double", suffix, " result;");
         for (uint32_t component = 0; component < width; component++)
@@ -45,14 +47,14 @@ void CompilerOpenCL::emit_fp64_vector_helpers()
         statement("return result;");
         end_scope();
 
-        statement("static inline double", suffix, " momo_splat_double", suffix, "(double value)");
+        statement("double", suffix, " momo_splat_double", suffix, "(double value)");
         begin_scope();
         statement("return momo_make_double", suffix, "(", splat_arguments, ");");
         end_scope();
 
         for (uint32_t operation = 0; operation < 4; operation++)
         {
-            statement("static inline double", suffix, " momo_fp64_", operation_names[operation], suffix,
+            statement("double", suffix, " momo_fp64_", operation_names[operation], suffix,
                       "(double", suffix, " a, double", suffix, " b)");
             begin_scope();
             statement("double", suffix, " result;");
@@ -63,7 +65,7 @@ void CompilerOpenCL::emit_fp64_vector_helpers()
             end_scope();
         }
 
-        statement("static inline double", suffix, " momo_fp64_neg", suffix, "(double", suffix, " value)");
+        statement("double", suffix, " momo_fp64_neg", suffix, "(double", suffix, " value)");
         begin_scope();
         statement("double", suffix, " result;");
         for (uint32_t component = 0; component < width; component++)
@@ -71,7 +73,7 @@ void CompilerOpenCL::emit_fp64_vector_helpers()
         statement("return result;");
         end_scope();
 
-        statement("static inline double", suffix, " momo_fp64_scale", suffix,
+        statement("double", suffix, " momo_fp64_scale", suffix,
                   "(double", suffix, " value, double scale)");
         begin_scope();
         statement("double", suffix, " result;");
@@ -80,7 +82,7 @@ void CompilerOpenCL::emit_fp64_vector_helpers()
         statement("return result;");
         end_scope();
 
-        statement("static inline double momo_fp64_dot", suffix,
+        statement("double momo_fp64_dot", suffix,
                   "(double", suffix, " a, double", suffix, " b)");
         begin_scope();
         std::string dot_expression;

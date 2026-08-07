@@ -32,23 +32,16 @@ bool CompilerOpenCL::emit_basic_subgroup_instruction(
     return true;
 }
 
-bool CompilerOpenCL::emit_subgroup_barrier_instruction(
+bool CompilerOpenCL::emit_barrier_instruction(
     const Instruction& instruction, const uint32_t* ops)
 {
     const Op opcode = static_cast<Op>(instruction.op);
     if (opcode != OpControlBarrier && opcode != OpMemoryBarrier)
         return false;
 
-    const uint32_t execution_scope = opcode == OpControlBarrier ? evaluate_constant_u32(ops[0]) : ScopeSubgroup;
+    const uint32_t execution_scope = opcode == OpControlBarrier ? evaluate_constant_u32(ops[0]) : ScopeWorkgroup;
     const uint32_t memory_scope = evaluate_constant_u32(
         opcode == OpControlBarrier ? ops[1] : ops[0]);
-    if (execution_scope != ScopeSubgroup && memory_scope != ScopeSubgroup)
-        return false;
-
-    if (opcode == OpControlBarrier && execution_scope != ScopeSubgroup)
-        throw std::runtime_error("a subgroup memory scope with a wider execution barrier is unsupported");
-    if (memory_scope != ScopeSubgroup)
-        throw std::runtime_error("a subgroup execution barrier requires Subgroup memory scope");
 
     validate_barrier_instruction(opcode, ops);
     const uint32_t semantics = evaluate_constant_u32(
@@ -68,6 +61,20 @@ bool CompilerOpenCL::emit_subgroup_barrier_instruction(
     if (semantics & (MemorySemanticsUniformMemoryMask | MemorySemanticsCrossWorkgroupMemoryMask | MemorySemanticsAtomicCounterMemoryMask))
         flags += flags.empty() ? "CLK_GLOBAL_MEM_FENCE" : " | CLK_GLOBAL_MEM_FENCE";
 
+    if (opcode == OpControlBarrier && execution_scope == ScopeWorkgroup)
+    {
+        if (memory_scope != ScopeWorkgroup)
+            throw std::runtime_error("a workgroup execution barrier requires Workgroup memory scope");
+        // OpenCL implementations may require the fence operand to be a
+        // compile-time constant. Emit the builtin directly instead of routing
+        // it through an inline helper with C99 external-linkage semantics.
+        statement("barrier(", flags.empty() ? "CLK_LOCAL_MEM_FENCE" : flags, ");");
+        return true;
+    }
+
+    if (opcode == OpControlBarrier && memory_scope != ScopeSubgroup)
+        throw std::runtime_error("a subgroup execution barrier requires Subgroup memory scope");
+
     if (opcode == OpControlBarrier && translation_options.subgroup_mode == SubgroupModeNative)
     {
         statement("sub_group_barrier(", flags.empty() ? "0" : flags, ");");
@@ -84,7 +91,7 @@ bool CompilerOpenCL::emit_subgroup_barrier_instruction(
         // occupied), so an OpenCL workgroup barrier has the same participants.
         // Use a valid core-OpenCL fence flag even when SPIR-V requests only
         // execution convergence.
-        statement("momo_workgroup_barrier(", flags.empty() ? "CLK_LOCAL_MEM_FENCE" : flags, ");");
+        statement("barrier(", flags.empty() ? "CLK_LOCAL_MEM_FENCE" : flags, ");");
         return true;
     }
 

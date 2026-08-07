@@ -160,6 +160,7 @@ if(MOMOTEN_CLANG AND TARGET momoten_spv_to_clc)
             -DSPV_FILE=${momoten_test_spv}
             -DATOMIC_SPV_FILE=${momoten_atomic_test_spv}
             -DFP16_SPV_FILE=${momoten_fp16_test_spv}
+            -DFP64_SPV_FILE=${momoten_fp64_test_spv}
             -DFP16_CONSTANT_SPV_FILE=${momoten_fp16_program_constant_test_spv}
             -DOUTPUT_DIR=${CMAKE_CURRENT_BINARY_DIR}/strict-cl10
             -P "${CMAKE_CURRENT_SOURCE_DIR}/translator/strict_cl10_test.cmake")
