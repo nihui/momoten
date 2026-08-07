@@ -97,6 +97,7 @@ private:
     TranslationOptions translation_options;
     bool requires_global_int32_atomics;
     bool requires_fp16;
+    bool requires_int64;
     bool requires_fp64;
     bool requires_integer_dot_product;
     bool uses_workgroup_storage;

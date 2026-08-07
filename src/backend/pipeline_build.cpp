@@ -76,6 +76,7 @@ static void dump_pipeline_artifacts(const std::shared_ptr<ShaderModule>& module,
                 : "singleton")
         << '\n'
         << "subgroup_size=" << translated.abi.subgroup_size << '\n'
+        << "int64=" << translated.abi.int64 << '\n'
         << "fp64=" << translated.abi.fp64 << '\n'
         << "integer_dot_product=" << translated.abi.integer_dot_product << '\n'
         << "workgroup_splittable=" << translated.abi.workgroup_splittable << '\n'

@@ -4,6 +4,8 @@
 #version 450
 #extension GL_EXT_shader_16bit_storage : require
 #extension GL_EXT_shader_explicit_arithmetic_types_float16 : require
+#extension GL_EXT_shader_explicit_arithmetic_types_int16 : require
+#extension GL_EXT_shader_explicit_arithmetic_types_int64 : require
 
 layout(local_size_x = 4, local_size_y = 1, local_size_z = 1) in;
 
@@ -22,14 +24,23 @@ layout(set = 0, binding = 2, std430) readonly buffer MatrixBuffer
     f16mat4 values[];
 } matrix_buffer;
 
-shared f16vec4 scratch[4];
+// ncnn uses this representation when fp16 storage and arithmetic are
+// available but fp16 uniforms are not. Keep it here as an integration fixture
+// for Vulkan shaderInt64 and OpenCL workgroup ulong lowering.
+shared uint64_t scratch[4];
 
 void main()
 {
     uint i = gl_GlobalInvocationID.x;
     f16vec4 value = input_buffer.values[i];
     f16mat4 identity = matrix_buffer.values[0];
-    scratch[gl_LocalInvocationID.x] = value * identity + f16vec4(float16_t(0.5));
+    f16vec4 transformed = value * identity + f16vec4(float16_t(0.5));
+    // Exercise OpSelect with a half4 result. OpenCL requires a short4 mask,
+    // while SPIR-V boolean vectors are represented as int4 by the translator.
+    bvec4 keep = lessThan(transformed, f16vec4(float16_t(100.0)));
+    transformed = mix(f16vec4(float16_t(123.0)), transformed, keep);
+    scratch[gl_LocalInvocationID.x] = pack64(halfBitsToUint16(transformed));
     barrier();
-    output_buffer.values[i] = identity * scratch[gl_LocalInvocationID.x];
+    f16vec4 restored = uint16BitsToHalf(unpack16(scratch[gl_LocalInvocationID.x]));
+    output_buffer.values[i] = identity * restored;
 }

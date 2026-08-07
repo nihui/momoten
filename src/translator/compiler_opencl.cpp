@@ -34,7 +34,7 @@ static void qualify_file_scope_constants(std::string& source)
 }
 
 KernelABI::KernelABI()
-    : address_bits(0), subgroup_mode(SubgroupModeSingleton), subgroup_size(1), fp64(false), integer_dot_product(false), workgroup_splittable(false), push_constant_arg_index(-1), push_constant_size(0)
+    : address_bits(0), subgroup_mode(SubgroupModeSingleton), subgroup_size(1), int64(false), fp64(false), integer_dot_product(false), workgroup_splittable(false), push_constant_arg_index(-1), push_constant_size(0)
 {
     local_size[0] = 1;
     local_size[1] = 1;
@@ -51,7 +51,7 @@ TranslationOptions::TranslationOptions()
 
 CompilerOpenCL::CompilerOpenCL(const uint32_t* words, size_t word_count, const TranslationOptions& options_,
                                bool requires_global_int32_atomics_, bool contains_synchronization_barrier)
-    : CompilerGLSL(words, word_count), translation_options(options_), requires_global_int32_atomics(requires_global_int32_atomics_), requires_fp16(false), requires_fp64(false), requires_integer_dot_product(false), uses_workgroup_storage(false), workgroup_splittable(!contains_synchronization_barrier), push_constant_variable_id(0)
+    : CompilerGLSL(words, word_count), translation_options(options_), requires_global_int32_atomics(requires_global_int32_atomics_), requires_fp16(false), requires_int64(false), requires_fp64(false), requires_integer_dot_product(false), uses_workgroup_storage(false), workgroup_splittable(!contains_synchronization_barrier), push_constant_variable_id(0)
 {
 }
 
@@ -97,6 +97,7 @@ void CompilerOpenCL::prepare(KernelABI& abi)
 
     abi.entry_point = "momo_main";
     abi.address_bits = translation_options.address_bits;
+    abi.int64 = requires_int64;
     abi.fp64 = requires_fp64;
     abi.subgroup_mode = translation_options.subgroup_mode;
     abi.subgroup_size = translation_options.subgroup_size;
@@ -127,6 +128,11 @@ void CompilerOpenCL::validate_capabilities()
         const Capability capability = capabilities[i];
         if (capability == CapabilityShader || capability == CapabilityGroupNonUniform || capability == CapabilityInt16 || capability == CapabilityStorageBuffer16BitAccess || capability == CapabilityUniformAndStorageBuffer16BitAccess)
             continue;
+        if (capability == CapabilityInt64)
+        {
+            requires_int64 = true;
+            continue;
+        }
         if (capability == CapabilityDotProduct)
         {
             requires_integer_dot_product = true;
@@ -221,9 +227,10 @@ void CompilerOpenCL::localize_workgroup_variables()
 
         const SPIRType& type = get_variable_data_type(variable);
         const bool supported_32 = (type.basetype == SPIRType::Int || type.basetype == SPIRType::UInt || type.basetype == SPIRType::Float) && type.width == 32;
+        const bool supported_64 = (type.basetype == SPIRType::Int64 || type.basetype == SPIRType::UInt64) && type.width == 64;
         const bool supported_half = type.basetype == SPIRType::Half && type.width == 16;
-        if ((!supported_32 && !supported_half) || type.columns != 1 || type.vecsize == 3 || type.vecsize > 4)
-            throw std::runtime_error("OpenCL workgroup storage requires scalar, vec2 or vec4 int32/uint32/float32/float16 elements");
+        if ((!supported_32 && !supported_64 && !supported_half) || type.columns != 1 || type.vecsize == 3 || type.vecsize > 4)
+            throw std::runtime_error("OpenCL workgroup storage requires scalar, vec2 or vec4 int32/uint32/float32/int64/uint64/float16 elements");
         for (size_t dimension = 0; dimension < type.array.size(); dimension++)
         {
             if (!type.array_size_literal[dimension] || type.array[dimension] == 0)

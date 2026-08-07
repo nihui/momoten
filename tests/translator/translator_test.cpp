@@ -146,6 +146,8 @@ int main(int argc, char** argv)
                 "fp16 storage/arithmetic SPIR-V was rejected")
         || require(fp16_result.abi.required_extensions.size() == 1 && fp16_result.abi.required_extensions[0] == "cl_khr_fp16",
                    "fp16 extension requirement was not reflected")
+        || require(fp16_result.abi.int64,
+                   "fp16 packed-workgroup fixture did not reflect its int64 requirement")
         || require(fp16_result.source.find("#pragma OPENCL EXTENSION cl_khr_fp16 : enable") != std::string::npos,
                    "fp16 extension pragma was not emitted")
         || require(fp16_result.abi.buffers.size() == 3,
@@ -154,8 +156,14 @@ int main(int argc, char** argv)
                    "float16 storage buffer was not lowered to half4")
         || require(fp16_result.source.find("__global momo_hmat4 *") != std::string::npos,
                    "float16 mat4 storage buffer was not lowered")
-        || require(fp16_result.source.find("__local half4 scratch[4]") != std::string::npos,
-                   "float16 workgroup storage was not lowered")
+        || require(fp16_result.source.find("__local ulong scratch[4]") != std::string::npos,
+                   "packed float16 workgroup storage was not lowered to ulong")
+        || require(fp16_result.source.find("as_ulong(") != std::string::npos && fp16_result.source.find("as_ushort4(") != std::string::npos,
+                   "packed float16 workgroup bitcasts were not lowered with OpenCL as_type builtins")
+        || require(fp16_result.source.find("convert_short4(") != std::string::npos,
+                   "half4 OpSelect mask was not normalized to the OpenCL element width")
+        || require(fp16_result.source.find("int4 keep = convert_int4(") != std::string::npos,
+                   "half4 comparison result was not normalized to the SPIR-V boolean representation")
         || require(fp16_result.source.find("typedef struct { half4 c[4]; } momo_hmat4") != std::string::npos,
                    "float16 mat4 representation was not emitted")
         || require(fp16_result.source.find("uint momo_pack_half2x16(") != std::string::npos,

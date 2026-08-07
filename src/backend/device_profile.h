@@ -39,6 +39,7 @@ struct IntegerDotProductProfile
 struct ShaderDeviceProfile
 {
     bool fp16;
+    bool int64;
     bool fp64;
     momoten::SubgroupMode subgroup_mode;
     uint32_t subgroup_size;
@@ -50,6 +51,7 @@ struct ShaderDeviceProfile
 
 struct EnabledShaderProfile
 {
+    bool int64;
     bool fp64;
     bool integer_dot_product;
 

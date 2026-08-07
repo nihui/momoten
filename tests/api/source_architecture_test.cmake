@@ -57,3 +57,15 @@ file(READ "${SOURCE_ROOT}/src/backend/objects.h" objects)
 if(objects MATCHES "struct RecordedCommand")
     message(FATAL_ERROR "objects.h contains command-stream definitions")
 endif()
+
+file(READ "${SOURCE_ROOT}/src/backend/device_profile.cpp" device_profile)
+if(device_profile MATCHES "probe_int64|momo_int64_probe")
+    message(FATAL_ERROR
+        "shaderInt64 discovery must use OpenCL capability declarations, not compiler probes")
+endif()
+foreach(int64_declaration CL_DEVICE_PROFILE FULL_PROFILE EMBEDDED_PROFILE cles_khr_int64 __opencl_c_int64)
+    if(NOT device_profile MATCHES "${int64_declaration}")
+        message(FATAL_ERROR
+            "shaderInt64 discovery is missing ${int64_declaration}")
+    endif()
+endforeach()

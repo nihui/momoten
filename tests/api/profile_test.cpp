@@ -171,6 +171,11 @@ int main()
         fprintf(stderr, "profile_test: core and Features2 shaderFloat64 reports disagree\n");
         return 1;
     }
+    if (features2.features.shaderInt64 != core_features.shaderInt64)
+    {
+        fprintf(stderr, "profile_test: core and Features2 shaderInt64 reports disagree\n");
+        return 1;
+    }
     if ((integer_dot_features.shaderIntegerDotProduct == VK_TRUE) != integer_dot_product_supported)
     {
         fprintf(stderr, "profile_test: integer dot-product extension and feature disagree\n");
@@ -301,6 +306,19 @@ int main()
         if (check_result("vkCreateDevice(shaderFloat64)", result))
             return 1;
         vkDestroyDevice(fp64_device, 0);
+    }
+
+    if (core_features.shaderInt64)
+    {
+        VkPhysicalDeviceFeatures requested_features = {};
+        requested_features.shaderInt64 = VK_TRUE;
+        VkDeviceCreateInfo int64_device_info = minimal_device_info;
+        int64_device_info.pEnabledFeatures = &requested_features;
+        VkDevice int64_device = VK_NULL_HANDLE;
+        result = vkCreateDevice(physical_device, &int64_device_info, 0, &int64_device);
+        if (check_result("vkCreateDevice(shaderInt64)", result))
+            return 1;
+        vkDestroyDevice(int64_device, 0);
     }
 
     std::vector<const char*> device_extensions;

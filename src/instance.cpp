@@ -116,6 +116,7 @@ void impl_get_physical_device_features(
     if (features)
     {
         memset(features, 0, sizeof(*features));
+        features->shaderInt64 = physical && physical->shader_profile.int64 ? VK_TRUE : VK_FALSE;
         features->shaderFloat64 = physical && physical->shader_profile.fp64 ? VK_TRUE : VK_FALSE;
     }
 }

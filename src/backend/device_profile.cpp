@@ -7,14 +7,70 @@
 #include <algorithm>
 #include <cstring>
 #include <sstream>
+#include <vector>
 
 namespace momoten_detail {
+
+// OpenCL 3.0 declarations used opportunistically without raising the OpenCL
+// 1.0 compile target. Older devices reject the property query.
+static const cl_device_info MOMOTEN_CL_DEVICE_OPENCL_C_FEATURES = 0x106f;
+static const size_t MOMOTEN_CL_NAME_VERSION_MAX_NAME_SIZE = 64;
 
 static bool extension_string_contains(const std::string& extensions, const char* name)
 {
     const std::string padded = " " + extensions + " ";
     const std::string required = " " + std::string(name) + " ";
     return padded.find(required) != std::string::npos;
+}
+
+static std::string device_info_string(cl_device_id device, cl_device_info parameter)
+{
+    size_t size = 0;
+    if (momoten_detail::g_opencl.p_clGetDeviceInfo(device, parameter, 0, 0, &size) != CL_SUCCESS || size == 0)
+        return std::string();
+
+    std::vector<char> value(size);
+    if (momoten_detail::g_opencl.p_clGetDeviceInfo(device, parameter, size, value.data(), 0) != CL_SUCCESS)
+        return std::string();
+
+    value.back() = '\0';
+    return std::string(value.data());
+}
+
+struct OpenCLCNameVersion
+{
+    cl_uint version;
+    char name[MOMOTEN_CL_NAME_VERSION_MAX_NAME_SIZE];
+};
+
+static bool has_opencl_c_feature(cl_device_id device, const char* required_name)
+{
+    size_t size = 0;
+    if (momoten_detail::g_opencl.p_clGetDeviceInfo(device, MOMOTEN_CL_DEVICE_OPENCL_C_FEATURES, 0, 0, &size) != CL_SUCCESS || size == 0 || size % sizeof(OpenCLCNameVersion) != 0)
+        return false;
+
+    std::vector<OpenCLCNameVersion> features(size / sizeof(OpenCLCNameVersion));
+    if (momoten_detail::g_opencl.p_clGetDeviceInfo(device, MOMOTEN_CL_DEVICE_OPENCL_C_FEATURES, size, features.data(), 0) != CL_SUCCESS)
+        return false;
+
+    for (size_t i = 0; i < features.size(); i++)
+    {
+        if (strncmp(features[i].name, required_name, sizeof(features[i].name)) == 0)
+            return true;
+    }
+    return false;
+}
+
+static bool declares_int64(cl_device_id device, const std::string& extensions)
+{
+    const std::string profile = device_info_string(device, CL_DEVICE_PROFILE);
+    if (profile == "FULL_PROFILE")
+        return true;
+
+    if (profile == "EMBEDDED_PROFILE" && extension_string_contains(extensions, "cles_khr_int64"))
+        return true;
+
+    return has_opencl_c_feature(device, "__opencl_c_int64");
 }
 
 static uint32_t probe_opencl_subgroup_size(cl_device_id device,
@@ -230,6 +286,7 @@ ShaderDeviceProfile probe_shader_device_profile(
 {
     ShaderDeviceProfile profile;
     profile.fp16 = extension_string_contains(extensions, "cl_khr_fp16");
+    profile.int64 = declares_int64(device, extensions);
 
     cl_device_fp_config double_config = 0;
     profile.fp64 = extension_string_contains(extensions, "cl_khr_fp64")
@@ -278,12 +335,12 @@ IntegerDotProductProfile::IntegerDotProductProfile()
 }
 
 ShaderDeviceProfile::ShaderDeviceProfile()
-    : fp16(false), fp64(false), subgroup_mode(momoten::SubgroupModeSingleton), subgroup_size(1), subgroup_operations(VK_SUBGROUP_FEATURE_BASIC_BIT)
+    : fp16(false), int64(false), fp64(false), subgroup_mode(momoten::SubgroupModeSingleton), subgroup_size(1), subgroup_operations(VK_SUBGROUP_FEATURE_BASIC_BIT)
 {
 }
 
 EnabledShaderProfile::EnabledShaderProfile()
-    : fp64(false), integer_dot_product(false)
+    : int64(false), fp64(false), integer_dot_product(false)
 {
 }
 
@@ -313,6 +370,11 @@ bool validate_pipeline_abi(
     if (abi.fp64 && !device->enabled_shader_profile.fp64)
     {
         diagnostic = "shader float64 was not enabled when the Vulkan device was created";
+        return false;
+    }
+    if (abi.int64 && !device->enabled_shader_profile.int64)
+    {
+        diagnostic = "shader int64 was not enabled when the Vulkan device was created";
         return false;
     }
     if (abi.integer_dot_product && !device->enabled_shader_profile.integer_dot_product)

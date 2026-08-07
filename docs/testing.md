@@ -24,7 +24,7 @@ return 77 when no suitable OpenCL device is available. The optional
 direct-OpenCL test is enabled only when `MOMOTEN_TEST_OPENCL_LIBRARY` is
 explicitly supplied and never changes the driver's link dependencies.
 
-The fp64 fixture checks capability reflection, guarded extension setup, scalar/vector lowering, `ulong` storage-buffer bitcasts and numerical execution through an actual OpenCL compiler. The integer dot-product fixture covers packed 4x8-bit signed, unsigned and mixed-signedness operations, their accumulating-saturating variants, and 32-bit vector modulo/saturating corner cases. The driver test also enables the Vulkan feature and executes the translated SPIR-V through public Vulkan entry points. Device acceleration properties are tested independently from functional extension support.
+The fp16 fixture reproduces ncnn's packed-half workgroup representation with `uint64_t`, validates `ushort4`/`ulong` bitcasts, and exercises the width conversion required by OpenCL `select` for a half-vector result. The fp64 fixture checks capability reflection, guarded extension setup, scalar/vector lowering, `ulong` storage-buffer bitcasts and numerical execution through an actual OpenCL compiler. The integer dot-product fixture covers packed 4x8-bit signed, unsigned and mixed-signedness operations, their accumulating-saturating variants, and 32-bit vector modulo/saturating corner cases. The driver test also enables Vulkan features and executes translated SPIR-V through public Vulkan entry points. Device acceleration properties are tested independently from functional extension support.
 
 Shader fixtures are registered through the `momoten_compile_test_shader`
 CMake helper. Direct-OpenCL runtime modes are described by one test-case table,

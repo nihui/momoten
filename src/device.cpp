@@ -46,10 +46,18 @@ static bool extension_enabled(const VkDeviceCreateInfo* create_info,
 
 static VkResult enable_core_features(
     VkPhysicalDevice physical, const VkPhysicalDeviceFeatures& requested,
-    bool& fp64)
+    bool& int64, bool& fp64)
 {
     VkPhysicalDeviceFeatures remaining = requested;
+    int64 = false;
     fp64 = false;
+    if (remaining.shaderInt64)
+    {
+        if (!physical->shader_profile.int64)
+            return VK_ERROR_FEATURE_NOT_PRESENT;
+        int64 = true;
+        remaining.shaderInt64 = VK_FALSE;
+    }
     if (remaining.shaderFloat64)
     {
         if (!physical->shader_profile.fp64)
@@ -58,8 +66,7 @@ static VkResult enable_core_features(
         remaining.shaderFloat64 = VK_FALSE;
     }
 
-    const VkBool32* features =
-        reinterpret_cast<const VkBool32*>(&remaining);
+    const VkBool32* features = reinterpret_cast<const VkBool32*>(&remaining);
     for (size_t i = 0;
          i < sizeof(VkPhysicalDeviceFeatures) / sizeof(VkBool32); i++)
     {
@@ -88,7 +95,8 @@ VkResult impl_create_device(
     if (create_info->pEnabledFeatures)
     {
         const VkResult result = enable_core_features(
-            physical, *create_info->pEnabledFeatures, enabled_shader_profile.fp64);
+            physical, *create_info->pEnabledFeatures,
+            enabled_shader_profile.int64, enabled_shader_profile.fp64);
         if (result != VK_SUCCESS)
             return result;
     }
@@ -122,7 +130,8 @@ VkResult impl_create_device(
                 return VK_ERROR_INITIALIZATION_FAILED;
             const VkPhysicalDeviceFeatures2* features2 = reinterpret_cast<const VkPhysicalDeviceFeatures2*>(feature);
             const VkResult result = enable_core_features(
-                physical, features2->features, enabled_shader_profile.fp64);
+                physical, features2->features,
+                enabled_shader_profile.int64, enabled_shader_profile.fp64);
             if (result != VK_SUCCESS)
                 return result;
             core_features_specified = true;
@@ -175,6 +184,7 @@ VkResult impl_create_device(
     {
         // ncnn queries core shader features but creates the device with a null
         // pEnabledFeatures pointer. Preserve that established simplevk path.
+        enabled_shader_profile.int64 = physical->shader_profile.int64;
         enabled_shader_profile.fp64 = physical->shader_profile.fp64;
     }
 

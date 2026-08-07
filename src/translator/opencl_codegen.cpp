@@ -480,9 +480,7 @@ bool CompilerOpenCL::emit_fp64_vector_instruction(
             return false;
 
         const std::string suffix = std::to_string(operand_type.vecsize);
-        const std::string expression = "momo_fp64_dot" + suffix + "(" +
-                                       to_expression(ops[2]) + ", " +
-                                       to_expression(ops[3]) + ")";
+        const std::string expression = "momo_fp64_dot" + suffix + "(" + to_expression(ops[2]) + ", " + to_expression(ops[3]) + ")";
         emit_op(ops[0], ops[1], expression,
                 should_forward(ops[2]) && should_forward(ops[3]));
         inherit_expression_dependencies(ops[1], ops[2]);
@@ -572,9 +570,7 @@ bool CompilerOpenCL::emit_fp64_vector_instruction(
     }
     if (operation)
     {
-        const std::string expression = std::string("momo_fp64_") + operation + suffix + "(" +
-                                       to_expression(ops[2]) + ", " +
-                                       to_expression(ops[3]) + ")";
+        const std::string expression = std::string("momo_fp64_") + operation + suffix + "(" + to_expression(ops[2]) + ", " + to_expression(ops[3]) + ")";
         emit_op(ops[0], ops[1], expression,
                 should_forward(ops[2]) && should_forward(ops[3]));
         inherit_expression_dependencies(ops[1], ops[2]);
@@ -584,8 +580,7 @@ bool CompilerOpenCL::emit_fp64_vector_instruction(
 
     if (opcode == OpFNegate)
     {
-        const std::string expression = "momo_fp64_neg" + suffix + "(" +
-                                       to_expression(ops[2]) + ")";
+        const std::string expression = "momo_fp64_neg" + suffix + "(" + to_expression(ops[2]) + ")";
         emit_op(ops[0], ops[1], expression, should_forward(ops[2]));
         inherit_expression_dependencies(ops[1], ops[2]);
         return true;
@@ -593,9 +588,7 @@ bool CompilerOpenCL::emit_fp64_vector_instruction(
 
     if (opcode == OpVectorTimesScalar)
     {
-        const std::string expression = "momo_fp64_scale" + suffix + "(" +
-                                       to_expression(ops[2]) + ", " +
-                                       to_expression(ops[3]) + ")";
+        const std::string expression = "momo_fp64_scale" + suffix + "(" + to_expression(ops[2]) + ", " + to_expression(ops[3]) + ")";
         emit_op(ops[0], ops[1], expression,
                 should_forward(ops[2]) && should_forward(ops[3]));
         inherit_expression_dependencies(ops[1], ops[2]);
@@ -668,6 +661,84 @@ void CompilerOpenCL::emit_instruction(const Instruction& instruction)
         emit_op(ops[0], ops[1], expression, should_forward(ops[2]));
         inherit_expression_dependencies(ops[1], ops[2]);
         return;
+    }
+
+    if (opcode == OpIEqual || opcode == OpINotEqual
+        || opcode == OpUGreaterThan || opcode == OpSGreaterThan
+        || opcode == OpUGreaterThanEqual || opcode == OpSGreaterThanEqual
+        || opcode == OpULessThan || opcode == OpSLessThan
+        || opcode == OpULessThanEqual || opcode == OpSLessThanEqual
+        || opcode == OpFOrdEqual || opcode == OpFUnordEqual
+        || opcode == OpFOrdNotEqual || opcode == OpFUnordNotEqual
+        || opcode == OpFOrdLessThan || opcode == OpFUnordLessThan
+        || opcode == OpFOrdGreaterThan || opcode == OpFUnordGreaterThan
+        || opcode == OpFOrdLessThanEqual || opcode == OpFUnordLessThanEqual
+        || opcode == OpFOrdGreaterThanEqual || opcode == OpFUnordGreaterThanEqual)
+    {
+        const SPIRType& result_type = get<SPIRType>(ops[0]);
+        if (result_type.basetype == SPIRType::Boolean && result_type.columns == 1 && result_type.vecsize > 1)
+        {
+            const std::string left = "(" + to_expression(ops[2]) + ")";
+            const std::string right = "(" + to_expression(ops[3]) + ")";
+            const bool unordered = opcode == OpFUnordEqual || opcode == OpFUnordNotEqual
+                                   || opcode == OpFUnordLessThan || opcode == OpFUnordGreaterThan
+                                   || opcode == OpFUnordLessThanEqual || opcode == OpFUnordGreaterThanEqual;
+            const bool ordered_not_equal = opcode == OpFOrdNotEqual;
+
+            const char* operation = 0;
+            switch (opcode)
+            {
+            case OpIEqual:
+            case OpFOrdEqual:
+            case OpFUnordEqual:
+                operation = "==";
+                break;
+            case OpINotEqual:
+            case OpFOrdNotEqual:
+            case OpFUnordNotEqual:
+                operation = "!=";
+                break;
+            case OpUGreaterThan:
+            case OpSGreaterThan:
+            case OpFOrdGreaterThan:
+            case OpFUnordGreaterThan:
+                operation = ">";
+                break;
+            case OpUGreaterThanEqual:
+            case OpSGreaterThanEqual:
+            case OpFOrdGreaterThanEqual:
+            case OpFUnordGreaterThanEqual:
+                operation = ">=";
+                break;
+            case OpULessThan:
+            case OpSLessThan:
+            case OpFOrdLessThan:
+            case OpFUnordLessThan:
+                operation = "<";
+                break;
+            case OpULessThanEqual:
+            case OpSLessThanEqual:
+            case OpFOrdLessThanEqual:
+            case OpFUnordLessThanEqual:
+                operation = "<=";
+                break;
+            default:
+                break;
+            }
+
+            std::string comparison = left + " " + operation + " " + right;
+            if (ordered_not_equal)
+                comparison = "(~isunordered(" + left + ", " + right + ") & (" + comparison + "))";
+            else if (unordered && opcode != OpFUnordNotEqual)
+                comparison = "(isunordered(" + left + ", " + right + ") | (" + comparison + "))";
+
+            const std::string expression = "convert_int" + std::to_string(result_type.vecsize) + "(" + comparison + ")";
+            emit_op(ops[0], ops[1], expression,
+                    should_forward(ops[2]) && should_forward(ops[3]));
+            inherit_expression_dependencies(ops[1], ops[2]);
+            inherit_expression_dependencies(ops[1], ops[3]);
+            return;
+        }
     }
 
     if (opcode == OpVectorTimesMatrix)
@@ -769,10 +840,25 @@ void CompilerOpenCL::emit_instruction(const Instruction& instruction)
         }
         else
         {
-            // OpenCL select consumes the all-zero/all-one integer masks
-            // produced by vector comparisons and preserves the result
-            // vector type without GLSL-style bvec constructors.
-            expression = "select(" + to_expression(ops[4]) + ", " + to_expression(ops[3]) + ", " + to_expression(ops[2]) + ")";
+            // OpenCL select requires an integer mask whose element width
+            // matches the selected value. SPIRV-Cross represents every
+            // SPIR-V boolean vector as intN, so normalize both its truth
+            // representation and width before passing it to select. This is
+            // especially important for halfN and doubleN values, where an
+            // intN mask has no matching OpenCL overload.
+            const std::string condition = "(" + to_expression(ops[2]) + ")";
+            const std::string condition_type_name = type_to_glsl(condition_type);
+            const uint32_t result_width = result_type.basetype == SPIRType::Boolean ? 32 : result_type.width;
+            const char* mask_base = result_width == 8    ? "char"
+                                    : result_width == 16 ? "short"
+                                    : result_width == 32 ? "int"
+                                    : result_width == 64 ? "long"
+                                                         : 0;
+            if (!mask_base || result_type.columns != 1 || result_type.vecsize != condition_type.vecsize)
+                throw std::runtime_error("vector OpSelect requires matching scalar/vector values with 8, 16, 32 or 64-bit elements");
+            const std::string mask_type = std::string(mask_base) + std::to_string(condition_type.vecsize);
+            const std::string mask = "convert_" + mask_type + "(" + condition + " != " + condition_type_name + "(0))";
+            expression = "select(" + to_expression(ops[4]) + ", " + to_expression(ops[3]) + ", " + mask + ")";
         }
         emit_op(ops[0], ops[1], expression,
                 should_forward(ops[2]) && should_forward(ops[3]) && should_forward(ops[4]));

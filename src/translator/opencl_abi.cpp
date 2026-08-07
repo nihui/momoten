@@ -244,11 +244,13 @@ void CompilerOpenCL::validate_storage_block(const Resource& resource)
         requires_fp16 = true;
     if (member.basetype == SPIRType::Double && member.width == 64)
         requires_fp64 = true;
+    if ((member.basetype == SPIRType::Int64 || member.basetype == SPIRType::UInt64) && member.width == 64)
+        requires_int64 = true;
     const bool supported_float_matrix = member.basetype == SPIRType::Float && member.width == 32 && member.vecsize == 4 && member.columns == 4;
     const bool supported_half_matrix = member.basetype == SPIRType::Half && member.width == 16 && member.vecsize == 4 && member.columns == 4;
-    const bool supported_scalar_vector = member.columns == 1 && ((member.width == 64 && member.basetype == SPIRType::Double) || (member.width == 32 && (member.basetype == SPIRType::Int || member.basetype == SPIRType::UInt || member.basetype == SPIRType::Float)) || (member.width == 16 && (member.basetype == SPIRType::Short || member.basetype == SPIRType::UShort || member.basetype == SPIRType::Int || member.basetype == SPIRType::UInt)) || (member.width == 16 && member.basetype == SPIRType::Half));
+    const bool supported_scalar_vector = member.columns == 1 && ((member.width == 64 && (member.basetype == SPIRType::Double || member.basetype == SPIRType::Int64 || member.basetype == SPIRType::UInt64)) || (member.width == 32 && (member.basetype == SPIRType::Int || member.basetype == SPIRType::UInt || member.basetype == SPIRType::Float)) || (member.width == 16 && (member.basetype == SPIRType::Short || member.basetype == SPIRType::UShort || member.basetype == SPIRType::Int || member.basetype == SPIRType::UInt)) || (member.width == 16 && member.basetype == SPIRType::Half));
     if ((!supported_float_matrix && !supported_half_matrix && !supported_scalar_vector) || member.vecsize == 3 || member.vecsize > 4)
-        throw std::runtime_error("momoten storage buffers require scalar, vec2, vec4 or mat4 float/int elements with a representable OpenCL layout, including scalar/vector fp64");
+        throw std::runtime_error("momoten storage buffers require scalar, vec2, vec4 or mat4 float/int elements with a representable OpenCL layout, including scalar/vector int64, uint64 and fp64");
 
     const uint32_t expected_stride = supported_float_matrix ? 64u : supported_half_matrix ? 32u
                                                                                           : (member.vecsize == 3 ? 16u : (member.width / 8) * member.vecsize);
