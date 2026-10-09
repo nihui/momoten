@@ -4,12 +4,20 @@
 #include <vulkan/vulkan.h>
 
 #include <math.h>
+#include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
 
 #include <fstream>
 #include <vector>
+
+struct PushConstants
+{
+    float scale;
+    int32_t bias;
+    uint32_t element_count;
+};
 
 static bool read_spirv(const char* path, std::vector<uint32_t>& words)
 {
@@ -192,12 +200,6 @@ int main(int argc, char** argv)
     if (result != VK_SUCCESS) return fail("vkMapMemory(output)", result);
     float* input = reinterpret_cast<float*>(static_cast<unsigned char*>(input_mapping) + bind_offset + descriptor_offset);
     float* output = reinterpret_cast<float*>(static_cast<unsigned char*>(output_mapping) + bind_offset + descriptor_offset);
-    for (uint32_t i = 0; i < 8; i++)
-    {
-        input[i] = static_cast<float>(i) - 2.f;
-        output[i] = 0.f;
-    }
-
     VkDescriptorSetLayoutBinding bindings[2] = {};
     for (uint32_t i = 0; i < 2; i++)
     {
@@ -217,7 +219,7 @@ int main(int argc, char** argv)
 
     VkPushConstantRange push_range = {};
     push_range.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
-    push_range.size = sizeof(float);
+    push_range.size = sizeof(PushConstants);
     VkPipelineLayoutCreateInfo pipeline_layout_info = {};
     pipeline_layout_info.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
     pipeline_layout_info.setLayoutCount = 1;
@@ -337,9 +339,9 @@ int main(int argc, char** argv)
     }
     vkCmdPushDescriptorSetKHR(command_buffer, VK_PIPELINE_BIND_POINT_COMPUTE,
                               pipeline_layout, 0, 2, writes);
-    const float scale = 3.f;
+    const PushConstants push_constants = {3.f, -3, 8};
     vkCmdPushConstants(command_buffer, pipeline_layout, VK_SHADER_STAGE_COMPUTE_BIT,
-                       0, sizeof(scale), &scale);
+                       0, sizeof(push_constants), &push_constants);
     vkCmdDispatch(command_buffer, 2, 1, 1);
     VkMemoryBarrier dispatch_barrier = {};
     dispatch_barrier.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
@@ -358,8 +360,13 @@ int main(int argc, char** argv)
     vkCmdPushDescriptorSetKHR(command_buffer, VK_PIPELINE_BIND_POINT_COMPUTE,
                               pipeline_layout, 0, 2, writes);
     const float second_scale = 2.f;
+    const int32_t second_bias = 5;
     vkCmdPushConstants(command_buffer, pipeline_layout, VK_SHADER_STAGE_COMPUTE_BIT,
                        0, sizeof(second_scale), &second_scale);
+    // Update only the signed bias field, preserving the unsigned element count
+    // from the initial full-block update.
+    vkCmdPushConstants(command_buffer, pipeline_layout, VK_SHADER_STAGE_COMPUTE_BIT,
+                       offsetof(PushConstants, bias), sizeof(second_bias), &second_bias);
     vkCmdDispatch(command_buffer, 2, 1, 1);
     result = vkEndCommandBuffer(command_buffer);
     if (result != VK_SUCCESS) return fail("vkEndCommandBuffer", result);
@@ -375,30 +382,45 @@ int main(int argc, char** argv)
     submit_info.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
     submit_info.commandBufferCount = 1;
     submit_info.pCommandBuffers = &command_buffer;
-    result = vkQueueSubmit(queue, 1, &submit_info, fence);
-    if (result != VK_SUCCESS) return fail("vkQueueSubmit", result);
-    result = vkWaitForFences(device, 1, &fence, VK_TRUE, UINT64_MAX);
-    if (result != VK_SUCCESS) return fail("vkWaitForFences", result);
-    if (vkGetFenceStatus(device, fence) != VK_SUCCESS)
-        return fail("vkGetFenceStatus(signaled)", VK_ERROR_UNKNOWN);
-
     int status = 0;
-    for (uint32_t i = 0; i < 8; i++)
+    // Submit the same recorded dispatches again after restoring input data.
+    // Kernel arguments must be replayed from each dispatch snapshot every time.
+    for (uint32_t submission = 0; submission < 2; submission++)
     {
-        const uint32_t source = i - i % 4 + (3 - i % 4);
-        const float expected = rintf((static_cast<float>(source) - 2.f) * scale);
-        if (fabsf(output[i] - expected) > 1e-6f)
+        for (uint32_t i = 0; i < 8; i++)
         {
-            fprintf(stderr, "driver_test: output[%u]=%g expected=%g\n", i, output[i], expected);
-            status = 1;
+            input[i] = static_cast<float>(i) - 2.f;
+            output[i] = 0.f;
         }
-
-        const float expected_second = rintf((static_cast<float>(i) - 2.f) * scale * second_scale);
-        if (fabsf(input[i] - expected_second) > 1e-6f)
+        if (submission != 0)
         {
-            fprintf(stderr, "driver_test: second-dispatch input[%u]=%g expected=%g\n",
-                    i, input[i], expected_second);
-            status = 1;
+            result = vkResetFences(device, 1, &fence);
+            if (result != VK_SUCCESS) return fail("vkResetFences(resubmit)", result);
+        }
+        result = vkQueueSubmit(queue, 1, &submit_info, fence);
+        if (result != VK_SUCCESS) return fail("vkQueueSubmit", result);
+        result = vkWaitForFences(device, 1, &fence, VK_TRUE, UINT64_MAX);
+        if (result != VK_SUCCESS) return fail("vkWaitForFences", result);
+        if (vkGetFenceStatus(device, fence) != VK_SUCCESS)
+            return fail("vkGetFenceStatus(signaled)", VK_ERROR_UNKNOWN);
+
+        for (uint32_t i = 0; i < 8; i++)
+        {
+            const uint32_t source = i - i % 4 + (3 - i % 4);
+            const float expected = rintf((static_cast<float>(source) - 2.f) * push_constants.scale) + static_cast<float>(push_constants.bias);
+            if (fabsf(output[i] - expected) > 1e-6f)
+            {
+                fprintf(stderr, "driver_test: submission %u output[%u]=%g expected=%g\n", submission, i, output[i], expected);
+                status = 1;
+            }
+
+            const float first = rintf((static_cast<float>(i) - 2.f) * push_constants.scale) + static_cast<float>(push_constants.bias);
+            const float expected_second = rintf(first * second_scale) + static_cast<float>(second_bias);
+            if (fabsf(input[i] - expected_second) > 1e-6f)
+            {
+                fprintf(stderr, "driver_test: submission %u second-dispatch input[%u]=%g expected=%g\n", submission, i, input[i], expected_second);
+                status = 1;
+            }
         }
     }
 
@@ -450,7 +472,7 @@ int main(int argc, char** argv)
         for (uint32_t i = 0; i < 8; i++)
         {
             const uint32_t source = i - i % 4 + (3 - i % 4);
-            output[i] = rintf((static_cast<float>(source) - 2.f) * scale);
+            output[i] = rintf((static_cast<float>(source) - 2.f) * push_constants.scale) + static_cast<float>(push_constants.bias);
         }
     }
 
@@ -477,7 +499,7 @@ int main(int argc, char** argv)
     for (uint32_t i = 0; i < 8; i++)
     {
         const uint32_t source = i - i % 4 + (3 - i % 4);
-        const float expected = rintf((static_cast<float>(source) - 2.f) * scale);
+        const float expected = rintf((static_cast<float>(source) - 2.f) * push_constants.scale) + static_cast<float>(push_constants.bias);
         if (fabsf(input[i] - expected) > 1e-6f)
         {
             fprintf(stderr, "driver_test: copied input[%u]=%g expected=%g\n", i, input[i], expected);

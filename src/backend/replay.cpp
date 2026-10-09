@@ -168,24 +168,15 @@ cl_int replay_dispatch(ReplayState& state, const RecordedCommand& command)
             return ret;
     }
 
-    cl_mem push_buffer = 0;
     if (pipeline->abi.push_constant_arg_index >= 0)
     {
         if (command.push_constants.size() < pipeline->abi.push_constant_size)
             return CL_INVALID_ARG_SIZE;
-        cl_int ret = CL_SUCCESS;
-        push_buffer = momoten_detail::g_opencl.p_clCreateBuffer(device->context, CL_MEM_READ_ONLY | CL_MEM_COPY_HOST_PTR,
-                                                                pipeline->abi.push_constant_size,
-                                                                const_cast<unsigned char*>(command.push_constants.data()), &ret);
-        if (!push_buffer)
-            return ret;
-        ret = momoten_detail::g_opencl.p_clSetKernelArg(pipeline->kernel, pipeline->abi.push_constant_arg_index,
-                                                        sizeof(push_buffer), &push_buffer);
+        const cl_int ret = momoten_detail::g_opencl.p_clSetKernelArg(
+            pipeline->kernel, pipeline->abi.push_constant_arg_index,
+            pipeline->abi.push_constant_size, command.push_constants.data());
         if (ret != CL_SUCCESS)
-        {
-            momoten_detail::g_opencl.p_clReleaseMemObject(push_buffer);
             return ret;
-        }
     }
 
     size_t global_size[3] = {0, 0, 0};
@@ -197,16 +188,10 @@ cl_int replay_dispatch(ReplayState& state, const RecordedCommand& command)
     {
         if (pipeline->workgroup_chunk_count == 0 || local_size[0] == 0
             || command.group_count[0] > SIZE_MAX / pipeline->workgroup_chunk_count)
-        {
-            if (push_buffer) momoten_detail::g_opencl.p_clReleaseMemObject(push_buffer);
             return CL_INVALID_GLOBAL_WORK_SIZE;
-        }
         const size_t physical_group_count_x = static_cast<size_t>(command.group_count[0]) * pipeline->workgroup_chunk_count;
         if (physical_group_count_x > SIZE_MAX / local_size[0])
-        {
-            if (push_buffer) momoten_detail::g_opencl.p_clReleaseMemObject(push_buffer);
             return CL_INVALID_GLOBAL_WORK_SIZE;
-        }
         global_size[0] = physical_group_count_x * local_size[0];
         global_size[1] = command.group_count[1];
         global_size[2] = command.group_count[2];
@@ -216,10 +201,7 @@ cl_int replay_dispatch(ReplayState& state, const RecordedCommand& command)
         for (size_t d = 0; d < 3; d++)
         {
             if (command.group_count[d] != 0 && local_size[d] > SIZE_MAX / command.group_count[d])
-            {
-                if (push_buffer) momoten_detail::g_opencl.p_clReleaseMemObject(push_buffer);
                 return CL_INVALID_GLOBAL_WORK_SIZE;
-            }
             global_size[d] = local_size[d] * command.group_count[d];
         }
     }
@@ -230,8 +212,6 @@ cl_int replay_dispatch(ReplayState& state, const RecordedCommand& command)
     cl_int ret = momoten_detail::g_opencl.p_clEnqueueNDRangeKernel(
         device->command_queue, pipeline->kernel, 3, 0,
         global_size, local_size, wait_count, wait_list, &event);
-    if (push_buffer)
-        momoten_detail::g_opencl.p_clReleaseMemObject(push_buffer);
     if (ret != CL_SUCCESS)
         return ret;
     advance_replay_event(state, event);

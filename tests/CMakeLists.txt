@@ -10,6 +10,21 @@ target_link_libraries(momoten_memory_state_test PRIVATE
 add_test(NAME momoten_memory_state COMMAND momoten_memory_state_test)
 set_tests_properties(momoten_memory_state PROPERTIES
     LABELS "momoten;runtime;memory")
+
+add_executable(momoten_parameter_size_test
+    api/parameter_size_test.cpp
+    "${CMAKE_CURRENT_SOURCE_DIR}/../src/backend/device_profile.cpp")
+target_compile_features(momoten_parameter_size_test PRIVATE cxx_std_11)
+target_compile_definitions(momoten_parameter_size_test PRIVATE
+    CL_TARGET_OPENCL_VERSION=100)
+target_include_directories(momoten_parameter_size_test PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}/../src")
+target_link_libraries(momoten_parameter_size_test PRIVATE
+    momoten::translator momoten_opencl_headers momoten_vulkan_headers)
+add_test(NAME momoten_parameter_size COMMAND momoten_parameter_size_test)
+set_tests_properties(momoten_parameter_size PROPERTIES
+    LABELS "momoten;api;abi")
+
 if(TARGET momoten_driver AND NOT CMAKE_CROSSCOMPILING)
     add_test(NAME momoten_no_system_opencl_dependency
         COMMAND "${CMAKE_COMMAND}"

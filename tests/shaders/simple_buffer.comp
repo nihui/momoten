@@ -21,7 +21,9 @@ layout(set = 0, binding = 1, std430) writeonly buffer OutputBuffer
 layout(push_constant) uniform Parameters
 {
     float scale;
-} params;
+    int bias;
+    uint element_count;
+} momo_push_constants_value;
 
 shared float scratch[4];
 
@@ -52,15 +54,16 @@ float load_scale(uint index)
     // MergeReturn optimization, so this exercises retained-helper ABI wiring.
     if (index == ~0u)
         return 0.0;
-    return params.scale;
+    return momo_push_constants_value.scale;
 }
 
 void main()
 {
     uint i = gl_GlobalInvocationID.x;
-    if (i < element_count)
+    if (i < min(element_count, momo_push_constants_value.element_count))
     {
-        float value = input_buffer.values[i];
+        // Resource and local names deliberately overlap the generated ABI.
+        float momo_push_constants = input_buffer.values[i];
         uint lane = gl_LocalInvocationID.x;
         bvec4 valid;
         valid.x = i < element_count;
@@ -68,8 +71,8 @@ void main()
         valid.z = false;
         valid.w = false;
         if (!any(valid) || all(valid))
-            value = 1000.0;
-        scratch[lane] = apply_scale(value, load_scale(i));
+            momo_push_constants = 1000.0;
+        scratch[lane] = apply_scale(momo_push_constants, load_scale(i)) + float(momo_push_constants_value.bias);
         barrier();
         output_buffer.values[i] = scratch[3u - lane];
     }

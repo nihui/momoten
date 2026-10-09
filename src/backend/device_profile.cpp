@@ -406,12 +406,12 @@ bool validate_pipeline_abi(
     }
     if (abi.push_constant_arg_index >= 0)
     {
-        if (parameter_size > SIZE_MAX - sizeof(cl_mem))
+        if (parameter_size > SIZE_MAX - abi.push_constant_size)
         {
             diagnostic = "kernel parameter-size calculation overflowed";
             return false;
         }
-        parameter_size += sizeof(cl_mem);
+        parameter_size += abi.push_constant_size;
     }
     if (parameter_size > physical->max_parameter_size)
     {

@@ -180,9 +180,10 @@ void impl_get_physical_device_properties(
     properties->deviceName[VK_MAX_PHYSICAL_DEVICE_NAME_SIZE - 1] = '\0';
 
     VkPhysicalDeviceLimits& limits = properties->limits;
-    const size_t bytes_per_buffer_argument = sizeof(cl_mem) + (physical->address_bits == 64 ? sizeof(cl_ulong) : sizeof(cl_uint));
-    const size_t parameter_budget = physical->max_parameter_size > sizeof(cl_mem)
-                                        ? physical->max_parameter_size - sizeof(cl_mem)
+    limits.maxPushConstantsSize = 256;
+    const size_t bytes_per_buffer_argument = sizeof(cl_mem) + 2 * (physical->address_bits == 64 ? sizeof(cl_ulong) : sizeof(cl_uint));
+    const size_t parameter_budget = physical->max_parameter_size > limits.maxPushConstantsSize
+                                        ? physical->max_parameter_size - limits.maxPushConstantsSize
                                         : 0;
     const uint32_t max_storage_buffers = static_cast<uint32_t>(
         std::min<size_t>(16, parameter_budget / bytes_per_buffer_argument));
@@ -193,7 +194,6 @@ void impl_get_physical_device_properties(
     limits.maxPerStageDescriptorStorageBuffers = max_storage_buffers;
     limits.maxPerStageResources = max_storage_buffers;
     limits.maxDescriptorSetStorageBuffers = max_storage_buffers;
-    limits.maxPushConstantsSize = 256;
     // Workgroup storage/barriers are not translated by the baseline profile,
     // even when the selected OpenCL device has local memory.
     limits.maxComputeSharedMemorySize = static_cast<uint32_t>(std::min<cl_ulong>(

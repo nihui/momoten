@@ -915,11 +915,22 @@ int main(int argc, char** argv)
 
     float input[element_count];
     float output[element_count];
-    const float scale = 2.5f;
+    const struct PushConstants
+    {
+        float scale;
+        int32_t bias;
+        uint32_t element_count;
+    } push_constants = {2.5f, -3, 4};
+    if (translated.abi.push_constant_size != sizeof(push_constants))
+    {
+        fprintf(stderr, "opencl_test: mixed scalar push-constant size is incorrect\n");
+        return 1;
+    }
+    const float untouched = -123.f;
     for (uint32_t i = 0; i < element_count; i++)
     {
-        input[i] = static_cast<float>(i) - 3.f;
-        output[i] = 0.f;
+        input[i] = static_cast<float>(i * 2) - 3.f;
+        output[i] = untouched;
     }
 
     cl_mem input_buffer = clCreateBuffer(context, CL_MEM_READ_WRITE | CL_MEM_COPY_HOST_PTR,
@@ -930,11 +941,6 @@ int main(int argc, char** argv)
                                           sizeof(output), output, &ret);
     if (!output_buffer)
         return fail("clCreateBuffer(output)", ret);
-    cl_mem push_buffer = clCreateBuffer(context, CL_MEM_READ_ONLY | CL_MEM_COPY_HOST_PTR,
-                                        sizeof(scale), const_cast<float*>(&scale), &ret);
-    if (!push_buffer)
-        return fail("clCreateBuffer(push constants)", ret);
-
     const cl_uint offset32 = 0;
     const cl_ulong offset64 = 0;
     const cl_uint buffer_size32 = sizeof(input);
@@ -949,7 +955,7 @@ int main(int argc, char** argv)
     if (ret == CL_SUCCESS) ret = clSetKernelArg(kernel, 3, sizeof(output_buffer), &output_buffer);
     if (ret == CL_SUCCESS) ret = clSetKernelArg(kernel, 4, offset_size, offset);
     if (ret == CL_SUCCESS) ret = clSetKernelArg(kernel, 5, offset_size, buffer_size);
-    if (ret == CL_SUCCESS) ret = clSetKernelArg(kernel, 6, sizeof(push_buffer), &push_buffer);
+    if (ret == CL_SUCCESS) ret = clSetKernelArg(kernel, translated.abi.push_constant_arg_index, sizeof(push_constants), &push_constants);
     if (ret != CL_SUCCESS)
         return fail("clSetKernelArg", ret);
 
@@ -968,7 +974,7 @@ int main(int argc, char** argv)
     for (uint32_t i = 0; i < element_count; i++)
     {
         const uint32_t source = i - i % 4 + (3 - i % 4);
-        const float expected = rintf(input[source] * scale);
+        const float expected = i < push_constants.element_count ? rintf(input[source] * push_constants.scale) + static_cast<float>(push_constants.bias) : untouched;
         if (fabsf(output[i] - expected) > 1e-6f)
         {
             fprintf(stderr, "opencl_test: output[%u]=%g expected=%g\n", i, output[i], expected);
@@ -976,7 +982,6 @@ int main(int argc, char** argv)
         }
     }
 
-    clReleaseMemObject(push_buffer);
     clReleaseMemObject(output_buffer);
     clReleaseMemObject(input_buffer);
     clReleaseKernel(kernel);

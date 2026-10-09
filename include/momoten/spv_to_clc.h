@@ -68,6 +68,8 @@ struct KernelABI
     // or synchronization barrier and may therefore be split across independent
     // physical OpenCL workgroups by the driver.
     bool workgroup_splittable;
+    // One by-value struct argument containing tightly packed 32-bit scalars.
+    // Its complete byte size counts against CL_DEVICE_MAX_PARAMETER_SIZE.
     int push_constant_arg_index;
     size_t push_constant_size;
 

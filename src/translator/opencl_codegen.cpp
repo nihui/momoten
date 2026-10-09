@@ -12,6 +12,13 @@ namespace momoten {
 void CompilerOpenCL::emit_entry_point_declarations()
 {
     CompilerGLSL::emit_entry_point_declarations();
+    if (push_constant_variable_id != 0)
+    {
+        const SPIRType& push_type = get_variable_data_type(get<SPIRVariable>(push_constant_variable_id));
+        // Retained helpers share the read-only private view of the by-value
+        // kernel argument instead of copying the block through every call.
+        statement("__private const struct ", type_to_glsl(push_type), "* momo_push_constants = &momo_push_constants_value;");
+    }
     if (workgroup_splittable)
     {
         const uint64_t invocation_count = static_cast<uint64_t>(local_size[0]) * local_size[1] * local_size[2];
@@ -32,6 +39,13 @@ void CompilerOpenCL::emit_entry_point_declarations()
 
 void CompilerOpenCL::emit_header()
 {
+    // Reserve generated push-constant identifiers before resource and local
+    // names are assigned, including the macro name used by retained helpers.
+    if (push_constant_variable_id != 0)
+    {
+        resource_names.insert("momo_push_constants");
+        resource_names.insert("momo_push_constants_value");
+    }
     // CompilerGLSL supplies the structured control-flow and expression
     // emitter. These switches make its output C-like before the virtual
     // type/resource hooks below finish the OpenCL-specific lowering.
@@ -1259,12 +1273,12 @@ const char* CompilerOpenCL::function_pointer_address_space(StorageClass storage)
     {
     case StorageClassFunction:
     case StorageClassPrivate:
+    case StorageClassPushConstant:
         return "__private";
     case StorageClassWorkgroup:
         return "__local";
     case StorageClassUniform:
     case StorageClassStorageBuffer:
-    case StorageClassPushConstant:
     case StorageClassCrossWorkgroup:
         return "__global";
     default:
