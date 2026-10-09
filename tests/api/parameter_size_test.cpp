@@ -27,7 +27,7 @@ static int check_parameter_size(uint32_t address_bits, size_t required_size)
     momoten::KernelABI abi;
     abi.address_bits = address_bits;
     abi.buffers.resize(1);
-    abi.push_constant_arg_index = 3;
+    abi.push_constant_arg_index = 2;
     abi.push_constant_size = 12;
 
     std::string diagnostic;
@@ -62,6 +62,6 @@ static int check_parameter_size(uint32_t address_bits, size_t required_size)
 
 int main()
 {
-    return check_parameter_size(32, sizeof(cl_mem) + 8 + 12)
-           || check_parameter_size(64, sizeof(cl_mem) + 16 + 12);
+    return check_parameter_size(32, sizeof(cl_mem) + 4 + 12)
+           || check_parameter_size(64, sizeof(cl_mem) + 8 + 12);
 }

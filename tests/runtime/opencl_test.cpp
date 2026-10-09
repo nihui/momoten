@@ -170,8 +170,6 @@ static int run_fp16_kernel(cl_context context, cl_command_queue queue, cl_kernel
 
     const cl_uint offset32 = 0;
     const cl_ulong offset64 = 0;
-    const cl_uint size32 = sizeof(input);
-    const cl_ulong size64 = sizeof(input);
     const void* offset = address_bits == 64 ? static_cast<const void*>(&offset64) : static_cast<const void*>(&offset32);
     const size_t offset_size = address_bits == 64 ? sizeof(offset64) : sizeof(offset32);
     for (size_t i = 0; i < translated.abi.buffers.size() && ret == CL_SUCCESS; i++)
@@ -186,9 +184,6 @@ static int run_fp16_kernel(cl_context context, cl_command_queue queue, cl_kernel
                              sizeof(buffers[argument.binding]), &buffers[argument.binding]);
         if (ret == CL_SUCCESS)
             ret = clSetKernelArg(kernel, argument.offset_arg_index, offset_size, offset);
-        if (ret == CL_SUCCESS)
-            ret = clSetKernelArg(kernel, argument.size_arg_index, offset_size,
-                                 address_bits == 64 ? (const void*)&size64 : (const void*)&size32);
     }
 
     const size_t global_size[3] = {4, 1, 1};
@@ -252,10 +247,7 @@ static int run_fp64_kernel(cl_context context, cl_command_queue queue, cl_kernel
 
     const cl_uint offset32 = 0;
     const cl_ulong offset64 = 0;
-    const cl_uint size32 = sizeof(input);
-    const cl_ulong size64 = sizeof(input);
     const void* offset = address_bits == 64 ? static_cast<const void*>(&offset64) : static_cast<const void*>(&offset32);
-    const void* size = address_bits == 64 ? static_cast<const void*>(&size64) : static_cast<const void*>(&size32);
     const size_t offset_size = address_bits == 64 ? sizeof(offset64) : sizeof(offset32);
     for (size_t i = 0; i < translated.abi.buffers.size() && ret == CL_SUCCESS; i++)
     {
@@ -269,8 +261,6 @@ static int run_fp64_kernel(cl_context context, cl_command_queue queue, cl_kernel
                              sizeof(buffers[argument.binding]), &buffers[argument.binding]);
         if (ret == CL_SUCCESS)
             ret = clSetKernelArg(kernel, argument.offset_arg_index, offset_size, offset);
-        if (ret == CL_SUCCESS)
-            ret = clSetKernelArg(kernel, argument.size_arg_index, offset_size, size);
     }
 
     const size_t global_size[3] = {4, 1, 1};
@@ -330,17 +320,12 @@ static int run_atomic_packed_kernel(cl_context context, cl_command_queue queue, 
 
     const cl_uint offset32 = 0;
     const cl_ulong offset64 = 0;
-    const cl_uint size32 = sizeof(packed);
-    const cl_ulong size64 = sizeof(packed);
     const void* offset = address_bits == 64 ? static_cast<const void*>(&offset64) : static_cast<const void*>(&offset32);
-    const void* size = address_bits == 64 ? static_cast<const void*>(&size64) : static_cast<const void*>(&size32);
     const size_t offset_size = address_bits == 64 ? sizeof(offset64) : sizeof(offset32);
     const momoten::BufferArgument& argument = translated.abi.buffers[0];
     ret = clSetKernelArg(kernel, argument.buffer_arg_index, sizeof(buffer), &buffer);
     if (ret == CL_SUCCESS)
         ret = clSetKernelArg(kernel, argument.offset_arg_index, offset_size, offset);
-    if (ret == CL_SUCCESS)
-        ret = clSetKernelArg(kernel, argument.size_arg_index, offset_size, size);
 
     // Many workgroups repeatedly update four different bytes in the same
     // int32 word. This exercises the compare-exchange retry path under real
@@ -371,119 +356,95 @@ static int run_scalar_16bit_kernel(cl_context context, cl_command_queue queue, c
                                    const momoten::TranslationResult& translated,
                                    cl_uint address_bits)
 {
-    if (translated.abi.buffers.size() != 4)
+    if (translated.abi.buffers.size() != 6)
     {
-        fprintf(stderr, "opencl_test: scalar 16-bit fixture expected four storage buffers\n");
+        fprintf(stderr, "opencl_test: scalar 16-bit fixture expected six storage buffers\n");
         return 1;
     }
 
-    uint16_t half_data[16] = {};
-    uint16_t ushort_data[16] = {};
-    uint16_t half_output[16] = {};
-    float output[8] = {};
-    const uint16_t half_values[4] = {0x3c00u, 0x4000u, 0x4200u, 0x4400u};
-    for (uint32_t i = 0; i < 4; i++)
-    {
-        // The descriptor starts at element four and the shader deliberately
-        // loads from nonzero indices one through four.
-        half_data[5 + i] = half_values[i];
-        ushort_data[5 + i] = static_cast<uint16_t>((i + 1) * 10);
-    }
+    // Each scalar descriptor begins two bytes into its allocation. The last
+    // active element occupies the allocation's final two bytes.
+    uint16_t half_data[4] = {0x7bffu, 0x3c00u, 0x4000u, 0x4200u};
+    uint16_t ushort_data[4] = {65535u, 32768u, 32769u, 32770u};
+    int16_t short_data[4] = {32767, -32768, -32768, -32768};
+    uint16_t ushort_vector_data[6] = {65535u, 65535u, 65535u, 65535u, 65535u, 7u};
+    uint16_t half_output[4] = {0x7bffu, 0x7bffu, 0x7bffu, 0x7bffu};
+    const float untouched = -123.f;
+    float output[5] = {untouched, untouched, untouched, untouched, untouched};
+    void* data[6] = {half_data, ushort_data, output, half_output, short_data, ushort_vector_data};
+    const size_t sizes[6] = {sizeof(half_data), sizeof(ushort_data), sizeof(output), sizeof(half_output), sizeof(short_data), sizeof(ushort_vector_data)};
 
     cl_int ret = CL_SUCCESS;
-    cl_mem buffers[4] = {};
-    buffers[0] = clCreateBuffer(context, CL_MEM_READ_ONLY | CL_MEM_COPY_HOST_PTR,
-                                sizeof(half_data), half_data, &ret);
-    if (!buffers[0])
-        return fail("clCreateBuffer(scalar half)", ret);
-    buffers[1] = clCreateBuffer(context, CL_MEM_READ_ONLY | CL_MEM_COPY_HOST_PTR,
-                                sizeof(ushort_data), ushort_data, &ret);
-    if (!buffers[1])
+    cl_mem buffers[6] = {};
+    for (size_t i = 0; i < 6; i++)
     {
-        clReleaseMemObject(buffers[0]);
-        return fail("clCreateBuffer(scalar ushort)", ret);
-    }
-    buffers[2] = clCreateBuffer(context, CL_MEM_READ_WRITE | CL_MEM_COPY_HOST_PTR,
-                                sizeof(output), output, &ret);
-    if (!buffers[2])
-    {
-        clReleaseMemObject(buffers[1]);
-        clReleaseMemObject(buffers[0]);
-        return fail("clCreateBuffer(scalar output)", ret);
-    }
-    buffers[3] = clCreateBuffer(context, CL_MEM_READ_WRITE | CL_MEM_COPY_HOST_PTR,
-                                sizeof(half_output), half_output, &ret);
-    if (!buffers[3])
-    {
-        clReleaseMemObject(buffers[2]);
-        clReleaseMemObject(buffers[1]);
-        clReleaseMemObject(buffers[0]);
-        return fail("clCreateBuffer(scalar half output)", ret);
+        const cl_mem_flags flags = i == 2 || i == 3 ? CL_MEM_READ_WRITE : CL_MEM_READ_ONLY;
+        buffers[i] = clCreateBuffer(context, flags | CL_MEM_COPY_HOST_PTR, sizes[i], data[i], &ret);
+        if (!buffers[i])
+        {
+            for (size_t j = 0; j < i; j++)
+                clReleaseMemObject(buffers[j]);
+            return fail("clCreateBuffer(scalar 16-bit)", ret);
+        }
     }
 
-    const cl_uint offset32 = 8;
-    const cl_ulong offset64 = 8;
-    const cl_uint size32 = 24;
-    const cl_ulong size64 = 24;
-    const void* offset = address_bits == 64 ? static_cast<const void*>(&offset64) : static_cast<const void*>(&offset32);
-    const void* size = address_bits == 64 ? static_cast<const void*>(&size64) : static_cast<const void*>(&size32);
-    const size_t offset_size = address_bits == 64 ? sizeof(offset64) : sizeof(offset32);
+    // Float and u16vec2 descriptors require four-byte alignment; scalar
+    // half/ushort/short descriptors deliberately provide only two bytes.
+    const cl_uint offsets32[6] = {2, 2, 4, 2, 2, 4};
+    const cl_ulong offsets64[6] = {2, 2, 4, 2, 2, 4};
+    const size_t offset_size = address_bits == 64 ? sizeof(cl_ulong) : sizeof(cl_uint);
     for (size_t i = 0; i < translated.abi.buffers.size() && ret == CL_SUCCESS; i++)
     {
         const momoten::BufferArgument& argument = translated.abi.buffers[i];
-        if (argument.binding >= 4)
+        if (argument.binding >= 6)
         {
             ret = CL_INVALID_ARG_INDEX;
             break;
         }
-        ret = clSetKernelArg(kernel, argument.buffer_arg_index,
-                             sizeof(buffers[argument.binding]), &buffers[argument.binding]);
+        ret = clSetKernelArg(kernel, argument.buffer_arg_index, sizeof(buffers[argument.binding]), &buffers[argument.binding]);
         if (ret == CL_SUCCESS)
-            ret = clSetKernelArg(kernel, argument.offset_arg_index, offset_size, offset);
-        if (ret == CL_SUCCESS)
-            ret = clSetKernelArg(kernel, argument.size_arg_index, offset_size, size);
+            ret = clSetKernelArg(kernel, argument.offset_arg_index, offset_size,
+                                 address_bits == 64 ? static_cast<const void*>(&offsets64[argument.binding]) : static_cast<const void*>(&offsets32[argument.binding]));
     }
 
     const size_t global_size[3] = {4, 1, 1};
-    const size_t local_size[3] = {translated.abi.local_size[0], translated.abi.local_size[1],
-                                  translated.abi.local_size[2]};
+    const size_t local_size[3] = {translated.abi.local_size[0], translated.abi.local_size[1], translated.abi.local_size[2]};
     if (ret == CL_SUCCESS)
         ret = clEnqueueNDRangeKernel(queue, kernel, 3, 0, global_size, local_size, 0, 0, 0);
     if (ret == CL_SUCCESS)
-        ret = clEnqueueReadBuffer(queue, buffers[2], CL_TRUE, 8,
-                                  sizeof(float) * 4, output + 2, 0, 0, 0);
+        ret = clEnqueueReadBuffer(queue, buffers[2], CL_TRUE, 0, sizeof(output), output, 0, 0, 0);
     if (ret == CL_SUCCESS)
-        ret = clEnqueueReadBuffer(queue, buffers[3], CL_TRUE, 8,
-                                  sizeof(uint16_t) * 4, half_output + 4, 0, 0, 0);
+        ret = clEnqueueReadBuffer(queue, buffers[3], CL_TRUE, 0, sizeof(half_output), half_output, 0, 0, 0);
 
     int status = 0;
     if (ret != CL_SUCCESS)
         status = fail("scalar 16-bit kernel dispatch", ret);
     else
     {
-        for (uint32_t i = 0; i < 4; i++)
+        const uint16_t expected_half[3] = {0x4800u, 0x4900u, 0x4a00u};
+        for (uint32_t i = 0; i < 3; i++)
         {
-            const float expected = static_cast<float>((i + 1) * 11);
-            const uint16_t expected_half[4] = {0x4980u, 0x4d80u, 0x5020u, 0x5180u};
-            if (output[2 + i] != expected)
+            const float expected = static_cast<float>(8 + i * 2);
+            if (output[1 + i] != expected)
             {
-                fprintf(stderr, "opencl_test: scalar 16-bit output[%u]=%g expected=%g\n",
-                        i, output[2 + i], expected);
+                fprintf(stderr, "opencl_test: scalar 16-bit output[%u]=%g expected=%g\n", i, output[1 + i], expected);
                 status = 1;
             }
-            if (half_output[4 + i] != expected_half[i])
+            if (half_output[1 + i] != expected_half[i])
             {
-                fprintf(stderr, "opencl_test: scalar half output[%u]=0x%04x expected=0x%04x\n",
-                        i, half_output[4 + i], expected_half[i]);
+                fprintf(stderr, "opencl_test: scalar half output[%u]=0x%04x expected=0x%04x\n", i, half_output[1 + i], expected_half[i]);
                 status = 1;
             }
         }
+        if (output[0] != untouched || output[4] != untouched || half_output[0] != 0x7bffu)
+        {
+            fprintf(stderr, "opencl_test: scalar 16-bit kernel modified a descriptor prefix or inactive invocation\n");
+            status = 1;
+        }
     }
 
-    clReleaseMemObject(buffers[3]);
-    clReleaseMemObject(buffers[2]);
-    clReleaseMemObject(buffers[1]);
-    clReleaseMemObject(buffers[0]);
+    for (size_t i = 0; i < 6; i++)
+        clReleaseMemObject(buffers[i]);
     return status;
 }
 
@@ -506,17 +467,12 @@ static int run_subgroup_basic_kernel(cl_context context, cl_command_queue queue,
 
     const cl_uint offset32 = 0;
     const cl_ulong offset64 = 0;
-    const cl_uint size32 = sizeof(output);
-    const cl_ulong size64 = sizeof(output);
     const void* offset = address_bits == 64 ? static_cast<const void*>(&offset64) : static_cast<const void*>(&offset32);
-    const void* size = address_bits == 64 ? static_cast<const void*>(&size64) : static_cast<const void*>(&size32);
     const size_t offset_size = address_bits == 64 ? sizeof(offset64) : sizeof(offset32);
     const momoten::BufferArgument& argument = translated.abi.buffers[0];
     ret = clSetKernelArg(kernel, argument.buffer_arg_index, sizeof(buffer), &buffer);
     if (ret == CL_SUCCESS)
         ret = clSetKernelArg(kernel, argument.offset_arg_index, offset_size, offset);
-    if (ret == CL_SUCCESS)
-        ret = clSetKernelArg(kernel, argument.size_arg_index, offset_size, size);
 
     const size_t global_size[3] = {4, 1, 1};
     const size_t local_size[3] = {translated.abi.local_size[0], translated.abi.local_size[1],
@@ -587,8 +543,6 @@ static int run_integer_dot_product_kernel(
 
     const cl_uint offset32 = 0;
     const cl_ulong offset64 = 0;
-    const cl_uint sizes32[2] = {sizeof(input), sizeof(output)};
-    const cl_ulong sizes64[2] = {sizeof(input), sizeof(output)};
     const void* offset = address_bits == 64 ? static_cast<const void*>(&offset64) : static_cast<const void*>(&offset32);
     const size_t offset_size = address_bits == 64 ? sizeof(offset64) : sizeof(offset32);
     for (size_t i = 0; i < translated.abi.buffers.size() && ret == CL_SUCCESS; i++)
@@ -603,9 +557,6 @@ static int run_integer_dot_product_kernel(
                              sizeof(buffers[argument.binding]), &buffers[argument.binding]);
         if (ret == CL_SUCCESS)
             ret = clSetKernelArg(kernel, argument.offset_arg_index, offset_size, offset);
-        if (ret == CL_SUCCESS)
-            ret = clSetKernelArg(kernel, argument.size_arg_index, offset_size,
-                                 address_bits == 64 ? static_cast<const void*>(&sizes64[argument.binding]) : static_cast<const void*>(&sizes32[argument.binding]));
     }
 
     const size_t global_size[3] = {1, 1, 1};
@@ -730,17 +681,12 @@ static int run_workgroup_kernel(cl_context context, cl_command_queue queue, cl_k
 
     const cl_uint offset32 = 0;
     const cl_ulong offset64 = 0;
-    const cl_uint size32 = static_cast<cl_uint>(output.size() * sizeof(uint32_t));
-    const cl_ulong size64 = static_cast<cl_ulong>(output.size() * sizeof(uint32_t));
     const void* offset = address_bits == 64 ? static_cast<const void*>(&offset64) : static_cast<const void*>(&offset32);
-    const void* size = address_bits == 64 ? static_cast<const void*>(&size64) : static_cast<const void*>(&size32);
     const size_t scalar_size = address_bits == 64 ? sizeof(cl_ulong) : sizeof(cl_uint);
     const momoten::BufferArgument& argument = translated.abi.buffers[0];
     ret = clSetKernelArg(kernel, argument.buffer_arg_index, sizeof(buffer), &buffer);
     if (ret == CL_SUCCESS)
         ret = clSetKernelArg(kernel, argument.offset_arg_index, scalar_size, offset);
-    if (ret == CL_SUCCESS)
-        ret = clSetKernelArg(kernel, argument.size_arg_index, scalar_size, size);
 
     const size_t global_size[3] = {group_count[0] * chunk_count * local_size[0], group_count[1] * local_size[1], group_count[2] * local_size[2]};
     if (ret == CL_SUCCESS)
@@ -1054,18 +1000,13 @@ int main(int argc, char** argv)
         return fail("clCreateBuffer(output)", ret);
     const cl_uint offset32 = 0;
     const cl_ulong offset64 = 0;
-    const cl_uint buffer_size32 = sizeof(input);
-    const cl_ulong buffer_size64 = sizeof(input);
     const void* offset = address_bits == 64 ? static_cast<const void*>(&offset64) : static_cast<const void*>(&offset32);
-    const void* buffer_size = address_bits == 64 ? static_cast<const void*>(&buffer_size64) : static_cast<const void*>(&buffer_size32);
     const size_t offset_size = address_bits == 64 ? sizeof(offset64) : sizeof(offset32);
 
     ret = clSetKernelArg(kernel, 0, sizeof(input_buffer), &input_buffer);
     if (ret == CL_SUCCESS) ret = clSetKernelArg(kernel, 1, offset_size, offset);
-    if (ret == CL_SUCCESS) ret = clSetKernelArg(kernel, 2, offset_size, buffer_size);
-    if (ret == CL_SUCCESS) ret = clSetKernelArg(kernel, 3, sizeof(output_buffer), &output_buffer);
-    if (ret == CL_SUCCESS) ret = clSetKernelArg(kernel, 4, offset_size, offset);
-    if (ret == CL_SUCCESS) ret = clSetKernelArg(kernel, 5, offset_size, buffer_size);
+    if (ret == CL_SUCCESS) ret = clSetKernelArg(kernel, 2, sizeof(output_buffer), &output_buffer);
+    if (ret == CL_SUCCESS) ret = clSetKernelArg(kernel, 3, offset_size, offset);
     if (ret == CL_SUCCESS) ret = clSetKernelArg(kernel, translated.abi.push_constant_arg_index, sizeof(push_constants), &push_constants);
     if (ret != CL_SUCCESS)
         return fail("clSetKernelArg", ret);

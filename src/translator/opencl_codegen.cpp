@@ -12,13 +12,6 @@ namespace momoten {
 void CompilerOpenCL::emit_entry_point_declarations()
 {
     CompilerGLSL::emit_entry_point_declarations();
-    if (push_constant_variable_id != 0)
-    {
-        const SPIRType& push_type = get_variable_data_type(get<SPIRVariable>(push_constant_variable_id));
-        // Retained helpers share the read-only private view of the by-value
-        // kernel argument instead of copying the block through every call.
-        statement("__private const struct ", type_to_glsl(push_type), "* momo_push_constants = &momo_push_constants_value;");
-    }
     if (translation_options.workgroup_mode == WorkgroupModeVirtual)
     {
         const uint64_t invocation_count = static_cast<uint64_t>(local_size[0]) * local_size[1] * local_size[2];
@@ -39,12 +32,11 @@ void CompilerOpenCL::emit_entry_point_declarations()
 
 void CompilerOpenCL::emit_header()
 {
-    // Reserve generated push-constant identifiers before resource and local
-    // names are assigned, including the macro name used by retained helpers.
+    // Reserve the shared push-constant argument name before resource and local
+    // names are assigned.
     if (push_constant_variable_id != 0)
     {
         resource_names.insert("momo_push_constants");
-        resource_names.insert("momo_push_constants_value");
     }
     // CompilerGLSL supplies the structured control-flow and expression
     // emitter. These switches make its output C-like before the virtual
@@ -230,41 +222,6 @@ void CompilerOpenCL::emit_header()
     end_scope();
     end_scope();
     statement("return (ushort)(sign | ((uint)half_exponent << 10) | half_mantissa);");
-    end_scope();
-    statement("");
-    statement("#if defined(__clang__)");
-    statement("__attribute__((noinline))");
-    statement("#endif");
-    statement("ushort momo_load_ushort(volatile __global const ushort* value, __global const uchar* base, ulong size)");
-    begin_scope();
-    statement("__global const uchar* address = (__global const uchar*)value;");
-    statement("ulong offset = (ulong)(address - base);");
-    statement("if (size < (ulong)sizeof(ushort) || offset > size - (ulong)sizeof(ushort))");
-    statement("    return (ushort)0;");
-    // Do not emit a native 16-bit global load here. LLVM's CPU OpenCL
-    // vectorizer may turn it into an unmasked gather for inactive work-item
-    // lanes at the edge of an ncnn dispatch. Load the containing aligned
-    // 32-bit word and extract the requested half instead.
-    statement("ulong word_offset = offset & ~(ulong)3;");
-    statement("if (word_offset + (ulong)sizeof(uint) > size)");
-    begin_scope();
-    statement("uchar lo = base[offset];");
-    statement("uchar hi = base[offset + 1];");
-    statement("return (ushort)((ushort)lo | ((ushort)hi << 8));");
-    end_scope();
-    statement("uint word = *((volatile __global const uint*)(base + word_offset));");
-    statement("return (ushort)(word >> ((uint)(offset - word_offset) * 8u));");
-    end_scope();
-    statement("#if defined(__clang__)");
-    statement("__attribute__((noinline))");
-    statement("#endif");
-    statement("short momo_load_short(volatile __global const short* value, __global const uchar* base, ulong size)");
-    begin_scope();
-    statement("__global const uchar* address = (__global const uchar*)value;");
-    statement("ulong offset = (ulong)(address - base);");
-    statement("if (size < (ulong)sizeof(short) || offset > size - (ulong)sizeof(short))");
-    statement("    return (short)0;");
-    statement("return (short)momo_load_ushort((volatile __global const ushort*)value, base, size);");
     end_scope();
     statement("");
     statement("float2 momo_unpack_half2x16(uint value)");
@@ -621,7 +578,7 @@ void CompilerOpenCL::emit_instruction(const Instruction& instruction)
     const Op opcode = static_cast<Op>(instruction.op);
     const uint32_t* ops = stream(instruction);
 
-    if (opcode == OpLoad && emit_robust_buffer_load(instruction, ops))
+    if (opcode == OpLoad && emit_storage_buffer_load(instruction, ops))
         return;
 
     if ((opcode == OpAccessChain || opcode == OpInBoundsAccessChain) && emit_matrix_access_chain(instruction, ops))
@@ -902,25 +859,13 @@ void CompilerOpenCL::emit_store_statement(uint32_t lhs_expression, uint32_t rhs_
     SPIRVariable* backing = maybe_get_backing_variable(lhs_expression);
     const bool resource_store = backing && resource_indices.find(backing->self) != resource_indices.end();
 
-    bool scalar_half_store = false;
     bool scalar_double_store = false;
     bool vector_store = false;
     if (resource_store)
     {
         const SPIRType& value_type = expression_type(rhs_expression);
-        scalar_half_store = value_type.basetype == SPIRType::Half && value_type.vecsize == 1 && value_type.columns == 1 && value_type.array.empty();
         scalar_double_store = value_type.basetype == SPIRType::Double && value_type.width == 64 && value_type.vecsize == 1 && value_type.columns == 1 && value_type.array.empty();
         vector_store = value_type.columns == 1 && value_type.array.empty() && (value_type.vecsize == 2 || value_type.vecsize == 3 || value_type.vecsize == 4);
-
-        // OpenCL C does not permit taking the address of a vector element.
-        // Leave those uncommon component stores to SPIRV-Cross.
-        const SPIRType& block_type = get<SPIRType>(backing->basetype);
-        if (scalar_half_store && block_type.basetype == SPIRType::Struct && block_type.member_types.size() == 1)
-        {
-            const SPIRType& storage_element = get<SPIRType>(block_type.member_types[0]);
-            if (storage_element.vecsize > 1 || storage_element.columns > 1)
-                scalar_half_store = false;
-        }
     }
 
     const bool guarded_store = uses_workgroup_storage && resource_store;
@@ -940,19 +885,6 @@ void CompilerOpenCL::emit_store_statement(uint32_t lhs_expression, uint32_t rhs_
         statement(lhs, " = as_ulong(", rhs, ");");
         register_write(lhs_expression);
     }
-    else if (scalar_half_store)
-    {
-        // Some OpenCL 1.x CPU backends speculate native scalar-half stores
-        // for inactive tail lanes and can generate invalid host accesses.
-        // Store the Vulkan f16 bit pattern through ushort instead. This is
-        // layout-identical and keeps rounding independent of the host's
-        // native half-store implementation.
-        const std::string lhs = to_dereferenced_expression(lhs_expression);
-        const std::string rhs = to_expression(rhs_expression);
-        statement("*((volatile __global ushort *)&(", lhs,
-                  ")) = momo_float_to_half_scalar(convert_float(", rhs, "));");
-        register_write(lhs_expression);
-    }
     else if (vector_store)
     {
         // Scalarize descriptor-vector stores. Some CPU backends incorrectly
@@ -961,9 +893,7 @@ void CompilerOpenCL::emit_store_statement(uint32_t lhs_expression, uint32_t rhs_
         const SPIRType& value_type = expression_type(rhs_expression);
         SPIRType element_type = value_type;
         element_type.vecsize = 1;
-        const std::string storage_type = value_type.basetype == SPIRType::Half
-                                             ? "ushort"
-                                         : value_type.basetype == SPIRType::Double && value_type.width == 64
+        const std::string storage_type = value_type.basetype == SPIRType::Double && value_type.width == 64
                                              ? "ulong"
                                              : type_to_glsl(element_type);
         flush_variable_declaration(rhs_expression);
@@ -973,9 +903,7 @@ void CompilerOpenCL::emit_store_statement(uint32_t lhs_expression, uint32_t rhs_
         for (uint32_t component = 0; component < value_type.vecsize; component++)
         {
             std::string component_value = "(" + rhs + ")." + components[component];
-            if (value_type.basetype == SPIRType::Half)
-                component_value = "as_ushort(" + component_value + ")";
-            else if (value_type.basetype == SPIRType::Double && value_type.width == 64)
+            if (value_type.basetype == SPIRType::Double && value_type.width == 64)
                 component_value = "as_ulong(" + component_value + ")";
             statement("*((volatile __global ", storage_type, " *)&(", lhs,
                       ") + ", component, ") = ", component_value, ";");
@@ -1110,7 +1038,7 @@ std::string CompilerOpenCL::constant_expression_vector(const SPIRConstant& const
     return expression;
 }
 
-bool CompilerOpenCL::emit_robust_buffer_load(const Instruction& instruction, const uint32_t* ops)
+bool CompilerOpenCL::emit_storage_buffer_load(const Instruction& instruction, const uint32_t* ops)
 {
     if (instruction.length < 3)
         return false;
@@ -1121,17 +1049,15 @@ bool CompilerOpenCL::emit_robust_buffer_load(const Instruction& instruction, con
     SPIRVariable* backing = maybe_get_backing_variable(pointer_id);
     if (!backing)
         return false;
-    const std::map<uint32_t, size_t>::const_iterator resource = resource_indices.find(backing->self);
-    if (resource == resource_indices.end())
+    if (resource_indices.find(backing->self) == resource_indices.end())
         return false;
 
     const SPIRType& type = get<SPIRType>(result_type);
     if (!type.array.empty())
-        throw std::runtime_error("robust storage-buffer array loads are not supported");
+        throw std::runtime_error("storage-buffer array loads are not supported");
 
     // OpenCL C does not permit taking the address of a vector element. Work
-    // from the enclosing vector for component loads so 16-bit components can
-    // use the same safe scalar load path as scalar descriptor elements.
+    // from the enclosing vector and load only the requested scalar component.
     const SPIRType& block_type = get<SPIRType>(backing->basetype);
     if (block_type.basetype == SPIRType::Struct && block_type.member_types.size() == 1)
     {
@@ -1150,28 +1076,12 @@ bool CompilerOpenCL::emit_robust_buffer_load(const Instruction& instruction, con
             {
                 SPIRType element_type = storage_element;
                 element_type.vecsize = 1;
-                const std::string storage_type = storage_element.basetype == SPIRType::Half
-                                                     ? "ushort"
-                                                 : storage_element.basetype == SPIRType::Double && storage_element.width == 64
+                const std::string storage_type = storage_element.basetype == SPIRType::Double && storage_element.width == 64
                                                      ? "ulong"
                                                      : type_to_glsl(element_type);
                 const size_t component = std::string("xyzw").find(lvalue[dot + 1]);
-                std::string expression;
-                if (storage_element.width == 16)
-                {
-                    const std::string load_function = storage_element.basetype == SPIRType::Short || storage_element.basetype == SPIRType::Int
-                                                          ? "momo_load_short"
-                                                          : "momo_load_ushort";
-                    const std::string index = std::to_string(resource->second);
-                    expression = load_function + "((volatile __global const " + storage_type + " *)&(" + lvalue.substr(0, dot) + ") + " + std::to_string(component) + ", momo_buffer_" + index + " + momo_buffer_offset_" + index + ", momo_buffer_size_" + index + ")";
-                }
-                else
-                {
-                    expression = "*((volatile __global const " + storage_type + " *)&(" + lvalue.substr(0, dot) + ") + " + std::to_string(component) + ")";
-                }
-                if (storage_element.basetype == SPIRType::Half)
-                    expression = "as_half(" + expression + ")";
-                else if (storage_element.basetype == SPIRType::Double && storage_element.width == 64)
+                std::string expression = "*((volatile __global const " + storage_type + " *)&(" + lvalue.substr(0, dot) + ") + " + std::to_string(component) + ")";
+                if (storage_element.basetype == SPIRType::Double && storage_element.width == 64)
                     expression = "as_double(" + expression + ")";
                 cast_from_variable_load(pointer_id, expression, type);
                 emit_op(result_type, result_id, expression, false);
@@ -1183,12 +1093,8 @@ bool CompilerOpenCL::emit_robust_buffer_load(const Instruction& instruction, con
         }
     }
 
-    // momoten does not advertise robustBufferAccess, so valid Vulkan shaders
-    // do not require descriptor loads to be bounds checked here. Address-based
-    // conditional loads are also miscompiled by multiple OpenCL 1.x backends,
-    // including Rusticl/llvmpipe, for both scalar and vector storage types.
-    // Keep only representation/code-generation workarounds below and let
-    // SPIRV-Cross emit ordinary valid scalar loads directly.
+    // Let SPIRV-Cross emit ordinary scalar loads. Only fp64 needs a storage
+    // representation conversion; half, short and ushort use native types.
     if (type.vecsize == 1 && type.columns == 1)
     {
         if (type.basetype == SPIRType::Double && type.width == 64)
@@ -1201,25 +1107,7 @@ bool CompilerOpenCL::emit_robust_buffer_load(const Instruction& instruction, con
             inherit_expression_dependencies(result_id, pointer_id);
             return true;
         }
-        if (type.width != 16 || (type.basetype != SPIRType::Half && type.basetype != SPIRType::UShort && type.basetype != SPIRType::Short && type.basetype != SPIRType::UInt && type.basetype != SPIRType::Int))
-            return false;
-
-        flush_variable_declaration(pointer_id);
-        const std::string lvalue = to_dereferenced_expression(pointer_id, false);
-        const bool signed_type = type.basetype == SPIRType::Short || type.basetype == SPIRType::Int;
-        const std::string storage_type = signed_type ? "short" : "ushort";
-        const std::string load_function = signed_type
-                                              ? "momo_load_short"
-                                              : "momo_load_ushort";
-        const std::string index = std::to_string(resource->second);
-        std::string expression = load_function + "((volatile __global const " + storage_type + " *)&(" + lvalue + "), " + "momo_buffer_" + index + " + momo_buffer_offset_" + index + ", " + "momo_buffer_size_" + index + ")";
-        if (type.basetype == SPIRType::Half)
-            expression = "as_half(" + expression + ")";
-        cast_from_variable_load(pointer_id, expression, type);
-        emit_op(result_type, result_id, expression, false);
-        register_read(result_id, pointer_id, false);
-        inherit_expression_dependencies(result_id, pointer_id);
-        return true;
+        return false;
     }
 
     if (type.columns == 1 && (type.vecsize == 2 || type.vecsize == 3 || type.vecsize == 4))
@@ -1228,9 +1116,7 @@ bool CompilerOpenCL::emit_robust_buffer_load(const Instruction& instruction, con
         const std::string lvalue = to_dereferenced_expression(pointer_id, false);
         SPIRType element_type = type;
         element_type.vecsize = 1;
-        const std::string storage_type = type.basetype == SPIRType::Half
-                                             ? "ushort"
-                                         : type.basetype == SPIRType::Double && type.width == 64
+        const std::string storage_type = type.basetype == SPIRType::Double && type.width == 64
                                              ? "ulong"
                                              : type_to_glsl(element_type);
         std::string expression = type.basetype == SPIRType::Double && type.width == 64
@@ -1240,23 +1126,8 @@ bool CompilerOpenCL::emit_robust_buffer_load(const Instruction& instruction, con
         {
             if (component != 0)
                 expression += ", ";
-            std::string component_load;
-            if (type.width == 16)
-            {
-                const bool signed_type = type.basetype == SPIRType::Short || type.basetype == SPIRType::Int;
-                const std::string load_function = signed_type
-                                                      ? "momo_load_short"
-                                                      : "momo_load_ushort";
-                const std::string index = std::to_string(resource->second);
-                component_load = load_function + "((volatile __global const " + storage_type + " *)&(" + lvalue + ") + " + std::to_string(component) + ", momo_buffer_" + index + " + momo_buffer_offset_" + index + ", momo_buffer_size_" + index + ")";
-            }
-            else
-            {
-                component_load = "*((volatile __global const " + storage_type + " *)&(" + lvalue + ") + " + std::to_string(component) + ")";
-            }
-            if (type.basetype == SPIRType::Half)
-                component_load = "as_half(" + component_load + ")";
-            else if (type.basetype == SPIRType::Double && type.width == 64)
+            std::string component_load = "*((volatile __global const " + storage_type + " *)&(" + lvalue + ") + " + std::to_string(component) + ")";
+            if (type.basetype == SPIRType::Double && type.width == 64)
                 component_load = "as_double(" + component_load + ")";
             expression += component_load;
         }

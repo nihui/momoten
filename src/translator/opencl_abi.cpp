@@ -54,7 +54,7 @@ void CompilerOpenCL::emit_push_constant_block(const SPIRVariable& var)
     emit_struct(type);
 
     const std::string instance_name = to_name(var.self);
-    statement_no_indent("#define ", instance_name, " (*momo_push_constants)");
+    statement_no_indent("#define ", instance_name, " momo_push_constants");
     statement("");
 }
 
@@ -134,15 +134,14 @@ void CompilerOpenCL::emit_function_prototype(SPIRFunction& func, const Bitset& r
                 declaration << ", ";
             first_argument = false;
             declaration << "__global uchar* momo_buffer_" << i
-                        << ", " << offset_type << " momo_buffer_offset_" << i
-                        << ", " << offset_type << " momo_buffer_size_" << i;
+                        << ", " << offset_type << " momo_buffer_offset_" << i;
         }
         if (push_constant_variable_id != 0)
         {
             if (!first_argument)
                 declaration << ", ";
             const SPIRType& push_type = get_variable_data_type(get<SPIRVariable>(push_constant_variable_id));
-            declaration << "__private const struct " << type_to_glsl(push_type) << "* momo_push_constants";
+            declaration << "struct " << type_to_glsl(push_type) << " momo_push_constants";
         }
 
         declaration << ")";
@@ -166,15 +165,11 @@ void CompilerOpenCL::emit_function_prototype(SPIRFunction& func, const Bitset& r
         std::ostringstream offset_arg;
         offset_arg << offset_type << " momo_buffer_offset_" << i;
         args.push_back(offset_arg.str());
-
-        std::ostringstream size_arg;
-        size_arg << offset_type << " momo_buffer_size_" << i;
-        args.push_back(size_arg.str());
     }
     if (push_constant_variable_id != 0)
     {
         const SPIRType& push_type = get_variable_data_type(get<SPIRVariable>(push_constant_variable_id));
-        args.push_back("struct " + type_to_glsl(push_type) + " momo_push_constants_value");
+        args.push_back("struct " + type_to_glsl(push_type) + " momo_push_constants");
     }
 
     std::ostringstream declaration;
@@ -222,7 +217,6 @@ void CompilerOpenCL::append_global_func_args(const SPIRFunction& func, uint32_t 
     {
         arglist.push_back("momo_buffer_" + std::to_string(i));
         arglist.push_back("momo_buffer_offset_" + std::to_string(i));
-        arglist.push_back("momo_buffer_size_" + std::to_string(i));
     }
     if (push_constant_variable_id != 0)
         arglist.push_back("momo_push_constants");
@@ -327,7 +321,6 @@ void CompilerOpenCL::reflect_resources(KernelABI& abi)
         argument.binding = resources[i].binding;
         argument.buffer_arg_index = arg_index++;
         argument.offset_arg_index = arg_index++;
-        argument.size_arg_index = arg_index++;
         argument.access = resources[i].access;
         argument.name = resources[i].instance_name;
         abi.buffers.push_back(argument);

@@ -165,9 +165,9 @@ int main(int argc, char** argv)
     for (size_t i = 0; i < result.abi.buffers.size(); i++)
     {
         const momoten::BufferArgument& argument = result.abi.buffers[i];
-        fprintf(stderr, "  set=%u binding=%u buffer_arg=%u offset_arg=%u size_arg=%u name=%s access=%d\n",
+        fprintf(stderr, "  set=%u binding=%u buffer_arg=%u offset_arg=%u name=%s access=%d\n",
                 argument.descriptor_set, argument.binding, argument.buffer_arg_index,
-                argument.offset_arg_index, argument.size_arg_index, argument.name.c_str(), static_cast<int>(argument.access));
+                argument.offset_arg_index, argument.name.c_str(), static_cast<int>(argument.access));
     }
 
     return 0;

@@ -523,12 +523,12 @@ bool validate_pipeline_abi(
     const size_t offset_size = abi.address_bits == 64 ? sizeof(cl_ulong) : sizeof(cl_uint);
     for (size_t i = 0; i < abi.buffers.size(); i++)
     {
-        if (parameter_size > SIZE_MAX - sizeof(cl_mem) - offset_size * 2)
+        if (parameter_size > SIZE_MAX - sizeof(cl_mem) - offset_size)
         {
             diagnostic = "kernel parameter-size calculation overflowed";
             return false;
         }
-        parameter_size += sizeof(cl_mem) + offset_size * 2;
+        parameter_size += sizeof(cl_mem) + offset_size;
     }
     if (abi.push_constant_arg_index >= 0)
     {

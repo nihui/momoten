@@ -646,7 +646,7 @@ static int run_case(const TestCase& test)
         command.group_count[2] = 4;
         ReplayState replay(&device);
         const cl_int replay_result = replay_dispatch(replay, command);
-        status |= require(test, replay_result == CL_SUCCESS && state.enqueue_calls == 1 && state.argument_calls == 3, "dispatch replay failed or did not enqueue exactly one kernel");
+        status |= require(test, replay_result == CL_SUCCESS && state.enqueue_calls == 1 && state.argument_calls == 2, "dispatch replay failed or did not enqueue exactly one kernel");
         for (size_t d = 0; d < 3; d++)
         {
             status |= require(test, state.local_size.values[d] == test.expected_local_size[d], "enqueue used an incorrect local size");

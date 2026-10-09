@@ -135,23 +135,6 @@ cl_int replay_dispatch(ReplayState& state, const RecordedCommand& command)
 
         if (pipeline->abi.address_bits == 64)
         {
-            const cl_ulong size = static_cast<cl_ulong>(byte_count);
-            ret = momoten_detail::g_opencl.p_clSetKernelArg(pipeline->kernel, argument.size_arg_index,
-                                                            sizeof(size), &size);
-        }
-        else
-        {
-            if (byte_count > 0xffffffffu)
-                return CL_INVALID_VALUE;
-            const cl_uint size = static_cast<cl_uint>(byte_count);
-            ret = momoten_detail::g_opencl.p_clSetKernelArg(pipeline->kernel, argument.size_arg_index,
-                                                            sizeof(size), &size);
-        }
-        if (ret != CL_SUCCESS)
-            return ret;
-
-        if (pipeline->abi.address_bits == 64)
-        {
             const cl_ulong offset = static_cast<cl_ulong>(absolute_offset);
             ret = momoten_detail::g_opencl.p_clSetKernelArg(pipeline->kernel, argument.offset_arg_index,
                                                             sizeof(offset), &offset);

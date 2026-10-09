@@ -111,7 +111,6 @@ static void dump_pipeline_artifacts(const std::shared_ptr<ShaderModule>& module,
             << "buffer[" << i << "].binding=" << buffer.binding << '\n'
             << "buffer[" << i << "].buffer_arg=" << buffer.buffer_arg_index << '\n'
             << "buffer[" << i << "].offset_arg=" << buffer.offset_arg_index << '\n'
-            << "buffer[" << i << "].size_arg=" << buffer.size_arg_index << '\n'
             << "buffer[" << i << "].access=" << static_cast<unsigned>(buffer.access) << '\n';
     }
     for (size_t i = 0; i < translated.abi.required_extensions.size(); i++)

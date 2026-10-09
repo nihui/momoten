@@ -56,7 +56,6 @@ struct BufferArgument
     uint32_t binding;
     uint32_t buffer_arg_index;
     uint32_t offset_arg_index;
-    uint32_t size_arg_index;
     BufferAccess access;
     std::string name;
 };

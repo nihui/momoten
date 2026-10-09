@@ -187,7 +187,7 @@ void impl_get_physical_device_properties(
 
     VkPhysicalDeviceLimits& limits = properties->limits;
     limits.maxPushConstantsSize = 256;
-    const size_t bytes_per_buffer_argument = sizeof(cl_mem) + 2 * (physical->address_bits == 64 ? sizeof(cl_ulong) : sizeof(cl_uint));
+    const size_t bytes_per_buffer_argument = sizeof(cl_mem) + (physical->address_bits == 64 ? sizeof(cl_ulong) : sizeof(cl_uint));
     const size_t parameter_budget = physical->max_parameter_size > limits.maxPushConstantsSize
                                         ? physical->max_parameter_size - limits.maxPushConstantsSize
                                         : 0;

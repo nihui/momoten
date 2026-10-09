@@ -71,7 +71,7 @@ protected:
     std::string constant_expression_vector(const SPIRConstant& constant, uint32_t vector) override;
 
 private:
-    bool emit_robust_buffer_load(const Instruction& instruction, const uint32_t* ops);
+    bool emit_storage_buffer_load(const Instruction& instruction, const uint32_t* ops);
     void emit_fp64_vector_helpers();
     bool emit_fp64_vector_instruction(const Instruction& instruction, const uint32_t* ops);
     void emit_integer_dot_product_helpers();
