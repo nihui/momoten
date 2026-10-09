@@ -4,7 +4,7 @@
 #version 450
 #extension GL_KHR_shader_subgroup_basic : require
 
-layout(local_size_x = 8, local_size_y = 16, local_size_z = 3) in;
+layout(local_size_x = 8, local_size_y = 4, local_size_z = 2) in;
 
 layout(set = 0, binding = 0, std430) writeonly buffer Output
 {
@@ -14,7 +14,7 @@ layout(set = 0, binding = 0, std430) writeonly buffer Output
 void main()
 {
     uint group_index = gl_WorkGroupID.x + gl_NumWorkGroups.x * (gl_WorkGroupID.y + gl_NumWorkGroups.y * gl_WorkGroupID.z);
-    uint invocation_index = group_index * 384u + gl_LocalInvocationIndex;
+    uint invocation_index = group_index * 64u + gl_LocalInvocationIndex;
     uint base = invocation_index * 8u;
     output_data.values[base] = gl_LocalInvocationID.x | (gl_LocalInvocationID.y << 8) | (gl_LocalInvocationID.z << 16);
     output_data.values[base + 1u] = gl_WorkGroupID.x | (gl_WorkGroupID.y << 8) | (gl_WorkGroupID.z << 16);

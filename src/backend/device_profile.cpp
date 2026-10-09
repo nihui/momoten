@@ -411,6 +411,58 @@ void configure_translation_options(
     options.integer_dot_product_input_4x8bit_packed = enabled.integer_dot_product && physical.integer_dot_product.input_4x8bit_packed;
 }
 
+bool resolve_workgroup_invocations(
+    const momoten::KernelABI& abi, size_t& invocations, std::string& diagnostic)
+{
+    invocations = 1;
+    for (size_t d = 0; d < 3; d++)
+    {
+        if (abi.local_size[d] == 0 || invocations > SIZE_MAX / abi.local_size[d])
+        {
+            diagnostic = "resolved local size is zero or its invocation count overflows";
+            return false;
+        }
+        invocations *= abi.local_size[d];
+    }
+    return true;
+}
+
+bool validate_workgroup_limits(
+    VkDevice device, const momoten::KernelABI& abi, size_t invocations, std::string& diagnostic)
+{
+    if (abi.workgroup_mode != momoten::WorkgroupModeDirect)
+        return true;
+
+    const VkPhysicalDevice physical = device->physical_device;
+    for (size_t d = 0; d < 3; d++)
+    {
+        if (abi.local_size[d] > physical->max_work_item_sizes[d])
+        {
+            diagnostic = "direct local size exceeds CL_DEVICE_MAX_WORK_ITEM_SIZES";
+            return false;
+        }
+    }
+    if (invocations > physical->max_workgroup_size)
+    {
+        std::ostringstream message;
+        message << "direct workgroup has " << invocations
+                << " work-items, exceeding CL_DEVICE_MAX_WORK_GROUP_SIZE="
+                << physical->max_workgroup_size;
+        diagnostic = message.str();
+        return false;
+    }
+    if (invocations > physical->max_compute_workgroup_invocations)
+    {
+        std::ostringstream message;
+        message << "direct workgroup has " << invocations
+                << " work-items, exceeding the device profile maximum="
+                << physical->max_compute_workgroup_invocations;
+        diagnostic = message.str();
+        return false;
+    }
+    return true;
+}
+
 bool validate_pipeline_abi(
     VkDevice device, const momoten::KernelABI& abi, std::string& diagnostic)
 {
@@ -497,31 +549,9 @@ bool validate_pipeline_abi(
         return false;
     }
 
-    size_t invocations = 1;
-    for (size_t d = 0; d < 3; d++)
-    {
-        if (abi.local_size[d] == 0 || invocations > SIZE_MAX / abi.local_size[d])
-        {
-            diagnostic = "resolved local size is zero or its invocation count overflows";
-            return false;
-        }
-        if (!abi.workgroup_splittable && abi.local_size[d] > physical->max_work_item_sizes[d])
-        {
-            diagnostic = "non-splittable local size exceeds CL_DEVICE_MAX_WORK_ITEM_SIZES";
-            return false;
-        }
-        invocations *= abi.local_size[d];
-    }
-    if (!abi.workgroup_splittable && invocations > physical->max_workgroup_size)
-    {
-        std::ostringstream message;
-        message << "resolved workgroup has " << invocations
-                << " work-items, exceeding CL_DEVICE_MAX_WORK_GROUP_SIZE="
-                << physical->max_workgroup_size;
-        diagnostic = message.str();
-        return false;
-    }
-    return true;
+    size_t invocations = 0;
+    return resolve_workgroup_invocations(abi, invocations, diagnostic)
+           && validate_workgroup_limits(device, abi, invocations, diagnostic);
 }
 
 std::string opencl_build_options(const momoten::KernelABI& abi, const ShaderDeviceProfile& profile)

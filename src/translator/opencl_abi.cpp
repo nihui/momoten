@@ -179,7 +179,7 @@ void CompilerOpenCL::emit_function_prototype(SPIRFunction& func, const Bitset& r
 
     std::ostringstream declaration;
     declaration << "__kernel ";
-    if (!workgroup_splittable)
+    if (translation_options.workgroup_mode == WorkgroupModeDirect)
     {
         declaration << "__attribute__((reqd_work_group_size(" << local_size[0] << ", "
                     << local_size[1] << ", " << local_size[2] << "))) ";

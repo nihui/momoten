@@ -35,7 +35,7 @@ static void qualify_file_scope_constants(std::string& source)
 }
 
 KernelABI::KernelABI()
-    : address_bits(0), subgroup_mode(SubgroupModeSingleton), subgroup_size(1), int64(false), fp64(false), integer_dot_product(false), float_controls2(false), workgroup_splittable(false), push_constant_arg_index(-1), push_constant_size(0)
+    : address_bits(0), subgroup_mode(SubgroupModeSingleton), subgroup_size(1), int64(false), fp64(false), integer_dot_product(false), float_controls2(false), workgroup_splittable(false), workgroup_mode(WorkgroupModeDirect), push_constant_arg_index(-1), push_constant_size(0)
 {
     local_size[0] = 1;
     local_size[1] = 1;
@@ -43,7 +43,7 @@ KernelABI::KernelABI()
 }
 
 TranslationOptions::TranslationOptions()
-    : entry_point("main"), address_bits(32), override_local_size(false), subgroup_mode(SubgroupModeSingleton), subgroup_size(1), integer_dot_product(false), integer_dot_product_input_4x8bit(false), integer_dot_product_input_4x8bit_packed(false)
+    : entry_point("main"), address_bits(32), override_local_size(false), workgroup_mode(WorkgroupModeDirect), subgroup_mode(SubgroupModeSingleton), subgroup_size(1), integer_dot_product(false), integer_dot_product_input_4x8bit(false), integer_dot_product_input_4x8bit_packed(false)
 {
     local_size[0] = 1;
     local_size[1] = 1;
@@ -60,6 +60,8 @@ void CompilerOpenCL::prepare(KernelABI& abi)
 {
     if (translation_options.address_bits != 32 && translation_options.address_bits != 64)
         throw std::runtime_error("OpenCL address bits must be 32 or 64");
+    if (translation_options.workgroup_mode != WorkgroupModeDirect && translation_options.workgroup_mode != WorkgroupModeVirtual)
+        throw std::runtime_error("invalid OpenCL workgroup translation mode");
     if (translation_options.subgroup_mode != SubgroupModeSingleton && translation_options.subgroup_mode != SubgroupModeNative && translation_options.subgroup_mode != SubgroupModeEmulatedBasic)
         throw std::runtime_error("invalid Vulkan subgroup translation mode");
     if (translation_options.subgroup_size == 0 || (translation_options.subgroup_size & (translation_options.subgroup_size - 1)) != 0)
@@ -81,6 +83,8 @@ void CompilerOpenCL::prepare(KernelABI& abi)
 
     localize_workgroup_variables();
     workgroup_splittable = workgroup_splittable && !uses_workgroup_storage;
+    if (translation_options.workgroup_mode == WorkgroupModeVirtual && !workgroup_splittable)
+        throw std::runtime_error("virtual workgroups require a shader without workgroup storage or synchronization barriers");
 
     reflect_resources(abi);
     if (requires_global_int32_atomics)
@@ -107,6 +111,7 @@ void CompilerOpenCL::prepare(KernelABI& abi)
     abi.subgroup_size = translation_options.subgroup_size;
     abi.integer_dot_product = requires_integer_dot_product;
     abi.workgroup_splittable = workgroup_splittable;
+    abi.workgroup_mode = translation_options.workgroup_mode;
     abi.local_size[0] = get_execution_mode_argument(ExecutionModeLocalSize, 0);
     abi.local_size[1] = get_execution_mode_argument(ExecutionModeLocalSize, 1);
     abi.local_size[2] = get_execution_mode_argument(ExecutionModeLocalSize, 2);

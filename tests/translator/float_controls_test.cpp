@@ -232,6 +232,7 @@ static int check_pipeline_validation()
     physical.address_bits = 32;
     physical.max_parameter_size = 1024;
     physical.max_workgroup_size = 1;
+    physical.max_compute_workgroup_invocations = 1;
     for (size_t d = 0; d < 3; d++)
         physical.max_work_item_sizes[d] = 1;
     VkDevice_T device = {};

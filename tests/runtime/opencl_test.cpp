@@ -94,6 +94,36 @@ static void print_build_log(cl_program program, cl_device_id device)
         fprintf(stderr, "%s\n", log.data());
 }
 
+static int build_test_kernel(cl_context context, cl_device_id device,
+                             const momoten::TranslationResult& translated,
+                             cl_program& program, cl_kernel& kernel)
+{
+    const char* source = translated.source.c_str();
+    const size_t source_size = translated.source.size();
+    cl_int ret = CL_SUCCESS;
+    program = clCreateProgramWithSource(context, 1, &source, &source_size, &ret);
+    if (!program)
+        return fail("clCreateProgramWithSource", ret);
+
+    ret = clBuildProgram(program, 1, &device, 0, 0, 0);
+    if (ret != CL_SUCCESS)
+    {
+        print_build_log(program, device);
+        clReleaseProgram(program);
+        program = 0;
+        return fail("clBuildProgram", ret);
+    }
+
+    kernel = clCreateKernel(program, translated.abi.entry_point.c_str(), &ret);
+    if (!kernel)
+    {
+        clReleaseProgram(program);
+        program = 0;
+        return fail("clCreateKernel", ret);
+    }
+    return 0;
+}
+
 static int run_fp16_kernel(cl_context context, cl_command_queue queue, cl_kernel kernel,
                            const momoten::TranslationResult& translated,
                            cl_uint address_bits)
@@ -609,15 +639,16 @@ static int run_integer_dot_product_kernel(
     return status;
 }
 
-static int run_workgroup_split_kernel(cl_context context, cl_command_queue queue, cl_kernel kernel,
-                                      const momoten::TranslationResult& translated,
-                                      cl_uint address_bits)
+static int run_workgroup_kernel(cl_context context, cl_command_queue queue, cl_kernel kernel,
+                                const momoten::TranslationResult& translated,
+                                cl_uint address_bits, size_t max_physical_size,
+                                std::vector<uint32_t>* captured_output = 0)
 {
-    if (!translated.abi.workgroup_splittable || translated.abi.local_size[0] != 8
-        || translated.abi.local_size[1] != 16 || translated.abi.local_size[2] != 3
-        || translated.abi.buffers.size() != 1)
+    if (!translated.abi.workgroup_splittable || translated.abi.buffers.size() != 1
+        || translated.abi.subgroup_mode != momoten::SubgroupModeEmulatedBasic
+        || translated.abi.subgroup_size != 8)
     {
-        fprintf(stderr, "opencl_test: workgroup split fixture has an unexpected ABI\n");
+        fprintf(stderr, "opencl_test: workgroup coordinate fixture has an unexpected ABI\n");
         return 1;
     }
 
@@ -625,18 +656,35 @@ static int run_workgroup_split_kernel(cl_context context, cl_command_queue queue
     cl_int ret = clGetCommandQueueInfo(queue, CL_QUEUE_DEVICE, sizeof(device), &device, 0);
     size_t kernel_limit = 0;
     size_t device_limit = 0;
+    size_t compile_size[3] = {};
     cl_uint dimensions = 0;
     if (ret == CL_SUCCESS)
         ret = clGetKernelWorkGroupInfo(kernel, device, CL_KERNEL_WORK_GROUP_SIZE,
                                        sizeof(kernel_limit), &kernel_limit, 0);
+    if (ret == CL_SUCCESS)
+        ret = clGetKernelWorkGroupInfo(kernel, device, CL_KERNEL_COMPILE_WORK_GROUP_SIZE,
+                                       sizeof(compile_size), compile_size, 0);
     if (ret == CL_SUCCESS)
         ret = clGetDeviceInfo(device, CL_DEVICE_MAX_WORK_GROUP_SIZE,
                               sizeof(device_limit), &device_limit, 0);
     if (ret == CL_SUCCESS)
         ret = clGetDeviceInfo(device, CL_DEVICE_MAX_WORK_ITEM_DIMENSIONS,
                               sizeof(dimensions), &dimensions, 0);
-    if (ret != CL_SUCCESS || dimensions == 0)
-        return fail("workgroup split limit query", ret);
+    if (ret != CL_SUCCESS)
+        return fail("workgroup limit query", ret);
+    if (dimensions < 3)
+        return fail("workgroup dimensions", CL_INVALID_WORK_DIMENSION);
+
+    const bool virtual_workgroup = translated.abi.workgroup_mode == momoten::WorkgroupModeVirtual;
+    for (size_t d = 0; d < 3; d++)
+    {
+        const size_t expected = virtual_workgroup ? 0 : translated.abi.local_size[d];
+        if (compile_size[d] != expected)
+        {
+            fprintf(stderr, "opencl_test: compiled workgroup size[%zu]=%zu expected=%zu\n", d, compile_size[d], expected);
+            return 1;
+        }
+    }
 
     std::vector<size_t> dimension_limits(dimensions, 1);
     ret = clGetDeviceInfo(device, CL_DEVICE_MAX_WORK_ITEM_SIZES,
@@ -644,27 +692,41 @@ static int run_workgroup_split_kernel(cl_context context, cl_command_queue queue
     if (ret != CL_SUCCESS)
         return fail("clGetDeviceInfo(CL_DEVICE_MAX_WORK_ITEM_SIZES)", ret);
 
-    const size_t logical_size = 8 * 16 * 3;
-    size_t physical_size = std::min(logical_size, kernel_limit);
-    physical_size = std::min(physical_size, device_limit);
-    physical_size = std::min(physical_size, dimension_limits[0]);
-    physical_size = std::min<size_t>(physical_size, 256);
-    if (physical_size < logical_size && translated.abi.subgroup_size > 1)
-        physical_size -= physical_size % translated.abi.subgroup_size;
-    if (physical_size == 0 || physical_size >= logical_size)
+    const size_t logical_size = static_cast<size_t>(translated.abi.local_size[0]) * translated.abi.local_size[1] * translated.abi.local_size[2];
+    size_t local_size[3] = {translated.abi.local_size[0], translated.abi.local_size[1], translated.abi.local_size[2]};
+    size_t chunk_count = 1;
+    if (virtual_workgroup)
     {
-        fprintf(stderr, "opencl_test: failed to force a smaller physical workgroup\n");
-        return 1;
+        size_t physical_size = std::min(logical_size, kernel_limit);
+        physical_size = std::min(physical_size, device_limit);
+        physical_size = std::min(physical_size, dimension_limits[0]);
+        physical_size = std::min(physical_size, max_physical_size);
+        physical_size -= physical_size % translated.abi.subgroup_size;
+        if (physical_size == 0 || physical_size >= logical_size)
+        {
+            fprintf(stderr, "opencl_test: failed to force a smaller physical workgroup\n");
+            return 1;
+        }
+        local_size[0] = physical_size;
+        local_size[1] = 1;
+        local_size[2] = 1;
+        chunk_count = 1 + (logical_size - 1) / physical_size;
     }
-    const size_t chunk_count = 1 + (logical_size - 1) / physical_size;
+    else if (logical_size > kernel_limit || logical_size > device_limit
+             || local_size[0] > dimension_limits[0] || local_size[1] > dimension_limits[1] || local_size[2] > dimension_limits[2])
+    {
+        fprintf(stderr, "opencl_test: fixed 3D workgroup exceeds this OpenCL device's limits; skipping\n");
+        return 77;
+    }
     const size_t group_count[3] = {2, 3, 2};
     const size_t invocation_count = logical_size * group_count[0] * group_count[1] * group_count[2];
-    std::vector<uint32_t> output(invocation_count * 6, 0xffffffffu);
+    const size_t field_count = 8;
+    std::vector<uint32_t> output(invocation_count * field_count, 0xffffffffu);
 
     cl_mem buffer = clCreateBuffer(context, CL_MEM_READ_WRITE | CL_MEM_COPY_HOST_PTR,
                                    output.size() * sizeof(uint32_t), output.data(), &ret);
     if (!buffer)
-        return fail("clCreateBuffer(workgroup split)", ret);
+        return fail("clCreateBuffer(workgroup coordinates)", ret);
 
     const cl_uint offset32 = 0;
     const cl_ulong offset64 = 0;
@@ -680,9 +742,7 @@ static int run_workgroup_split_kernel(cl_context context, cl_command_queue queue
     if (ret == CL_SUCCESS)
         ret = clSetKernelArg(kernel, argument.size_arg_index, scalar_size, size);
 
-    const size_t local_size[3] = {physical_size, 1, 1};
-    const size_t global_size[3] = {
-        group_count[0] * chunk_count * physical_size, group_count[1], group_count[2]};
+    const size_t global_size[3] = {group_count[0] * chunk_count * local_size[0], group_count[1] * local_size[1], group_count[2] * local_size[2]};
     if (ret == CL_SUCCESS)
         ret = clEnqueueNDRangeKernel(queue, kernel, 3, 0, global_size, local_size, 0, 0, 0);
     if (ret == CL_SUCCESS)
@@ -691,7 +751,7 @@ static int run_workgroup_split_kernel(cl_context context, cl_command_queue queue
 
     int status = 0;
     if (ret != CL_SUCCESS)
-        status = fail("workgroup split kernel dispatch", ret);
+        status = fail("workgroup coordinate kernel dispatch", ret);
     else
     {
         for (size_t gz = 0; gz < group_count[2] && status == 0; gz++)
@@ -703,22 +763,27 @@ static int run_workgroup_split_kernel(cl_context context, cl_command_queue queue
                     const size_t group_index = gx + group_count[0] * (gy + group_count[1] * gz);
                     for (size_t local_index = 0; local_index < logical_size; local_index++)
                     {
-                        const uint32_t lx = static_cast<uint32_t>(local_index % 8);
-                        const uint32_t ly = static_cast<uint32_t>((local_index / 8) % 16);
-                        const uint32_t lz = static_cast<uint32_t>(local_index / (8 * 16));
-                        const size_t base = (group_index * logical_size + local_index) * 6;
-                        const uint32_t expected[6] = {
+                        const uint32_t sx = translated.abi.local_size[0];
+                        const uint32_t sy = translated.abi.local_size[1];
+                        const uint32_t sz = translated.abi.local_size[2];
+                        const uint32_t lx = static_cast<uint32_t>(local_index % sx);
+                        const uint32_t ly = static_cast<uint32_t>((local_index / sx) % sy);
+                        const uint32_t lz = static_cast<uint32_t>(local_index / (sx * sy));
+                        const size_t base = (group_index * logical_size + local_index) * field_count;
+                        const uint32_t expected[8] = {
                             lx | (ly << 8) | (lz << 16),
                             static_cast<uint32_t>(gx | (gy << 8) | (gz << 16)),
-                            static_cast<uint32_t>((gx * 8 + lx) | ((gy * 16 + ly) << 8) | ((gz * 3 + lz) << 16)),
+                            static_cast<uint32_t>((gx * sx + lx) | ((gy * sy + ly) << 8) | ((gz * sz + lz) << 16)),
                             static_cast<uint32_t>(group_count[0] | (group_count[1] << 8) | (group_count[2] << 16)),
                             static_cast<uint32_t>(translated.abi.subgroup_size | ((local_index % translated.abi.subgroup_size) << 8) | ((local_index / translated.abi.subgroup_size) << 16)),
-                            static_cast<uint32_t>((logical_size / translated.abi.subgroup_size) | ((local_index % translated.abi.subgroup_size == 0 ? 1u : 0u) << 16))};
-                        for (size_t field = 0; field < 6; field++)
+                            static_cast<uint32_t>(((logical_size + translated.abi.subgroup_size - 1) / translated.abi.subgroup_size) | ((local_index % translated.abi.subgroup_size == 0 ? 1u : 0u) << 16)),
+                            static_cast<uint32_t>(local_index),
+                            sx | (sy << 8) | (sz << 16)};
+                        for (size_t field = 0; field < field_count; field++)
                         {
                             if (output[base + field] != expected[field])
                             {
-                                fprintf(stderr, "opencl_test: split output[%zu]=0x%08x expected=0x%08x\n",
+                                fprintf(stderr, "opencl_test: workgroup output[%zu]=0x%08x expected=0x%08x\n",
                                         base + field, output[base + field], expected[field]);
                                 status = 1;
                                 break;
@@ -733,6 +798,67 @@ static int run_workgroup_split_kernel(cl_context context, cl_command_queue queue
     }
 
     clReleaseMemObject(buffer);
+    if (status == 0 && captured_output)
+        captured_output->swap(output);
+    return status;
+}
+
+static int run_workgroup_split_kernel(cl_context context, cl_command_queue queue, cl_kernel kernel,
+                                      const momoten::TranslationResult& translated,
+                                      cl_uint address_bits)
+{
+    if (translated.abi.workgroup_mode != momoten::WorkgroupModeVirtual || translated.abi.local_size[0] != 8
+        || translated.abi.local_size[1] != 16 || translated.abi.local_size[2] != 3)
+    {
+        fprintf(stderr, "opencl_test: workgroup split fixture has an unexpected ABI\n");
+        return 1;
+    }
+    return run_workgroup_kernel(context, queue, kernel, translated, address_bits, 256);
+}
+
+static int run_workgroup_3d_modes(cl_context context, cl_command_queue queue, cl_device_id device,
+                                  cl_kernel kernel, const momoten::TranslationResult& translated,
+                                  cl_uint address_bits, const std::vector<uint32_t>& words,
+                                  const momoten::TranslationOptions& options)
+{
+    if (translated.abi.workgroup_mode != momoten::WorkgroupModeDirect || translated.abi.local_size[0] != 8
+        || translated.abi.local_size[1] != 4 || translated.abi.local_size[2] != 2)
+    {
+        fprintf(stderr, "opencl_test: direct 3D workgroup fixture has an unexpected ABI\n");
+        return 1;
+    }
+    std::vector<uint32_t> direct_output;
+    const int direct_status = run_workgroup_kernel(context, queue, kernel, translated, address_bits, 64, &direct_output);
+    if (direct_status != 0)
+        return direct_status;
+
+    momoten::TranslationOptions virtual_options = options;
+    virtual_options.workgroup_mode = momoten::WorkgroupModeVirtual;
+    momoten::TranslationResult virtual_translated;
+    if (!momoten::translate_spirv_to_opencl_c(words.data(), words.size(), virtual_options, virtual_translated))
+    {
+        fprintf(stderr, "opencl_test: virtual 3D translation failed: %s\n", virtual_translated.diagnostics.c_str());
+        return 1;
+    }
+    if (virtual_translated.abi.workgroup_mode != momoten::WorkgroupModeVirtual)
+    {
+        fprintf(stderr, "opencl_test: explicit virtual 3D mode was not reflected\n");
+        return 1;
+    }
+
+    cl_program virtual_program = 0;
+    cl_kernel virtual_kernel = 0;
+    if (build_test_kernel(context, device, virtual_translated, virtual_program, virtual_kernel))
+        return 1;
+    std::vector<uint32_t> virtual_output;
+    int status = run_workgroup_kernel(context, queue, virtual_kernel, virtual_translated, address_bits, 16, &virtual_output);
+    clReleaseKernel(virtual_kernel);
+    clReleaseProgram(virtual_program);
+    if (status == 0 && direct_output != virtual_output)
+    {
+        fprintf(stderr, "opencl_test: direct and virtual 3D workgroup coordinates or subgroup results differ\n");
+        status = 1;
+    }
     return status;
 }
 
@@ -750,7 +876,8 @@ enum OpenCLTestFeature
     OpenCLTestScalar16Bit,
     OpenCLTestSubgroupBasic,
     OpenCLTestIntegerDotProduct,
-    OpenCLTestWorkgroupSplit
+    OpenCLTestWorkgroupSplit,
+    OpenCLTestWorkgroup3D
 };
 
 struct OpenCLTestCase
@@ -777,7 +904,8 @@ static const OpenCLTestCase opencl_test_cases[] = {
     {"integer-dot-product", OpenCLTestIntegerDotProduct, false, false, true,
      run_integer_dot_product_kernel},
     {"workgroup-split", OpenCLTestWorkgroupSplit, false, false, false,
-     run_workgroup_split_kernel}};
+     run_workgroup_split_kernel},
+    {"workgroup-3d", OpenCLTestWorkgroup3D, false, false, false, 0}};
 
 static const OpenCLTestCase* find_opencl_test_case(int argc, char** argv)
 {
@@ -799,7 +927,7 @@ int main(int argc, char** argv)
     const OpenCLTestCase* test_case = find_opencl_test_case(argc, argv);
     if (!test_case)
     {
-        fprintf(stderr, "opencl_test: expected SPIR-V input path and optional fp16, fp64, int16, atomic-packed, scalar-16bit, subgroup-basic, integer-dot-product, or workgroup-split mode\n");
+        fprintf(stderr, "opencl_test: expected SPIR-V input path and optional fp16, fp64, int16, atomic-packed, scalar-16bit, subgroup-basic, integer-dot-product, workgroup-split, or workgroup-3d mode\n");
         return 1;
     }
 
@@ -825,11 +953,13 @@ int main(int argc, char** argv)
 
     momoten::TranslationOptions options;
     options.address_bits = address_bits;
-    if (test_case->feature == OpenCLTestSubgroupBasic || test_case->feature == OpenCLTestWorkgroupSplit)
+    if (test_case->feature == OpenCLTestSubgroupBasic || test_case->feature == OpenCLTestWorkgroupSplit || test_case->feature == OpenCLTestWorkgroup3D)
     {
         options.subgroup_mode = momoten::SubgroupModeEmulatedBasic;
         options.subgroup_size = 8;
     }
+    if (test_case->feature == OpenCLTestWorkgroupSplit)
+        options.workgroup_mode = momoten::WorkgroupModeVirtual;
     if (test_case->feature == OpenCLTestIntegerDotProduct)
     {
         cl_device_integer_dot_product_capabilities_khr capabilities = 0;
@@ -873,39 +1003,20 @@ int main(int argc, char** argv)
         return fail("clCreateCommandQueue", ret);
     }
 
-    const char* source = translated.source.c_str();
-    const size_t source_size = translated.source.size();
-    cl_program program = clCreateProgramWithSource(context, 1, &source, &source_size, &ret);
-    if (!program)
+    cl_program program = 0;
+    cl_kernel kernel = 0;
+    if (build_test_kernel(context, device, translated, program, kernel))
     {
         clReleaseCommandQueue(queue);
         clReleaseContext(context);
-        return fail("clCreateProgramWithSource", ret);
+        return 1;
     }
 
-    ret = clBuildProgram(program, 1, &device, 0, 0, 0);
-    if (ret != CL_SUCCESS)
+    if (test_case->runner || test_case->feature == OpenCLTestWorkgroup3D)
     {
-        print_build_log(program, device);
-        clReleaseProgram(program);
-        clReleaseCommandQueue(queue);
-        clReleaseContext(context);
-        return fail("clBuildProgram", ret);
-    }
-
-    cl_kernel kernel = clCreateKernel(program, translated.abi.entry_point.c_str(), &ret);
-    if (!kernel)
-    {
-        clReleaseProgram(program);
-        clReleaseCommandQueue(queue);
-        clReleaseContext(context);
-        return fail("clCreateKernel", ret);
-    }
-
-    if (test_case->runner)
-    {
-        const int status = test_case->runner(
-            context, queue, kernel, translated, address_bits);
+        const int status = test_case->feature == OpenCLTestWorkgroup3D
+                               ? run_workgroup_3d_modes(context, queue, device, kernel, translated, address_bits, words, options)
+                               : test_case->runner(context, queue, kernel, translated, address_bits);
         clReleaseKernel(kernel);
         clReleaseProgram(program);
         clReleaseCommandQueue(queue);

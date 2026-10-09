@@ -34,6 +34,15 @@ enum SubgroupMode
     SubgroupModeEmulatedBasic = 2
 };
 
+enum WorkgroupMode
+{
+    // Preserve the logical Vulkan local size as a fixed OpenCL workgroup.
+    WorkgroupModeDirect = 0,
+    // Flatten independent invocations and reconstruct their Vulkan coordinates.
+    // The driver may split one logical workgroup across physical workgroups.
+    WorkgroupModeVirtual = 1
+};
+
 struct SpecializationValue
 {
     uint32_t constant_id;
@@ -94,6 +103,7 @@ struct KernelABI
     // or synchronization barrier and may therefore be split across independent
     // physical OpenCL workgroups by the driver.
     bool workgroup_splittable;
+    WorkgroupMode workgroup_mode;
     // One by-value struct argument containing tightly packed 32-bit scalars.
     // Its complete byte size counts against CL_DEVICE_MAX_PARAMETER_SIZE.
     int push_constant_arg_index;
@@ -108,6 +118,9 @@ struct TranslationOptions
     uint32_t address_bits;
     uint32_t local_size[3];
     bool override_local_size;
+    // Direct workgroups are preferred. Virtual workgroups require a shader
+    // without workgroup storage or synchronization barriers.
+    WorkgroupMode workgroup_mode;
     SubgroupMode subgroup_mode;
     uint32_t subgroup_size;
     // The driver enables these only after querying cl_khr_integer_dot_product

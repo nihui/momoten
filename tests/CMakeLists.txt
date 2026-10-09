@@ -51,6 +51,40 @@ if(TARGET momoten_amalgamated_translator)
         LABELS "momoten;amalgamation;translator;float-controls")
 endif()
 
+function(momoten_add_workgroup_pipeline_test target_name translator_target test_name)
+    add_executable(${target_name}
+        api/workgroup_pipeline_test.cpp
+        "${CMAKE_CURRENT_SOURCE_DIR}/../src/pipeline.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/../src/memory.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/../src/backend/pipeline_build.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/../src/backend/program.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/../src/backend/cache.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/../src/backend/device_profile.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/../src/backend/replay.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/../src/backend/memory_sync.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/../src/backend/memory_state.cpp")
+    target_compile_features(${target_name} PRIVATE cxx_std_11)
+    target_compile_definitions(${target_name} PRIVATE
+        CL_TARGET_OPENCL_VERSION=100)
+    target_include_directories(${target_name} PRIVATE
+        "${CMAKE_CURRENT_SOURCE_DIR}/../src")
+    target_link_libraries(${target_name} PRIVATE
+        ${translator_target} momoten::headers momoten_opencl_headers
+        momoten_vulkan_headers SPIRV-Tools-static)
+    add_test(NAME ${test_name} COMMAND ${target_name})
+    set_tests_properties(${test_name} PROPERTIES
+        LABELS "momoten;api;workgroup")
+endfunction()
+
+momoten_add_workgroup_pipeline_test(momoten_workgroup_pipeline_test
+    momoten::translator momoten_workgroup_pipeline)
+if(TARGET momoten_amalgamated_translator)
+    momoten_add_workgroup_pipeline_test(momoten_amalgamated_workgroup_pipeline_test
+        momoten_amalgamated_translator momoten_amalgamated_workgroup_pipeline)
+    set_tests_properties(momoten_amalgamated_workgroup_pipeline PROPERTIES
+        LABELS "momoten;amalgamation;api;workgroup")
+endif()
+
 if(TARGET momoten_driver AND NOT CMAKE_CROSSCOMPILING)
     add_test(NAME momoten_no_system_opencl_dependency
         COMMAND "${CMAKE_COMMAND}"
@@ -143,6 +177,7 @@ momoten_compile_test_shader(momoten_scalar_16bit_test_spv scalar_16bit_buffer.co
 momoten_compile_test_shader(momoten_subgroup_basic_test_spv subgroup_basic.comp vulkan1.1)
 momoten_compile_test_shader(momoten_integer_dot_product_test_spv integer_dot_product.comp vulkan1.1)
 momoten_compile_test_shader(momoten_workgroup_split_test_spv workgroup_split.comp vulkan1.1)
+momoten_compile_test_shader(momoten_workgroup_3d_test_spv workgroup_3d.comp vulkan1.1)
 
 add_custom_target(momoten-test-spv DEPENDS ${momoten_test_spv_files})
 
@@ -161,7 +196,8 @@ add_test(NAME momoten_translator_simple
         "${momoten_integer_dot_product_test_spv}"
         "${momoten_workgroup_split_test_spv}"
         "${momoten_fp64_test_spv}"
-        "${momoten_fp16_program_constant_test_spv}")
+        "${momoten_fp16_program_constant_test_spv}"
+        "${momoten_workgroup_3d_test_spv}")
 set_tests_properties(momoten_translator_simple PROPERTIES
     LABELS "momoten;translator")
 
@@ -183,7 +219,8 @@ if(TARGET momoten_amalgamated_translator)
             "${momoten_integer_dot_product_test_spv}"
             "${momoten_workgroup_split_test_spv}"
             "${momoten_fp64_test_spv}"
-            "${momoten_fp16_program_constant_test_spv}")
+            "${momoten_fp16_program_constant_test_spv}"
+            "${momoten_workgroup_3d_test_spv}")
     set_tests_properties(momoten_amalgamated_translator_simple PROPERTIES
         LABELS "momoten;amalgamation;translator")
 endif()
@@ -236,12 +273,15 @@ if(TARGET momoten_test_opencl)
     add_test(NAME momoten_opencl_workgroup_split
         COMMAND momoten_opencl_test "${momoten_workgroup_split_test_spv}"
             workgroup-split)
+    add_test(NAME momoten_opencl_workgroup_3d
+        COMMAND momoten_opencl_test "${momoten_workgroup_3d_test_spv}"
+            workgroup-3d)
     set_tests_properties(momoten_opencl_simple momoten_opencl_fp16
         momoten_opencl_fp64
         momoten_opencl_int16
         momoten_opencl_atomic_packed momoten_opencl_scalar_16bit
         momoten_opencl_subgroup_basic momoten_opencl_integer_dot_product
-        momoten_opencl_workgroup_split PROPERTIES
+        momoten_opencl_workgroup_split momoten_opencl_workgroup_3d PROPERTIES
         LABELS "momoten;runtime;direct-opencl"
         SKIP_RETURN_CODE 77)
 else()

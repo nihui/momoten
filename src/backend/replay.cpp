@@ -184,7 +184,7 @@ cl_int replay_dispatch(ReplayState& state, const RecordedCommand& command)
         pipeline->opencl_local_size[0],
         pipeline->opencl_local_size[1],
         pipeline->opencl_local_size[2]};
-    if (pipeline->abi.workgroup_splittable)
+    if (pipeline->abi.workgroup_mode == momoten::WorkgroupModeVirtual)
     {
         if (pipeline->workgroup_chunk_count == 0 || local_size[0] == 0
             || command.group_count[0] > SIZE_MAX / pipeline->workgroup_chunk_count)

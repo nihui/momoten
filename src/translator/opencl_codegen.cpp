@@ -19,7 +19,7 @@ void CompilerOpenCL::emit_entry_point_declarations()
         // kernel argument instead of copying the block through every call.
         statement("__private const struct ", type_to_glsl(push_type), "* momo_push_constants = &momo_push_constants_value;");
     }
-    if (workgroup_splittable)
+    if (translation_options.workgroup_mode == WorkgroupModeVirtual)
     {
         const uint64_t invocation_count = static_cast<uint64_t>(local_size[0]) * local_size[1] * local_size[2];
         const uint64_t xy_size = static_cast<uint64_t>(local_size[0]) * local_size[1];
@@ -300,7 +300,7 @@ void CompilerOpenCL::emit_header()
     }
     statement("");
 
-    if (workgroup_splittable)
+    if (translation_options.workgroup_mode == WorkgroupModeVirtual)
     {
         statement("#define gl_NumWorkGroups momo_virtual_num_workgroups");
         statement("#define gl_WorkGroupID momo_virtual_workgroup_id");
@@ -314,7 +314,8 @@ void CompilerOpenCL::emit_header()
         statement("#define gl_WorkGroupID ((uint3)((uint)get_group_id(0), (uint)get_group_id(1), (uint)get_group_id(2)))");
         statement("#define gl_LocalInvocationID ((uint3)((uint)get_local_id(0), (uint)get_local_id(1), (uint)get_local_id(2)))");
         statement("#define gl_GlobalInvocationID ((uint3)((uint)get_global_id(0), (uint)get_global_id(1), (uint)get_global_id(2)))");
-        statement("#define gl_LocalInvocationIndex ((uint)(get_local_id(2) * get_local_size(1) * get_local_size(0) + get_local_id(1) * get_local_size(0) + get_local_id(0)))");
+        const uint64_t xy_size = static_cast<uint64_t>(local_size[0]) * local_size[1];
+        statement("#define gl_LocalInvocationIndex ((uint)(get_local_id(2) * ", xy_size, "u + get_local_id(1) * ", local_size[0], "u + get_local_id(0)))");
     }
     statement("#define gl_WorkGroupSize ((uint3)(", local_size[0], "u, ", local_size[1], "u, ", local_size[2], "u))");
     statement("");
@@ -440,7 +441,7 @@ std::string CompilerOpenCL::builtin_to_glsl(BuiltIn builtin, StorageClass storag
     case BuiltInSubgroupId:
         if (translation_options.subgroup_mode == SubgroupModeNative)
         {
-            if (workgroup_splittable)
+            if (translation_options.workgroup_mode == WorkgroupModeVirtual)
                 return "(momo_workgroup_chunk * ((uint)get_local_size(0) / " + std::to_string(translation_options.subgroup_size) + "u) + (uint)get_sub_group_id())";
             return "((uint)get_sub_group_id())";
         }
@@ -451,7 +452,7 @@ std::string CompilerOpenCL::builtin_to_glsl(BuiltIn builtin, StorageClass storag
     case BuiltInNumEnqueuedSubgroups:
         if (translation_options.subgroup_mode == SubgroupModeNative)
         {
-            if (workgroup_splittable)
+            if (translation_options.workgroup_mode == WorkgroupModeVirtual)
             {
                 const uint64_t subgroup_count = (invocation_count + translation_options.subgroup_size - 1) / translation_options.subgroup_size;
                 return std::to_string(subgroup_count) + "u";

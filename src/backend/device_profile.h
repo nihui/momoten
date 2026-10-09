@@ -72,6 +72,10 @@ ShaderDeviceProfile probe_shader_device_profile(
 
 void configure_translation_options(
     VkDevice device, momoten::TranslationOptions& options);
+bool resolve_workgroup_invocations(
+    const momoten::KernelABI& abi, size_t& invocations, std::string& diagnostic);
+bool validate_workgroup_limits(
+    VkDevice device, const momoten::KernelABI& abi, size_t invocations, std::string& diagnostic);
 bool validate_pipeline_abi(
     VkDevice device, const momoten::KernelABI& abi, std::string& diagnostic);
 std::string opencl_build_options(const momoten::KernelABI& abi, const ShaderDeviceProfile& profile);

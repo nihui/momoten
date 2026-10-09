@@ -18,6 +18,7 @@ static int check_parameter_size(uint32_t address_bits, size_t required_size)
     VkPhysicalDevice_T physical = {};
     physical.address_bits = address_bits;
     physical.max_workgroup_size = 1;
+    physical.max_compute_workgroup_invocations = 1;
     for (size_t d = 0; d < 3; d++)
         physical.max_work_item_sizes[d] = 1;
     VkDevice_T device = {};

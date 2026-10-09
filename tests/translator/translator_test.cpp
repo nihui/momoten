@@ -54,14 +54,17 @@ static bool has_momoten_inline_helper(const std::string& source)
 
 int main(int argc, char** argv)
 {
-    if (argc != 11)
-        return require(false, "expected positive, unsupported, atomic, fp16, int16, subgroup, integer-dot, workgroup-split, fp64 and fp16 program-constant SPIR-V input paths");
+    if (argc != 12)
+        return require(false, "expected positive, unsupported, atomic, fp16, int16, subgroup, integer-dot, workgroup-split, fp64, fp16 program-constant and workgroup-3D SPIR-V input paths");
 
     std::vector<uint32_t> words;
     if (!read_spirv(argv[1], words))
         return require(false, "failed to read test SPIR-V");
 
     momoten::TranslationOptions options;
+    if (require(options.workgroup_mode == momoten::WorkgroupModeDirect,
+                "default translation does not use direct workgroups"))
+        return 1;
     momoten::SpecializationValue specialization;
     specialization.constant_id = 0;
     specialization.data.resize(4);
@@ -79,6 +82,8 @@ int main(int argc, char** argv)
     if (require(result.abi.local_size[0] == 4 && result.abi.local_size[1] == 1 && result.abi.local_size[2] == 1,
                 "local size reflection failed")
         || require(!result.abi.workgroup_splittable, "workgroup-storage kernel was marked splittable")
+        || require(result.abi.workgroup_mode == momoten::WorkgroupModeDirect,
+                   "workgroup-storage kernel did not retain the direct ABI")
         || require(result.abi.buffers.size() == 2, "expected two storage buffers") || require(result.abi.buffers[0].binding == 0 && result.abi.buffers[1].binding == 1, "storage buffers are not ordered by binding") || require(result.abi.buffers[0].buffer_arg_index == 0 && result.abi.buffers[0].offset_arg_index == 1 && result.abi.buffers[0].size_arg_index == 2 && result.abi.buffers[1].buffer_arg_index == 3 && result.abi.buffers[1].offset_arg_index == 4 && result.abi.buffers[1].size_arg_index == 5, "storage-buffer pointer/offset/size ABI is incorrect") || require(result.abi.push_constant_arg_index == 6 && result.abi.push_constant_size == 12, "push-constant ABI is incorrect") || require(result.abi.entry_point == "momo_main", "translated kernel name is incorrect") || require(result.source.find("#define round(x) rint(x)") != std::string::npos, "GLSL nearest-even round compatibility macro was not emitted") || require(result.source.find("#define SPIRV_CROSS_UNROLL\n") != std::string::npos && result.source.find("#define SPIRV_CROSS_LOOP\n") != std::string::npos, "portable SPIR-V loop-control hint macros were not emitted") || require(result.source.find("SPIRV_CROSS_UNROLL\n        for") != std::string::npos && result.source.find("SPIRV_CROSS_LOOP\n        for") != std::string::npos, "SPIR-V loop-control hints were not preserved in the fixture") || require(result.source.find("__local float scratch[4]") != std::string::npos, "workgroup storage was not localized into the OpenCL kernel") || require(result.source.find("barrier(CLK_LOCAL_MEM_FENCE)") != std::string::npos, "workgroup barrier was not lowered to OpenCL C 1.0") || require(result.source.find("any((valid) != int4(0))") != std::string::npos && result.source.find("all((valid) != int4(0))") != std::string::npos, "boolean-vector any/all was not canonicalized for OpenCL sign-bit semantics") || require(result.source.find("__kernel __attribute__((reqd_work_group_size(4, 1, 1))) void momo_main") != std::string::npos, "OpenCL kernel declaration is missing") || require(result.source.find("momo_buffer_offset_0") != std::string::npos, "buffer offset argument is missing") || require(result.source.find("momo_buffer_size_0") != std::string::npos, "buffer byte-size argument is missing") || require(result.source.find("(__global uchar *)&(") == std::string::npos, "scalar storage load was wrapped in an unsupported robust-access guard") || require(result.source.find("volatile int momo_active = 1") != std::string::npos && result.source.find("if (momo_active != 0)") != std::string::npos, "workgroup return convergence and storage-store predication are missing") || require(result.source.find("apply_scale") == std::string::npos, "SPIR-V helper function was not inlined into kernel scope") || require(result.source.find("float load_scale(") != std::string::npos && result.source.find("__private const struct Parameters* momo_push_constants") != std::string::npos, "retained helper did not receive the private push-constant ABI") || require(result.source.find("inout ") == std::string::npos, "GLSL inout qualifier leaked into OpenCL source") || require(result.source.find("layout(") == std::string::npos, "Vulkan GLSL layout syntax leaked into OpenCL source"))
         return 1;
 
@@ -92,6 +97,16 @@ int main(int argc, char** argv)
 
     momoten::TranslationResult repeated;
     if (!momoten::translate_spirv_to_opencl_c(words.data(), words.size(), options, repeated) || require(repeated.source == result.source, "translation is not deterministic"))
+        return 1;
+
+    momoten::TranslationOptions virtual_options = options;
+    virtual_options.workgroup_mode = momoten::WorkgroupModeVirtual;
+    momoten::TranslationResult virtual_rejected;
+    if (require(!momoten::translate_spirv_to_opencl_c(
+                    words.data(), words.size(), virtual_options, virtual_rejected),
+                "workgroup storage and barriers were accepted in virtual mode")
+        || require(virtual_rejected.diagnostics.find("workgroup") != std::string::npos,
+                   "virtual workgroup rejection was not diagnostic"))
         return 1;
 
     std::vector<uint32_t> invalid = words;
@@ -124,9 +139,10 @@ int main(int argc, char** argv)
                 "supported global int32/uint32 compare-exchange was rejected")
         || require(atomic_result.abi.workgroup_splittable,
                    "independent-work-item kernel was not marked splittable")
-        || require(atomic_result.source.find("reqd_work_group_size") == std::string::npos
-                       && atomic_result.source.find("momo_virtual_local_invocation_index") != std::string::npos,
-                   "splittable kernel did not receive the virtual-workgroup ABI")
+        || require(atomic_result.abi.workgroup_mode == momoten::WorkgroupModeDirect
+                       && atomic_result.source.find("reqd_work_group_size(1, 1, 1)") != std::string::npos
+                       && atomic_result.source.find("momo_virtual_local_invocation_index") == std::string::npos,
+                   "splittable kernel did not retain the default direct ABI")
         || require(atomic_result.abi.required_extensions.size() == 1 && atomic_result.abi.required_extensions[0] == "cl_khr_global_int32_base_atomics",
                    "atomic extension requirement was not reflected")
         || require(atomic_result.source.find(
@@ -316,6 +332,7 @@ int main(int argc, char** argv)
     if (!read_spirv(argv[8], workgroup_split))
         return require(false, "failed to read workgroup-split test SPIR-V");
     momoten::TranslationOptions split_options;
+    split_options.workgroup_mode = momoten::WorkgroupModeVirtual;
     split_options.subgroup_mode = momoten::SubgroupModeEmulatedBasic;
     split_options.subgroup_size = 8;
     momoten::TranslationResult split_result;
@@ -325,12 +342,15 @@ int main(int argc, char** argv)
                 "workgroup-split SPIR-V was rejected")
         || require(split_result.abi.workgroup_splittable,
                    "independent 3D workgroup was not marked splittable")
+        || require(split_result.abi.workgroup_mode == momoten::WorkgroupModeVirtual,
+                   "explicit virtual workgroup mode was not reflected")
         || require(split_result.source.find("reqd_work_group_size") == std::string::npos
                        && split_result.source.find("momo_virtual_local_invocation_id") != std::string::npos,
                    "3D virtual-workgroup source ABI is incomplete"))
         return 1;
 
     momoten::TranslationOptions native_split_options;
+    native_split_options.workgroup_mode = momoten::WorkgroupModeVirtual;
     native_split_options.subgroup_mode = momoten::SubgroupModeNative;
     native_split_options.subgroup_size = 8;
     momoten::TranslationResult native_split_result;
@@ -342,6 +362,40 @@ int main(int argc, char** argv)
                    "native subgroup ID was not rebased across workgroup chunks")
         || require(native_split_result.source.find("48u") != std::string::npos,
                    "logical native subgroup count was not preserved"))
+        return 1;
+
+    std::vector<uint32_t> workgroup_3d;
+    if (!read_spirv(argv[11], workgroup_3d))
+        return require(false, "failed to read 3D workgroup test SPIR-V");
+    momoten::TranslationOptions direct_options;
+    direct_options.subgroup_mode = momoten::SubgroupModeEmulatedBasic;
+    direct_options.subgroup_size = 8;
+    momoten::TranslationResult direct_result;
+    if (require(momoten::translate_spirv_to_opencl_c(
+                    workgroup_3d.data(), workgroup_3d.size(), direct_options,
+                    direct_result),
+                "direct 3D workgroup SPIR-V was rejected")
+        || require(direct_result.abi.workgroup_mode == momoten::WorkgroupModeDirect && direct_result.abi.workgroup_splittable,
+                   "direct 3D workgroup mode or split capability was not reflected")
+        || require(direct_result.abi.local_size[0] == 8 && direct_result.abi.local_size[1] == 4 && direct_result.abi.local_size[2] == 2,
+                   "direct 3D workgroup shape was not reflected")
+        || require(direct_result.source.find("reqd_work_group_size(8, 4, 2)") != std::string::npos
+                       && direct_result.source.find("momo_virtual_local_invocation_index") == std::string::npos,
+                   "direct 3D kernel did not retain its fixed workgroup shape")
+        || require(direct_result.source.find("get_local_id(2)") != std::string::npos && direct_result.source.find("get_global_id(2)") != std::string::npos && direct_result.source.find("get_group_id(2)") != std::string::npos && direct_result.source.find("get_num_groups(2)") != std::string::npos,
+                   "direct 3D coordinates did not use native OpenCL builtins"))
+        return 1;
+
+    direct_options.workgroup_mode = momoten::WorkgroupModeVirtual;
+    momoten::TranslationResult virtual_result;
+    if (require(momoten::translate_spirv_to_opencl_c(
+                    workgroup_3d.data(), workgroup_3d.size(), direct_options,
+                    virtual_result),
+                "small 3D workgroup SPIR-V was rejected in explicit virtual mode")
+        || require(virtual_result.abi.workgroup_mode == momoten::WorkgroupModeVirtual && virtual_result.abi.workgroup_splittable,
+                   "small 3D virtual workgroup ABI was not reflected")
+        || require(virtual_result.source.find("reqd_work_group_size") == std::string::npos && virtual_result.source.find("momo_virtual_local_invocation_index") != std::string::npos,
+                   "explicit virtual 3D kernel retained a fixed physical shape"))
         return 1;
 
     std::vector<uint32_t> fp64;
