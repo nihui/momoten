@@ -122,6 +122,13 @@ std::vector<VkExtensionProperties> device_extensions(VkPhysicalDevice physical)
     if (physical && physical->shader_profile.integer_dot_product.supported)
         extensions.push_back(make_extension(VK_KHR_SHADER_INTEGER_DOT_PRODUCT_EXTENSION_NAME,
                                             VK_KHR_SHADER_INTEGER_DOT_PRODUCT_SPEC_VERSION));
+    if (physical && physical->shader_profile.float_controls2)
+    {
+        extensions.push_back(make_extension(VK_KHR_SHADER_FLOAT_CONTROLS_EXTENSION_NAME,
+                                            VK_KHR_SHADER_FLOAT_CONTROLS_SPEC_VERSION));
+        extensions.push_back(make_extension(VK_KHR_SHADER_FLOAT_CONTROLS_2_EXTENSION_NAME,
+                                            VK_KHR_SHADER_FLOAT_CONTROLS_2_SPEC_VERSION));
+    }
     return extensions;
 }
 

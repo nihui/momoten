@@ -74,6 +74,8 @@ void CompilerOpenCL::emit_header()
 
     statement("/* Generated from Vulkan Shader SPIR-V by momoten. */");
     statement("/* Baseline language: OpenCL C 1.0. */");
+    if (!(floating_point_controls.fast_math_flags & FPFastMathModeAllowContractMask))
+        statement("#pragma OPENCL FP_CONTRACT OFF");
     if (requires_global_int32_atomics)
         statement("#pragma OPENCL EXTENSION cl_khr_global_int32_base_atomics : enable");
     if (requires_fp16)

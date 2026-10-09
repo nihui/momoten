@@ -93,8 +93,11 @@ private:
     void validate_storage_block(const Resource& resource);
     void validate_push_constant_block(const Resource& resource, size_t& size);
     void reflect_resources(KernelABI& abi);
+    uint32_t floating_point_scalar_type(uint32_t type_id) const;
+    void reflect_float_controls(KernelABI& abi);
 
     TranslationOptions translation_options;
+    FloatingPointControls floating_point_controls;
     bool requires_global_int32_atomics;
     bool requires_fp16;
     bool requires_int64;

@@ -120,6 +120,10 @@ VkResult impl_create_device(
         if (!supports_device_extension(physical, create_info->ppEnabledExtensionNames[i]))
             return VK_ERROR_EXTENSION_NOT_PRESENT;
     }
+    if (extension_enabled(create_info, VK_KHR_SHADER_FLOAT_CONTROLS_2_EXTENSION_NAME)
+        && (physical->owner->api_version < VK_API_VERSION_1_1
+            || !extension_enabled(create_info, VK_KHR_SHADER_FLOAT_CONTROLS_EXTENSION_NAME)))
+        return VK_ERROR_EXTENSION_NOT_PRESENT;
 
     const VkBaseInStructure* feature = reinterpret_cast<const VkBaseInStructure*>(create_info->pNext);
     while (feature)
@@ -171,6 +175,18 @@ VkResult impl_create_device(
                         VK_KHR_SHADER_INTEGER_DOT_PRODUCT_EXTENSION_NAME))
                     return VK_ERROR_EXTENSION_NOT_PRESENT;
                 enabled_shader_profile.integer_dot_product = true;
+            }
+        }
+        else if (feature->sType == VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_FLOAT_CONTROLS_2_FEATURES_KHR)
+        {
+            const VkPhysicalDeviceShaderFloatControls2FeaturesKHR* controls = reinterpret_cast<const VkPhysicalDeviceShaderFloatControls2FeaturesKHR*>(feature);
+            if (controls->shaderFloatControls2)
+            {
+                if (!physical->shader_profile.float_controls2)
+                    return VK_ERROR_FEATURE_NOT_PRESENT;
+                if (!extension_enabled(create_info, VK_KHR_SHADER_FLOAT_CONTROLS_2_EXTENSION_NAME))
+                    return VK_ERROR_EXTENSION_NOT_PRESENT;
+                enabled_shader_profile.float_controls2 = true;
             }
         }
         else

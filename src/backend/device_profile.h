@@ -41,6 +41,13 @@ struct ShaderDeviceProfile
     bool fp16;
     bool int64;
     bool fp64;
+    bool float_controls2;
+    uint32_t denorm_preserve_widths;
+    uint32_t round_to_nearest_widths;
+    uint32_t signed_zero_inf_nan_preserve_widths;
+    // Modern FULL_PROFILE math guarantees are required for OpenCL mad and
+    // unsafe math. Empty on older compilers and embedded profiles.
+    std::string relaxed_math_standard;
     momoten::SubgroupMode subgroup_mode;
     uint32_t subgroup_size;
     uint32_t subgroup_operations;
@@ -54,6 +61,7 @@ struct EnabledShaderProfile
     bool int64;
     bool fp64;
     bool integer_dot_product;
+    bool float_controls2;
 
     EnabledShaderProfile();
 };
@@ -66,7 +74,7 @@ void configure_translation_options(
     VkDevice device, momoten::TranslationOptions& options);
 bool validate_pipeline_abi(
     VkDevice device, const momoten::KernelABI& abi, std::string& diagnostic);
-std::string opencl_build_options(const momoten::KernelABI& abi);
+std::string opencl_build_options(const momoten::KernelABI& abi, const ShaderDeviceProfile& profile);
 
 } // namespace momoten_detail
 

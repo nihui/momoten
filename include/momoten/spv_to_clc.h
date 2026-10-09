@@ -52,6 +52,30 @@ struct BufferArgument
     std::string name;
 };
 
+enum FloatingPointWidth
+{
+    FloatingPointWidth16 = 1,
+    FloatingPointWidth32 = 2,
+    FloatingPointWidth64 = 4
+};
+
+struct FloatingPointControls
+{
+    // Intersection of SPIR-V FPFastMathMode permissions across the selected
+    // entry point's reachable floating-point operations.
+    uint32_t fast_math_flags;
+    uint32_t widths;
+    // Bitmasks of FloatingPointWidth values requiring native preservation
+    // of denormals or round-to-nearest-even arithmetic.
+    uint32_t denorm_preserve_widths;
+    uint32_t round_to_nearest_widths;
+    uint32_t signed_zero_inf_nan_preserve_widths;
+    // Fast math permissions do not relax the accuracy of math builtins.
+    bool requires_builtin_accuracy;
+
+    FloatingPointControls();
+};
+
 struct KernelABI
 {
     std::string entry_point;
@@ -64,6 +88,8 @@ struct KernelABI
     bool int64;
     bool fp64;
     bool integer_dot_product;
+    bool float_controls2;
+    FloatingPointControls floating_point;
     // True only when the logical Vulkan workgroup has no workgroup storage
     // or synchronization barrier and may therefore be split across independent
     // physical OpenCL workgroups by the driver.

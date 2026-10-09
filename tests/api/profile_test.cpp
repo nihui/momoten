@@ -129,6 +129,9 @@ int main()
         return 1;
     bool driver_properties_supported = false;
     bool integer_dot_product_supported = false;
+    bool float_controls_supported = false;
+    bool float_controls2_supported = false;
+    bool fp16_supported = false;
     for (size_t i = 0; i < available_device_extensions.size(); i++)
     {
         if (strcmp(available_device_extensions[i].extensionName,
@@ -153,15 +156,45 @@ int main()
                 return 1;
             }
         }
+        else if (strcmp(available_device_extensions[i].extensionName, VK_KHR_SHADER_FLOAT_CONTROLS_EXTENSION_NAME) == 0)
+        {
+            float_controls_supported = true;
+            if (available_device_extensions[i].specVersion != VK_KHR_SHADER_FLOAT_CONTROLS_SPEC_VERSION)
+            {
+                fprintf(stderr, "profile_test: float-controls extension version is inconsistent\n");
+                return 1;
+            }
+        }
+        else if (strcmp(available_device_extensions[i].extensionName, VK_KHR_SHADER_FLOAT_CONTROLS_2_EXTENSION_NAME) == 0)
+        {
+            float_controls2_supported = true;
+            if (available_device_extensions[i].specVersion != VK_KHR_SHADER_FLOAT_CONTROLS_2_SPEC_VERSION)
+            {
+                fprintf(stderr, "profile_test: float-controls2 extension version is inconsistent\n");
+                return 1;
+            }
+        }
+        else if (strcmp(available_device_extensions[i].extensionName, VK_KHR_SHADER_FLOAT16_INT8_EXTENSION_NAME) == 0)
+        {
+            fp16_supported = true;
+        }
     }
     if (!driver_properties_supported)
     {
         fprintf(stderr, "profile_test: VK_KHR_driver_properties is unavailable\n");
         return 1;
     }
+    if (float_controls2_supported && !float_controls_supported)
+    {
+        fprintf(stderr, "profile_test: float-controls2 dependency is unavailable\n");
+        return 1;
+    }
 
     VkPhysicalDeviceShaderIntegerDotProductFeatures integer_dot_features = {};
     integer_dot_features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_INTEGER_DOT_PRODUCT_FEATURES;
+    VkPhysicalDeviceShaderFloatControls2FeaturesKHR float_controls2_features = {};
+    float_controls2_features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_FLOAT_CONTROLS_2_FEATURES_KHR;
+    integer_dot_features.pNext = &float_controls2_features;
     VkPhysicalDeviceFeatures2 features2 = {};
     features2.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
     features2.pNext = &integer_dot_features;
@@ -179,6 +212,11 @@ int main()
     if ((integer_dot_features.shaderIntegerDotProduct == VK_TRUE) != integer_dot_product_supported)
     {
         fprintf(stderr, "profile_test: integer dot-product extension and feature disagree\n");
+        return 1;
+    }
+    if ((float_controls2_features.shaderFloatControls2 == VK_TRUE) != float_controls2_supported)
+    {
+        fprintf(stderr, "profile_test: float-controls2 extension and feature disagree\n");
         return 1;
     }
 
@@ -224,6 +262,9 @@ int main()
     subgroup.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SUBGROUP_PROPERTIES;
     VkPhysicalDeviceShaderIntegerDotProductProperties integer_dot_properties = {};
     integer_dot_properties.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_INTEGER_DOT_PRODUCT_PROPERTIES;
+    VkPhysicalDeviceFloatControlsProperties float_controls_properties = {};
+    float_controls_properties.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FLOAT_CONTROLS_PROPERTIES;
+    integer_dot_properties.pNext = float_controls_supported ? &float_controls_properties : 0;
     driver_properties.pNext = &subgroup;
     subgroup.pNext = &integer_dot_properties;
     VkPhysicalDeviceProperties2 properties2 = {};
@@ -250,6 +291,16 @@ int main()
     if (integer_dot_properties.integerDotProduct16BitUnsignedAccelerated || integer_dot_properties.integerDotProduct16BitSignedAccelerated || integer_dot_properties.integerDotProduct16BitMixedSignednessAccelerated || integer_dot_properties.integerDotProduct32BitUnsignedAccelerated || integer_dot_properties.integerDotProduct32BitSignedAccelerated || integer_dot_properties.integerDotProduct32BitMixedSignednessAccelerated || integer_dot_properties.integerDotProduct64BitUnsignedAccelerated || integer_dot_properties.integerDotProduct64BitSignedAccelerated || integer_dot_properties.integerDotProduct64BitMixedSignednessAccelerated || integer_dot_properties.integerDotProductAccumulatingSaturating16BitUnsignedAccelerated || integer_dot_properties.integerDotProductAccumulatingSaturating16BitSignedAccelerated || integer_dot_properties.integerDotProductAccumulatingSaturating16BitMixedSignednessAccelerated || integer_dot_properties.integerDotProductAccumulatingSaturating32BitUnsignedAccelerated || integer_dot_properties.integerDotProductAccumulatingSaturating32BitSignedAccelerated || integer_dot_properties.integerDotProductAccumulatingSaturating32BitMixedSignednessAccelerated || integer_dot_properties.integerDotProductAccumulatingSaturating64BitUnsignedAccelerated || integer_dot_properties.integerDotProductAccumulatingSaturating64BitSignedAccelerated || integer_dot_properties.integerDotProductAccumulatingSaturating64BitMixedSignednessAccelerated)
     {
         fprintf(stderr, "profile_test: software-only integer dot widths were reported as accelerated\n");
+        return 1;
+    }
+    if (float_controls_supported && (float_controls_properties.denormBehaviorIndependence != VK_SHADER_FLOAT_CONTROLS_INDEPENDENCE_ALL || float_controls_properties.roundingModeIndependence != VK_SHADER_FLOAT_CONTROLS_INDEPENDENCE_ALL || float_controls_properties.shaderDenormFlushToZeroFloat16 || float_controls_properties.shaderDenormFlushToZeroFloat32 || float_controls_properties.shaderDenormFlushToZeroFloat64 || float_controls_properties.shaderRoundingModeRTZFloat16 || float_controls_properties.shaderRoundingModeRTZFloat32 || float_controls_properties.shaderRoundingModeRTZFloat64 || (!fp16_supported && (float_controls_properties.shaderSignedZeroInfNanPreserveFloat16 || float_controls_properties.shaderDenormPreserveFloat16 || float_controls_properties.shaderRoundingModeRTEFloat16)) || (!core_features.shaderFloat64 && (float_controls_properties.shaderSignedZeroInfNanPreserveFloat64 || float_controls_properties.shaderDenormPreserveFloat64 || float_controls_properties.shaderRoundingModeRTEFloat64))))
+    {
+        fprintf(stderr, "profile_test: float-controls properties are inconsistent with the shader profile\n");
+        return 1;
+    }
+    if (float_controls2_supported && (!float_controls_properties.shaderSignedZeroInfNanPreserveFloat32 || !float_controls_properties.shaderRoundingModeRTEFloat32 || (fp16_supported && (!float_controls_properties.shaderSignedZeroInfNanPreserveFloat16 || !float_controls_properties.shaderRoundingModeRTEFloat16)) || (core_features.shaderFloat64 && (!float_controls_properties.shaderSignedZeroInfNanPreserveFloat64 || !float_controls_properties.shaderRoundingModeRTEFloat64))))
+    {
+        fprintf(stderr, "profile_test: float-controls2 lacks strict floating-point support\n");
         return 1;
     }
 
@@ -295,6 +346,33 @@ int main()
     }
     vkDestroyDevice(minimal_device, 0);
 
+    if (float_controls2_supported)
+    {
+        VkPhysicalDeviceShaderFloatControls2FeaturesKHR requested_float_controls2 = float_controls2_features;
+        requested_float_controls2.pNext = 0;
+        VkDeviceCreateInfo float_controls2_device_info = minimal_device_info;
+        float_controls2_device_info.pNext = &requested_float_controls2;
+        if (expect_result("vkCreateDevice(float-controls2 without extension)",
+                          vkCreateDevice(physical_device, &float_controls2_device_info, 0, &minimal_device),
+                          VK_ERROR_EXTENSION_NOT_PRESENT))
+            return 1;
+        const char* float_controls2_extensions[] = {
+            VK_KHR_SHADER_FLOAT_CONTROLS_2_EXTENSION_NAME,
+            VK_KHR_SHADER_FLOAT_CONTROLS_EXTENSION_NAME};
+        float_controls2_device_info.enabledExtensionCount = 1;
+        float_controls2_device_info.ppEnabledExtensionNames = float_controls2_extensions;
+        if (expect_result("vkCreateDevice(float-controls2 without dependency)",
+                          vkCreateDevice(physical_device, &float_controls2_device_info, 0, &minimal_device),
+                          VK_ERROR_EXTENSION_NOT_PRESENT))
+            return 1;
+        float_controls2_device_info.enabledExtensionCount = 2;
+        requested_float_controls2.shaderFloatControls2 = VK_FALSE;
+        result = vkCreateDevice(physical_device, &float_controls2_device_info, 0, &minimal_device);
+        if (check_result("vkCreateDevice(float-controls2 disabled)", result))
+            return 1;
+        vkDestroyDevice(minimal_device, 0);
+    }
+
     if (core_features.shaderFloat64)
     {
         VkPhysicalDeviceFeatures requested_features = {};
@@ -326,10 +404,16 @@ int main()
     device_extensions.push_back(VK_KHR_DESCRIPTOR_UPDATE_TEMPLATE_EXTENSION_NAME);
     device_extensions.push_back(VK_KHR_MAINTENANCE1_EXTENSION_NAME);
     device_extensions.push_back(VK_KHR_MAINTENANCE3_EXTENSION_NAME);
+    if (float_controls2_supported)
+    {
+        device_extensions.push_back(VK_KHR_SHADER_FLOAT_CONTROLS_EXTENSION_NAME);
+        device_extensions.push_back(VK_KHR_SHADER_FLOAT_CONTROLS_2_EXTENSION_NAME);
+    }
     if (integer_dot_product_supported)
         device_extensions.push_back(VK_KHR_SHADER_INTEGER_DOT_PRODUCT_EXTENSION_NAME);
     VkDeviceCreateInfo device_info = minimal_device_info;
-    device_info.pNext = integer_dot_product_supported ? &integer_dot_features : 0;
+    integer_dot_features.pNext = float_controls2_supported ? &float_controls2_features : 0;
+    device_info.pNext = integer_dot_product_supported ? static_cast<const void*>(&integer_dot_features) : (float_controls2_supported ? static_cast<const void*>(&float_controls2_features) : 0);
     device_info.enabledExtensionCount = static_cast<uint32_t>(device_extensions.size());
     device_info.ppEnabledExtensionNames = device_extensions.data();
     VkDevice device = VK_NULL_HANDLE;

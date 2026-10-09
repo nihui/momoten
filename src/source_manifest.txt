@@ -11,6 +11,7 @@
 translator include/momoten/spv_to_clc.h
 translator src/translator/translator_internal.h
 translator src/translator/spirv_prepare.cpp
+translator src/translator/float_controls.cpp
 translator src/translator/compiler_opencl.cpp
 translator src/translator/opencl_abi.cpp
 translator src/translator/opencl_prelude.cpp

@@ -157,6 +157,12 @@ void impl_get_physical_device_features2(
             dot->shaderIntegerDotProduct = physical && physical->shader_profile.integer_dot_product.supported ? VK_TRUE : VK_FALSE;
             break;
         }
+        case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_FLOAT_CONTROLS_2_FEATURES_KHR:
+        {
+            VkPhysicalDeviceShaderFloatControls2FeaturesKHR* controls = reinterpret_cast<VkPhysicalDeviceShaderFloatControls2FeaturesKHR*>(next);
+            controls->shaderFloatControls2 = physical && physical->shader_profile.float_controls2 ? VK_TRUE : VK_FALSE;
+            break;
+        }
         default:
             break;
         }
@@ -245,6 +251,28 @@ void impl_get_physical_device_properties2(
             subgroup->supportedStages = VK_SHADER_STAGE_COMPUTE_BIT;
             subgroup->supportedOperations = physical->shader_profile.subgroup_operations;
             subgroup->quadOperationsInAllStages = VK_FALSE;
+        }
+        else if (extension->sType == VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FLOAT_CONTROLS_PROPERTIES)
+        {
+            VkPhysicalDeviceFloatControlsProperties* controls = reinterpret_cast<VkPhysicalDeviceFloatControlsProperties*>(extension);
+            void* next = controls->pNext;
+            const VkStructureType type = controls->sType;
+            memset(controls, 0, sizeof(*controls));
+            controls->sType = type;
+            controls->pNext = next;
+
+            const momoten_detail::ShaderDeviceProfile& profile = physical->shader_profile;
+            controls->denormBehaviorIndependence = VK_SHADER_FLOAT_CONTROLS_INDEPENDENCE_ALL;
+            controls->roundingModeIndependence = VK_SHADER_FLOAT_CONTROLS_INDEPENDENCE_ALL;
+            controls->shaderSignedZeroInfNanPreserveFloat16 = (profile.signed_zero_inf_nan_preserve_widths & 1u) != 0;
+            controls->shaderSignedZeroInfNanPreserveFloat32 = (profile.signed_zero_inf_nan_preserve_widths & 2u) != 0;
+            controls->shaderSignedZeroInfNanPreserveFloat64 = (profile.signed_zero_inf_nan_preserve_widths & 4u) != 0;
+            controls->shaderDenormPreserveFloat16 = (profile.denorm_preserve_widths & 1u) != 0;
+            controls->shaderDenormPreserveFloat32 = (profile.denorm_preserve_widths & 2u) != 0;
+            controls->shaderDenormPreserveFloat64 = (profile.denorm_preserve_widths & 4u) != 0;
+            controls->shaderRoundingModeRTEFloat16 = (profile.round_to_nearest_widths & 1u) != 0;
+            controls->shaderRoundingModeRTEFloat32 = (profile.round_to_nearest_widths & 2u) != 0;
+            controls->shaderRoundingModeRTEFloat64 = (profile.round_to_nearest_widths & 4u) != 0;
         }
         else if (extension->sType == VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_INTEGER_DOT_PRODUCT_PROPERTIES)
         {

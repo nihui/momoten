@@ -14,6 +14,8 @@ namespace momoten_detail {
 // OpenCL 3.0 declarations used opportunistically without raising the OpenCL
 // 1.0 compile target. Older devices reject the property query.
 static const cl_device_info MOMOTEN_CL_DEVICE_OPENCL_C_FEATURES = 0x106f;
+static const cl_device_info MOMOTEN_CL_DEVICE_OPENCL_C_ALL_VERSIONS = 0x1066;
+static const cl_device_info MOMOTEN_CL_DEVICE_OPENCL_C_VERSION = 0x103d;
 static const size_t MOMOTEN_CL_NAME_VERSION_MAX_NAME_SIZE = 64;
 
 static bool extension_string_contains(const std::string& extensions, const char* name)
@@ -42,6 +44,37 @@ struct OpenCLCNameVersion
     cl_uint version;
     char name[MOMOTEN_CL_NAME_VERSION_MAX_NAME_SIZE];
 };
+
+static std::string probe_relaxed_math_standard(cl_device_id device)
+{
+    if (device_info_string(device, CL_DEVICE_PROFILE) != "FULL_PROFILE")
+        return std::string();
+
+    size_t size = 0;
+    if (g_opencl.p_clGetDeviceInfo(device, MOMOTEN_CL_DEVICE_OPENCL_C_ALL_VERSIONS, 0, 0, &size) == CL_SUCCESS && size && size % sizeof(OpenCLCNameVersion) == 0)
+    {
+        std::vector<OpenCLCNameVersion> versions(size / sizeof(OpenCLCNameVersion));
+        if (g_opencl.p_clGetDeviceInfo(device, MOMOTEN_CL_DEVICE_OPENCL_C_ALL_VERSIONS, size, versions.data(), 0) == CL_SUCCESS)
+        {
+            uint32_t major = 0;
+            for (size_t i = 0; i < versions.size(); i++)
+            {
+                if (strncmp(versions[i].name, "OpenCL C", sizeof(versions[i].name)) == 0)
+                    major = std::max(major, versions[i].version >> 22);
+            }
+            if (major >= 3)
+                return "-cl-std=CL3.0";
+            if (major == 2)
+                return "-cl-std=CL2.0";
+        }
+    }
+    const std::string version = device_info_string(device, MOMOTEN_CL_DEVICE_OPENCL_C_VERSION);
+    if (version.compare(0, 11, "OpenCL C 3.") == 0)
+        return "-cl-std=CL3.0";
+    if (version.compare(0, 11, "OpenCL C 2.") == 0)
+        return "-cl-std=CL2.0";
+    return std::string();
+}
 
 static bool has_opencl_c_feature(cl_device_id device, const char* required_name)
 {
@@ -296,6 +329,27 @@ ShaderDeviceProfile probe_shader_device_profile(
                           == CL_SUCCESS
                    && double_config != 0;
 
+    cl_device_fp_config single_config = 0;
+    g_opencl.p_clGetDeviceInfo(device, CL_DEVICE_SINGLE_FP_CONFIG, sizeof(single_config), &single_config, 0);
+    cl_device_fp_config half_config = 0;
+    if (profile.fp16)
+        g_opencl.p_clGetDeviceInfo(device, CL_DEVICE_HALF_FP_CONFIG, sizeof(half_config), &half_config, 0);
+    const cl_device_fp_config configs[] = {half_config, single_config, profile.fp64 ? double_config : 0};
+    for (uint32_t i = 0; i < 3; i++)
+    {
+        if (configs[i] & CL_FP_DENORM)
+            profile.denorm_preserve_widths |= 1u << i;
+        if (configs[i] & CL_FP_ROUND_TO_NEAREST)
+            profile.round_to_nearest_widths |= 1u << i;
+        if (configs[i] & CL_FP_INF_NAN)
+            profile.signed_zero_inf_nan_preserve_widths |= 1u << i;
+    }
+    const cl_device_fp_config strict_config = CL_FP_INF_NAN | CL_FP_ROUND_TO_NEAREST;
+    profile.float_controls2 = (single_config & strict_config) == strict_config
+                              && (!profile.fp16 || (half_config & strict_config) == strict_config)
+                              && (!profile.fp64 || (double_config & strict_config) == strict_config);
+    profile.relaxed_math_standard = probe_relaxed_math_standard(device);
+
     const uint32_t opencl_subgroup_size = probe_opencl_subgroup_size(
         device, extensions, max_workgroup_size, max_work_item_size_x);
     const bool native_basic = opencl_subgroup_size != 0
@@ -335,12 +389,12 @@ IntegerDotProductProfile::IntegerDotProductProfile()
 }
 
 ShaderDeviceProfile::ShaderDeviceProfile()
-    : fp16(false), int64(false), fp64(false), subgroup_mode(momoten::SubgroupModeSingleton), subgroup_size(1), subgroup_operations(VK_SUBGROUP_FEATURE_BASIC_BIT)
+    : fp16(false), int64(false), fp64(false), float_controls2(true), denorm_preserve_widths(0), round_to_nearest_widths(0), signed_zero_inf_nan_preserve_widths(0), subgroup_mode(momoten::SubgroupModeSingleton), subgroup_size(1), subgroup_operations(VK_SUBGROUP_FEATURE_BASIC_BIT)
 {
 }
 
 EnabledShaderProfile::EnabledShaderProfile()
-    : int64(false), fp64(false), integer_dot_product(false)
+    : int64(false), fp64(false), integer_dot_product(false), float_controls2(false)
 {
 }
 
@@ -380,6 +434,26 @@ bool validate_pipeline_abi(
     if (abi.integer_dot_product && !device->enabled_shader_profile.integer_dot_product)
     {
         diagnostic = "shader integer dot product was not enabled when the Vulkan device was created";
+        return false;
+    }
+    if (abi.float_controls2 && !device->enabled_shader_profile.float_controls2)
+    {
+        diagnostic = "shader float controls 2 was not enabled when the Vulkan device was created";
+        return false;
+    }
+    if (abi.floating_point.denorm_preserve_widths & ~profile.denorm_preserve_widths)
+    {
+        diagnostic = "SPIR-V DenormPreserve requires unavailable native OpenCL denormal support";
+        return false;
+    }
+    if (abi.floating_point.round_to_nearest_widths & ~profile.round_to_nearest_widths)
+    {
+        diagnostic = "SPIR-V RoundingModeRTE requires unavailable native OpenCL round-to-nearest support";
+        return false;
+    }
+    if (abi.floating_point.signed_zero_inf_nan_preserve_widths & ~profile.signed_zero_inf_nan_preserve_widths)
+    {
+        diagnostic = "SPIR-V SignedZeroInfNanPreserve requires unavailable native OpenCL infinity and NaN support";
         return false;
     }
     for (size_t i = 0; i < abi.required_extensions.size(); i++)
@@ -450,13 +524,39 @@ bool validate_pipeline_abi(
     return true;
 }
 
-std::string opencl_build_options(const momoten::KernelABI& abi)
+std::string opencl_build_options(const momoten::KernelABI& abi, const ShaderDeviceProfile& profile)
 {
     // Keep the restricted fp64 path conservative. Several otherwise capable
     // online compilers become unstable while optimizing long double-precision
     // arithmetic chains. This core option changes optimization only, not the
     // shader's floating-point semantics.
-    return abi.fp64 ? "-cl-opt-disable" : std::string();
+    if (abi.fp64)
+        return "-cl-opt-disable";
+
+    const momoten::FloatingPointControls& controls = abi.floating_point;
+    // The seven SPIR-V permissions cover arithmetic transforms, but not
+    // approximate builtin functions or a required DenormPreserve mode.
+    // OpenCL half mad accuracy is not sufficient for Vulkan half arithmetic.
+    if (!profile.relaxed_math_standard.empty() && controls.widths == momoten::FloatingPointWidth32 && controls.fast_math_flags == 0x7000fu && !controls.denorm_preserve_widths && !controls.requires_builtin_accuracy)
+        return profile.relaxed_math_standard + " -cl-fast-relaxed-math";
+
+    std::string options;
+    if ((controls.fast_math_flags & 3u) == 3u) // NotNaN | NotInf
+        options = "-cl-finite-math-only";
+    if (controls.fast_math_flags & 4u) // NSZ
+    {
+        if (!options.empty())
+            options += ' ';
+        options += "-cl-no-signed-zeros";
+    }
+    if (!profile.relaxed_math_standard.empty() && (controls.fast_math_flags & 0x10000u) && !(controls.widths & momoten::FloatingPointWidth16)) // AllowContract
+    {
+        if (!options.empty())
+            options += ' ';
+        options += "-cl-mad-enable";
+        options = profile.relaxed_math_standard + ' ' + options;
+    }
+    return options;
 }
 
 } // namespace momoten_detail

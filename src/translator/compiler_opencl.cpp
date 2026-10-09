@@ -3,6 +3,7 @@
 
 #include "translator_internal.h"
 
+#include <algorithm>
 #include <cstring>
 #include <sstream>
 #include <stdexcept>
@@ -34,7 +35,7 @@ static void qualify_file_scope_constants(std::string& source)
 }
 
 KernelABI::KernelABI()
-    : address_bits(0), subgroup_mode(SubgroupModeSingleton), subgroup_size(1), int64(false), fp64(false), integer_dot_product(false), workgroup_splittable(false), push_constant_arg_index(-1), push_constant_size(0)
+    : address_bits(0), subgroup_mode(SubgroupModeSingleton), subgroup_size(1), int64(false), fp64(false), integer_dot_product(false), float_controls2(false), workgroup_splittable(false), push_constant_arg_index(-1), push_constant_size(0)
 {
     local_size[0] = 1;
     local_size[1] = 1;
@@ -71,6 +72,9 @@ void CompilerOpenCL::prepare(KernelABI& abi)
     set_entry_point(translation_options.entry_point, ExecutionModelGLCompute);
     validate_capabilities();
     apply_specializations();
+    reflect_float_controls(abi);
+    const SmallVector<Capability>& capabilities = get_declared_capabilities();
+    abi.float_controls2 = std::find(capabilities.begin(), capabilities.end(), CapabilityFloatControls2) != capabilities.end();
 
     if (translation_options.override_local_size)
         override_workgroup_size();
@@ -126,7 +130,7 @@ void CompilerOpenCL::validate_capabilities()
     for (size_t i = 0; i < capabilities.size(); i++)
     {
         const Capability capability = capabilities[i];
-        if (capability == CapabilityShader || capability == CapabilityGroupNonUniform || capability == CapabilityInt16 || capability == CapabilityStorageBuffer16BitAccess || capability == CapabilityUniformAndStorageBuffer16BitAccess)
+        if (capability == CapabilityShader || capability == CapabilityGroupNonUniform || capability == CapabilityInt16 || capability == CapabilityStorageBuffer16BitAccess || capability == CapabilityUniformAndStorageBuffer16BitAccess || capability == CapabilityFloatControls2 || capability == CapabilityDenormPreserve || capability == CapabilityDenormFlushToZero || capability == CapabilitySignedZeroInfNanPreserve || capability == CapabilityRoundingModeRTE || capability == CapabilityRoundingModeRTZ)
             continue;
         if (capability == CapabilityInt64)
         {

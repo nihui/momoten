@@ -107,6 +107,18 @@ const char* capability_name(Capability capability)
         return "Int64";
     case CapabilityFloat64:
         return "Float64";
+    case CapabilityFloatControls2:
+        return "FloatControls2";
+    case CapabilityDenormPreserve:
+        return "DenormPreserve";
+    case CapabilityDenormFlushToZero:
+        return "DenormFlushToZero";
+    case CapabilitySignedZeroInfNanPreserve:
+        return "SignedZeroInfNanPreserve";
+    case CapabilityRoundingModeRTE:
+        return "RoundingModeRTE";
+    case CapabilityRoundingModeRTZ:
+        return "RoundingModeRTZ";
     case CapabilityInt16:
         return "Int16";
     case CapabilityFloat16:

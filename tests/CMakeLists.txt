@@ -25,6 +25,32 @@ add_test(NAME momoten_parameter_size COMMAND momoten_parameter_size_test)
 set_tests_properties(momoten_parameter_size PROPERTIES
     LABELS "momoten;api;abi")
 
+function(momoten_add_float_controls_test target_name translator_target test_name)
+    add_executable(${target_name}
+        translator/float_controls_test.cpp
+        "${CMAKE_CURRENT_SOURCE_DIR}/../src/backend/device_profile.cpp")
+    target_compile_features(${target_name} PRIVATE cxx_std_11)
+    target_compile_definitions(${target_name} PRIVATE
+        CL_TARGET_OPENCL_VERSION=100)
+    target_include_directories(${target_name} PRIVATE
+        "${CMAKE_CURRENT_SOURCE_DIR}/../src")
+    target_link_libraries(${target_name} PRIVATE
+        ${translator_target} momoten::headers momoten_opencl_headers
+        momoten_vulkan_headers SPIRV-Tools-static)
+    add_test(NAME ${test_name} COMMAND ${target_name})
+    set_tests_properties(${test_name} PROPERTIES
+        LABELS "momoten;translator;float-controls")
+endfunction()
+
+momoten_add_float_controls_test(momoten_float_controls_test
+    momoten::translator momoten_float_controls)
+if(TARGET momoten_amalgamated_translator)
+    momoten_add_float_controls_test(momoten_amalgamated_float_controls_test
+        momoten_amalgamated_translator momoten_amalgamated_float_controls)
+    set_tests_properties(momoten_amalgamated_float_controls PROPERTIES
+        LABELS "momoten;amalgamation;translator;float-controls")
+endif()
+
 if(TARGET momoten_driver AND NOT CMAKE_CROSSCOMPILING)
     add_test(NAME momoten_no_system_opencl_dependency
         COMMAND "${CMAKE_COMMAND}"

@@ -79,6 +79,14 @@ static void dump_pipeline_artifacts(const std::shared_ptr<ShaderModule>& module,
         << "int64=" << translated.abi.int64 << '\n'
         << "fp64=" << translated.abi.fp64 << '\n'
         << "integer_dot_product=" << translated.abi.integer_dot_product << '\n'
+        << "float_controls2=" << translated.abi.float_controls2 << '\n'
+        << "fast_math_flags=" << translated.abi.floating_point.fast_math_flags << '\n'
+        << "floating_point_widths=" << translated.abi.floating_point.widths << '\n'
+        << "denorm_preserve_widths=" << translated.abi.floating_point.denorm_preserve_widths << '\n'
+        << "round_to_nearest_widths=" << translated.abi.floating_point.round_to_nearest_widths << '\n'
+        << "signed_zero_inf_nan_preserve_widths=" << translated.abi.floating_point.signed_zero_inf_nan_preserve_widths << '\n'
+        << "requires_builtin_accuracy=" << translated.abi.floating_point.requires_builtin_accuracy << '\n'
+        << "opencl_build_options=" << opencl_build_options(translated.abi, module->device->physical_device->shader_profile) << '\n'
         << "workgroup_splittable=" << translated.abi.workgroup_splittable << '\n'
         << "push_constant_arg=" << translated.abi.push_constant_arg_index << '\n'
         << "push_constant_size=" << translated.abi.push_constant_size << '\n';
@@ -229,7 +237,7 @@ VkResult build_compute_pipelines(
         }
 
         cl_int ret = CL_SUCCESS;
-        const std::string build_options = opencl_build_options(translated.abi);
+        const std::string build_options = opencl_build_options(translated.abi, device->physical_device->shader_profile);
         cl_program program = momoten_detail::create_and_build_program(
             device, translated.source, build_options, ret);
         if (!program)
