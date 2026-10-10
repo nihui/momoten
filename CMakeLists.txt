@@ -135,11 +135,17 @@ if(MOMOTEN_BUILD_DRIVER)
         ${CMAKE_DL_LIBS})
     set_target_properties(momoten_driver PROPERTIES
         OUTPUT_NAME momoten
-        VERSION ${MOMOTEN_VERSION}
-        SOVERSION 0
         EXPORT_NAME driver
         CXX_VISIBILITY_PRESET hidden
         VISIBILITY_INLINES_HIDDEN ON)
+
+    # Android's dynamic loader expects the unversioned libmomoten.so name.
+    # Avoid a versioned SONAME and symlinks in APK/native-library packaging.
+    if(NOT ANDROID)
+        set_target_properties(momoten_driver PROPERTIES
+            VERSION ${MOMOTEN_VERSION}
+            SOVERSION 0)
+    endif()
 
     if(UNIX AND NOT APPLE)
         target_link_options(momoten_driver PRIVATE

@@ -1,0 +1,157 @@
+# Copyright 2026 nihui
+# SPDX-License-Identifier: Apache-2.0
+
+name: Build shared libraries
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  desktop:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {name: linux-x86_64, os: ubuntu-22.04}
+          - {name: windows-x86_64, os: windows-2022}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Configure
+        shell: bash
+        run: |
+          cmake -S . -B build \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DMOMOTEN_BUILD_DRIVER=ON \
+            -DMOMOTEN_BUILD_TRANSLATOR=ON \
+            -DMOMOTEN_BUILD_TOOLS=OFF \
+            -DMOMOTEN_BUILD_TESTS=OFF \
+            -DMOMOTEN_INSTALL=ON
+
+      - name: Build
+        run: cmake --build build --config Release --target momoten_driver --parallel 2
+
+      - name: Install
+        run: cmake --install build --config Release --prefix stage
+
+      - name: Verify Linux library exports
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          test -f stage/lib/libmomoten.so
+          nm -D --defined-only stage/lib/libmomoten.so | grep -E ' vkGetInstanceProcAddr$'
+          if ldd stage/lib/libmomoten.so | grep -i 'libOpenCL'; then
+            echo 'Unexpected OpenCL loader dependency' >&2
+            exit 1
+          fi
+
+      - name: Verify Windows DLL exports
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          if (!(Test-Path stage/bin/momoten.dll)) { throw 'Missing DLL' }
+          $exports = & dumpbin /exports stage/bin/momoten.dll
+          if ($LASTEXITCODE -ne 0 -or !($exports -match 'vkGetInstanceProcAddr')) {
+            throw 'Missing Vulkan proc export'
+          }
+
+      - name: Bundle license notices
+        shell: bash
+        run: cp LICENSE.txt THIRD_PARTY_NOTICES.md stage/
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: momoten-${{ matrix.name }}
+          path: stage/
+          if-no-files-found: error
+
+  android:
+    name: android-${{ matrix.abi }}-api${{ matrix.api }}
+    runs-on: ubuntu-22.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Android 4.0.x: armv7 is the only legacy target.
+          # NDK r17c retains android-14 and supports building with libc++.
+          - {abi: armeabi-v7a, api: 14, legacy: true}
+          - {abi: arm64-v8a, api: 21, legacy: false}
+          - {abi: x86_64, api: 21, legacy: false}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install legacy Android NDK r17c
+        if: matrix.legacy
+        shell: bash
+        run: |
+          curl --fail --location --retry 3 --output ndk-r17c.zip \
+            https://dl.google.com/android/repository/android-ndk-r17c-linux-x86_64.zip
+          unzip -q ndk-r17c.zip
+          echo "MOMOTEN_NDK=$PWD/android-ndk-r17c" >> "$GITHUB_ENV"
+
+      - name: Select modern Android NDK
+        if: ${{ !matrix.legacy }}
+        shell: bash
+        run: |
+          test -f "$ANDROID_NDK_HOME/build/cmake/android.toolchain.cmake"
+          echo "MOMOTEN_NDK=$ANDROID_NDK_HOME" >> "$GITHUB_ENV"
+
+      - name: Configure
+        shell: bash
+        run: |
+          cmake -S . -B build -G Ninja \
+            -DCMAKE_TOOLCHAIN_FILE="$MOMOTEN_NDK/build/cmake/android.toolchain.cmake" \
+            -DANDROID_ABI="${{ matrix.abi }}" \
+            -DANDROID_PLATFORM="android-${{ matrix.api }}" \
+            -DANDROID_STL=c++_static \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DMOMOTEN_BUILD_DRIVER=ON \
+            -DMOMOTEN_BUILD_TRANSLATOR=ON \
+            -DMOMOTEN_BUILD_TOOLS=OFF \
+            -DMOMOTEN_BUILD_TESTS=OFF \
+            -DMOMOTEN_INSTALL=ON
+
+      - name: Build
+        run: cmake --build build --target momoten_driver --parallel 2
+
+      - name: Install
+        run: cmake --install build --prefix stage
+
+      - name: Verify unversioned Android library
+        shell: bash
+        run: |
+          test -f stage/lib/libmomoten.so
+          test ! -L stage/lib/libmomoten.so
+          test "$(find stage/lib -maxdepth 1 -name 'libmomoten.so*' | wc -l)" -eq 1
+          readelf -d stage/lib/libmomoten.so > dynamic.txt
+          if grep -q 'SONAME.*libmomoten.so\.' dynamic.txt; then
+            echo 'Unexpected versioned SONAME' >&2
+            exit 1
+          fi
+          if grep -Ei 'NEEDED.*(OpenCL|vulkan|c\+\+_shared)' dynamic.txt; then
+            echo 'Unexpected runtime dependency' >&2
+            exit 1
+          fi
+          readelf -Ws stage/lib/libmomoten.so | grep -E ' vkGetInstanceProcAddr$'
+
+      - name: Bundle license notices
+        shell: bash
+        run: cp LICENSE.txt THIRD_PARTY_NOTICES.md stage/
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: momoten-android-${{ matrix.abi }}-api${{ matrix.api }}
+          path: stage/
+          if-no-files-found: error
