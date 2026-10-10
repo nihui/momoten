@@ -96,6 +96,9 @@ jobs:
         if: matrix.legacy
         shell: bash
         run: |
+          # The bundled NDK r17c Clang requires libtinfo.so.5 on the host.
+          sudo apt-get update
+          sudo apt-get install -y libtinfo5
           curl --fail --location --retry 3 --output ndk-r17c.zip \
             https://dl.google.com/android/repository/android-ndk-r17c-linux-x86_64.zip
           unzip -q ndk-r17c.zip

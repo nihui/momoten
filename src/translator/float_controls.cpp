@@ -102,7 +102,7 @@ void CompilerOpenCL::reflect_float_controls(KernelABI& abi)
             if (instruction.type_id && instruction.result_id)
                 value_types[instruction.result_id] = instruction.type_id;
             if (opcode == OpExecutionModeId && words[1] == entry_id && words[2] == ExecutionModeFPFastMathDefault)
-                defaults[words[3]] = get<SPIRConstant>(words[4]).scalar();
+                defaults[words[3]] = static_cast<const CompilerOpenCL&>(*this).get<SPIRConstant>(words[4]).scalar();
             if (opcode == OpExecutionMode && words[1] == entry_id)
             {
                 const ExecutionMode mode = static_cast<ExecutionMode>(words[2]);
