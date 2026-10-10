@@ -5,7 +5,7 @@ name: Build shared libraries
 
 on:
   push:
-    branches: [main]
+    branches: [main, 'ci/**']
   pull_request:
   workflow_dispatch:
 
