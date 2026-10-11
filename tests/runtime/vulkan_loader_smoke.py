@@ -75,6 +75,34 @@ enum.restype=ctypes.c_int32
 assert enum(instance,ctypes.byref(count),None) == 0
 print('Physical device count:',count.value,flush=True)
 assert count.value > 0, 'PoCL device not exposed through Vulkan Loader'
+# Exercise the system loader's vkCreateDevice chain, not just ICD discovery.
+physical=(ctypes.c_void_p*count.value)()
+assert enum(instance,ctypes.byref(count),ctypes.cast(physical,ctypes.c_void_p)) == 0
+class QueueCreate(ctypes.Structure):
+    _fields_=[('sType',ctypes.c_int),('pNext',ctypes.c_void_p),
+              ('flags',ctypes.c_uint32),('queueFamilyIndex',ctypes.c_uint32),
+              ('queueCount',ctypes.c_uint32),('pQueuePriorities',ctypes.POINTER(ctypes.c_float))]
+class DeviceCreate(ctypes.Structure):
+    _fields_=[('sType',ctypes.c_int),('pNext',ctypes.c_void_p),
+              ('flags',ctypes.c_uint32),('queueCreateInfoCount',ctypes.c_uint32),
+              ('pQueueCreateInfos',ctypes.POINTER(QueueCreate)),
+              ('enabledLayerCount',ctypes.c_uint32),('ppEnabledLayerNames',ctypes.c_void_p),
+              ('enabledExtensionCount',ctypes.c_uint32),('ppEnabledExtensionNames',ctypes.c_void_p),
+              ('pEnabledFeatures',ctypes.c_void_p)]
+priority=ctypes.c_float(1.0)
+queue=QueueCreate(2,None,0,0,1,ctypes.pointer(priority))
+device_info=DeviceCreate(3,None,0,1,ctypes.pointer(queue),0,None,0,None,None)
+device=ctypes.c_void_p()
+create_device=v.vkCreateDevice
+create_device.argtypes=[ctypes.c_void_p,ctypes.POINTER(DeviceCreate),
+                        ctypes.c_void_p,ctypes.POINTER(ctypes.c_void_p)]
+create_device.restype=ctypes.c_int32
+ret=create_device(physical[0],ctypes.byref(device_info),None,ctypes.byref(device))
+print('Vulkan Loader vkCreateDevice returned',ret,flush=True)
+assert ret == 0, 'Loader failed to create Vulkan device'
+v.vkDestroyDevice.argtypes=[ctypes.c_void_p,ctypes.c_void_p]
+v.vkDestroyDevice(device,None)
+print('destroyed Vulkan device',flush=True)
 print('destroying Vulkan instance',flush=True)
 v.vkDestroyInstance.argtypes=[ctypes.c_void_p,ctypes.c_void_p]
 v.vkDestroyInstance(instance,None)
