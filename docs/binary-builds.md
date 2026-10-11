@@ -33,8 +33,11 @@ cmake -S . -B build-android-14 -G Ninja \
 cmake --build build-android-14 --target momoten_driver
 ```
 
-The build uses contemporary pinned SPIRV-Tools (C++17 required). If the
-legacy NDK compiler cannot build it, its CI job must be treated as failed and
-the dependency/compiler compatibility addressed; **do not silently upgrade
-the minimum Android API**. Desktop jobs check the Vulkan proc exports,
+The build uses pinned SPIRV-Tools (C++17 required). NDK r17c's libc++ lacks
+`<charconv>`. For the legacy job only, the workflow applies the narrow
+`cmake/patches/spirv-tools-ndk-r17c.patch`, replacing the optimizer's two
+`std::from_chars` calls with a decimal-only parser of identical accepted
+syntax and uint32 overflow behavior. The upstream submodule and all other
+platform builds are unmodified. **Do not silently upgrade the minimum
+Android API**. Desktop jobs check the Vulkan proc exports,
 while cross-compiled Android jobs inspect the ELF dynamic section.

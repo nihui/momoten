@@ -139,6 +139,11 @@ if(MOMOTEN_BUILD_DRIVER)
         CXX_VISIBILITY_PRESET hidden
         VISIBILITY_INLINES_HIDDEN ON)
 
+    # windows.h defines min/max macros unless NOMINMAX is set.
+    if(WIN32)
+        target_compile_definitions(momoten_driver PRIVATE NOMINMAX)
+    endif()
+
     # Android's dynamic loader expects the unversioned libmomoten.so name.
     # Avoid a versioned SONAME and symlinks in APK/native-library packaging.
     if(NOT ANDROID)
@@ -205,6 +210,9 @@ if(MOMOTEN_BUILD_AMALGAMATION)
             OUTPUT_NAME momoten-amalgamated
             CXX_VISIBILITY_PRESET hidden
             VISIBILITY_INLINES_HIDDEN ON)
+        if(WIN32)
+            target_compile_definitions(momoten_amalgamated_driver PRIVATE NOMINMAX)
+        endif()
         if(UNIX AND NOT APPLE)
             target_link_options(momoten_amalgamated_driver PRIVATE
                 "LINKER:--version-script=${CMAKE_CURRENT_SOURCE_DIR}/src/momoten.exports.map")

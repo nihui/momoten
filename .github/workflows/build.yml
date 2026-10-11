@@ -111,6 +111,15 @@ jobs:
           test -f "$ANDROID_NDK_HOME/build/cmake/android.toolchain.cmake"
           echo "MOMOTEN_NDK=$ANDROID_NDK_HOME" >> "$GITHUB_ENV"
 
+      - name: Backport SPIRV-Tools charconv for NDK r17c
+        if: matrix.legacy
+        shell: bash
+        run: |
+          # The pinned optimizer.cpp uses std::from_chars (C++17),
+          # which the r17c libc++ does not yet provide.
+          git -C third_party/spirv-tools apply --check ../../cmake/patches/spirv-tools-ndk-r17c.patch
+          git -C third_party/spirv-tools apply ../../cmake/patches/spirv-tools-ndk-r17c.patch
+
       - name: Configure
         shell: bash
         run: |
