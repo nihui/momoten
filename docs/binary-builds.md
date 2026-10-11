@@ -6,8 +6,11 @@ submodules. The resulting packages are available as workflow artifacts.
 | Target | ABI | Minimum Android API | Build toolchain |
 | --- | --- | --- | --- |
 | Linux | x86_64 | — | cibuildwheel manylinux2014 (glibc 2.17) |
-| Windows | x86_64 | — | MSVC 2022 |
+| Linux | x86 (i686) | — | cibuildwheel manylinux2014 (glibc 2.17) |
+| Windows | x86_64 | — | MSVC 2022 (x64) |
+| Windows | x86 | — | MSVC 2022 (Win32) |
 | Android 4.0 | armeabi-v7a | 14 | NDK r17c |
+| Android 4.0 | x86 | 14 | NDK r17c |
 | Android | arm64-v8a | 21 | GitHub hosted NDK |
 | Android | x86_64 | 21 | GitHub hosted NDK |
 
@@ -16,7 +19,7 @@ Android builds use `ANDROID_STL=c++_static` and install an **unversioned**
 must be provided by the device; momoten opens it dynamically rather than
 linking an OpenCL ICD loader.
 
-The Android API 14 build provides a **build compatibility target**, not a
+The Android API 14 builds provide a **build compatibility target**, not a
 promise of device compatibility. Older Android devices may lack the required
 vendor OpenCL API, online compiler, or extensions. Runtime testing still
 requires appropriate physical hardware. In particular, successful cross
@@ -59,7 +62,7 @@ release workflow are unaffected.
 
 ## Linux compatibility
 
-The Linux x86_64 shared library is built inside cibuildwheel's pinned
+The Linux x86_64 and x86 (i686) shared libraries are built inside cibuildwheel's pinned
 `manylinux2014` container, following qwenimage-ncnn-vulkan's release
 approach. It targets glibc 2.17 (e.g. CentOS 7 or newer glibc-based
 distributions) instead of the Ubuntu runner's glibc.
@@ -79,3 +82,15 @@ and checks that no `.debug_*` sections remain.
 The system still needs a compatible vendor OpenCL implementation at
 runtime. This compatibility check does not claim functional compatibility
 with every old GPU/driver combination.
+
+## CI matrix and cancellation
+
+The workflow produces distinct artifacts for Linux x86_64/x86,
+Windows x86_64/x86, and Android armeabi-v7a/x86 (API 14) plus
+arm64-v8a/x86_64 (API 21). The Android and Linux shared libraries
+are checked for the expected ELF class. The Windows generator explicitly
+selects MSVC x64 or Win32.
+
+Workflow-level concurrency with `cancel-in-progress: true` cancels
+superseded runs for earlier commits on the same branch or pull request;
+jobs within the current run still use `fail-fast: false`.

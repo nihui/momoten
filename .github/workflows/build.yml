@@ -12,10 +12,21 @@ on:
 permissions:
   contents: read
 
+# Cancel obsolete CI runs for earlier commits on the same branch / PR.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 jobs:
   linux:
-    name: linux-x86_64-manylinux2014
+    name: linux-${{ matrix.name }}-manylinux2014
     runs-on: ubuntu-22.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {name: x86_64, cibw_arch: x86_64, elf_class: 64}
+          - {name: x86, cibw_arch: i686, elf_class: 32}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -40,9 +51,10 @@ jobs:
       - name: Build in manylinux2014
         uses: pypa/cibuildwheel@v4.3.1
         env:
-          CIBW_ARCHS_LINUX: "x86_64"
-          CIBW_BUILD: "cp310-manylinux_x86_64"
+          CIBW_ARCHS_LINUX: "${{ matrix.cibw_arch }}"
+          CIBW_BUILD: "cp310-manylinux_${{ matrix.cibw_arch }}"
           CIBW_MANYLINUX_X86_64_IMAGE: "manylinux2014"
+          CIBW_MANYLINUX_I686_IMAGE: "manylinux2014"
           CIBW_BUILD_VERBOSITY: "1"
           CIBW_REPAIR_WHEEL_COMMAND: ""
           CIBW_BEFORE_ALL: >-
@@ -63,6 +75,7 @@ jobs:
         shell: bash
         run: |
           test -f stage/lib/libmomoten.so
+          readelf -h stage/lib/libmomoten.so | grep -q "Class:.*ELF${{ matrix.elf_class }}"
           nm -D --defined-only stage/lib/libmomoten.so | grep -E ' vkGetInstanceProcAddr$'
           readelf -d stage/lib/libmomoten.so > dynamic.txt
           if grep -Ei 'NEEDED.*(libOpenCL|libstdc\+\+|libgcc_s)' dynamic.txt; then
@@ -100,13 +113,19 @@ jobs:
 
       - uses: actions/upload-artifact@v7
         with:
-          name: momoten-linux-x86_64
+          name: momoten-linux-${{ matrix.name }}
           path: stage/
           if-no-files-found: error
 
   windows:
-    name: windows-x86_64
+    name: windows-${{ matrix.name }}
     runs-on: windows-2022
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {name: x86_64, platform: x64, dumpbin_arch: x64}
+          - {name: x86, platform: Win32, dumpbin_arch: x86}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -115,7 +134,7 @@ jobs:
       - name: Configure
         shell: bash
         run: |
-          cmake -S . -B build \
+          cmake -S . -B build -G "Visual Studio 17 2022" -A "${{ matrix.platform }}" \
             -DCMAKE_BUILD_TYPE=Release \
             -DMOMOTEN_BUILD_DRIVER=ON \
             -DMOMOTEN_BUILD_TRANSLATOR=ON \
@@ -134,7 +153,7 @@ jobs:
         run: |
           if (!(Test-Path stage/bin/momoten.dll)) { throw 'Missing DLL' }
           $vswhere = "${env:ProgramFiles(x86)}\\Microsoft Visual Studio\\Installer\\vswhere.exe"
-          $dumpbin = & $vswhere -latest -products '*' -find 'VC\\Tools\\MSVC\\**\bin\\Hostx64\\x64\dumpbin.exe' | Select-Object -Last 1
+          $dumpbin = & $vswhere -latest -products '*' -find 'VC\\Tools\\MSVC\\**\bin\\Hostx64\\${{ matrix.dumpbin_arch }}\dumpbin.exe' | Select-Object -Last 1
           if (!$dumpbin) { throw 'MSVC dumpbin.exe was not found' }
           $exports = & $dumpbin /exports stage/bin/momoten.dll
           if ($LASTEXITCODE -ne 0 -or !($exports -match 'vkGetInstanceProcAddr')) {
@@ -147,7 +166,7 @@ jobs:
 
       - uses: actions/upload-artifact@v7
         with:
-          name: momoten-windows-x86_64
+          name: momoten-windows-${{ matrix.name }}
           path: stage/
           if-no-files-found: error
 
@@ -158,9 +177,9 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # Android 4.0.x: armv7 is the only legacy target.
-          # NDK r17c retains android-14 and supports building with libc++.
+          # Android 4.0 (API 14): 32-bit ARM and x86 using NDK r17c.
           - {abi: armeabi-v7a, api: 14, legacy: true}
+          - {abi: x86, api: 14, legacy: true}
           - {abi: arm64-v8a, api: 21, legacy: false}
           - {abi: x86_64, api: 21, legacy: false}
     steps:
@@ -264,6 +283,10 @@ jobs:
         shell: bash
         run: |
           test -f stage/lib/libmomoten.so
+          case "${{ matrix.abi }}" in
+            armeabi-v7a|x86) readelf -h stage/lib/libmomoten.so | grep -q 'Class:.*ELF32' ;;
+            arm64-v8a|x86_64) readelf -h stage/lib/libmomoten.so | grep -q 'Class:.*ELF64' ;;
+          esac
           test ! -L stage/lib/libmomoten.so
           test "$(find stage/lib -maxdepth 1 -name 'libmomoten.so*' | wc -l)" -eq 1
           readelf -d stage/lib/libmomoten.so > dynamic.txt
