@@ -42,3 +42,17 @@ parameters, avoiding C++17 array deduction guides missing from r17c's libc++.
 The upstream submodule and all other platform builds are unmodified. **Do not silently upgrade the minimum
 Android API**. Desktop jobs check the Vulkan proc exports,
 while cross-compiled Android jobs inspect the ELF dynamic section.
+
+## Smaller Android release binaries
+
+Android CI removes the NDK toolchain's hardcoded `-g` flag before the
+CMake configure step, following ncnn's Android release workflow. Both
+`android.toolchain.cmake` (NDK r17c) and
+`android-legacy.toolchain.cmake` (newer NDKs) are handled when present.
+Compile commands are checked for residual `-g` flags.
+
+The installed `libmomoten.so` is also stripped using
+`cmake --install build --strip --prefix stage`, without stripping
+the dynamic Vulkan entry-point symbols. CI rejects debug sections and
+prints the final uncompressed library size. Debug builds outside this
+release workflow are unaffected.

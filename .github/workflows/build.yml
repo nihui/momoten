@@ -134,6 +134,19 @@ jobs:
           path.write_text(source.replace(old, "std::optional<spv::Capability>(spv::Capability::"))
           PY
 
+      - name: Remove NDK debug flags
+        shell: bash
+        run: |
+          # NDK toolchains inject -g even for Release builds.
+          # Match the approach used by ncnn's Android release workflow.
+          for toolchain in \
+            "$MOMOTEN_NDK/build/cmake/android.toolchain.cmake" \
+            "$MOMOTEN_NDK/build/cmake/android-legacy.toolchain.cmake"; do
+            if [ -f "$toolchain" ]; then
+              sed -i -e '/^[[:space:]]*-g[[:space:]]*$/d' "$toolchain"
+            fi
+          done
+
       - name: Configure
         shell: bash
         run: |
@@ -143,17 +156,36 @@ jobs:
             -DANDROID_PLATFORM="android-${{ matrix.api }}" \
             -DANDROID_STL=c++_static \
             -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
             -DMOMOTEN_BUILD_DRIVER=ON \
             -DMOMOTEN_BUILD_TRANSLATOR=ON \
             -DMOMOTEN_BUILD_TOOLS=OFF \
             -DMOMOTEN_BUILD_TESTS=OFF \
             -DMOMOTEN_INSTALL=ON
 
+      - name: Verify Android compile flags
+        shell: bash
+        run: |
+          # Fail if an NDK update moves -g to another toolchain location.
+          python3 - <<'PY'
+          import json
+          import shlex
+          from pathlib import Path
+
+          commands = json.loads(Path("build/compile_commands.json").read_text())
+          flagged = [item["file"] for item in commands
+                     if "-g" in shlex.split(item["command"])]
+          if flagged:
+              raise SystemExit("Unexpected -g in Android compiler flags: " +
+                               ", ".join(flagged[:5]))
+          print(f"Verified {len(commands)} compile commands without -g")
+          PY
+
       - name: Build
         run: cmake --build build --target momoten_driver --parallel 2
 
-      - name: Install
-        run: cmake --install build --prefix stage
+      - name: Install stripped release library
+        run: cmake --install build --strip --prefix stage
 
       - name: Verify unversioned Android library
         shell: bash
@@ -170,7 +202,21 @@ jobs:
             echo 'Unexpected runtime dependency' >&2
             exit 1
           fi
-          readelf -Ws stage/lib/libmomoten.so | grep -E ' vkGetInstanceProcAddr$'
+          readelf -Ws stage/lib/libmomoten.so | grep -E ' vkGetInstanceProcAddr
+        shell: bash
+        run: cp LICENSE.txt THIRD_PARTY_NOTICES.md stage/
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: momoten-android-${{ matrix.abi }}-api${{ matrix.api }}
+          path: stage/
+          if-no-files-found: error
+
+          if readelf -SW stage/lib/libmomoten.so | grep -E '\.debug_'; then
+            echo 'Unexpected debug sections in Android release library' >&2
+            exit 1
+          fi
+          stat -c 'libmomoten.so size: %s bytes' stage/lib/libmomoten.so
 
       - name: Bundle license notices
         shell: bash
