@@ -42,7 +42,11 @@ def main():
     # no eligible OpenCL device can legitimately reject instance creation.
     script = """
 import ctypes
+import faulthandler
+faulthandler.enable()
+print('loading libvulkan.so.1',flush=True)
 v = ctypes.CDLL('libvulkan.so.1')
+print('loaded system Vulkan loader',flush=True)
 class App(ctypes.Structure):
     _fields_=[('sType',ctypes.c_int),('pNext',ctypes.c_void_p),
               ('pApplicationName',ctypes.c_char_p),('applicationVersion',ctypes.c_uint32),
@@ -59,28 +63,32 @@ instance=ctypes.c_void_p()
 fn=v.vkCreateInstance
 fn.argtypes=[ctypes.POINTER(Create),ctypes.c_void_p,ctypes.POINTER(ctypes.c_void_p)]
 fn.restype=ctypes.c_int32
+print('calling vkCreateInstance',flush=True)
 ret=fn(ctypes.byref(ci),None,ctypes.byref(instance))
 print('Vulkan Loader vkCreateInstance returned',ret)
 assert ret == 0, 'Loader failed to create a Vulkan instance'
+print('created Vulkan instance; enumerating physical devices',flush=True)
 count=ctypes.c_uint32()
 enum=v.vkEnumeratePhysicalDevices
 enum.argtypes=[ctypes.c_void_p,ctypes.POINTER(ctypes.c_uint32),ctypes.c_void_p]
 enum.restype=ctypes.c_int32
 assert enum(instance,ctypes.byref(count),None) == 0
-print('Physical device count:',count.value)
+print('Physical device count:',count.value,flush=True)
+print('destroying Vulkan instance',flush=True)
 v.vkDestroyInstance.argtypes=[ctypes.c_void_p,ctypes.c_void_p]
 v.vkDestroyInstance(instance,None)
+print('destroyed Vulkan instance',flush=True)
 """
     env = os.environ.copy()
     env["VK_DRIVER_FILES"] = str(manifest)
     env["VK_ICD_FILENAMES"] = str(manifest)  # compatibility with older loaders
     env["VK_LOADER_DEBUG"] = "driver"
-    result = subprocess.run([sys.executable, "-c", script], env=env,
+    result = subprocess.run([sys.executable, "-u", "-X", "faulthandler", "-c", script], env=env,
                             stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                             text=True, timeout=30)
-    print(result.stdout)
-    print(result.stderr)
-    assert result.returncode == 0, "system Vulkan Loader process failed"
+    print(result.stdout, flush=True)
+    print(result.stderr, flush=True)
+    assert result.returncode == 0, f"system Vulkan Loader process failed (exit {result.returncode})"
     assert manifest.name in result.stderr, "system loader did not discover momoten ICD"
 
 
