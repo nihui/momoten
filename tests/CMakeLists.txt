@@ -96,6 +96,7 @@ if(TARGET momoten_driver AND MOMOTEN_INSTALL AND NOT CMAKE_CROSSCOMPILING)
             -DRUNTIME_FILE=$<TARGET_FILE_NAME:momoten_driver>
             -DTEST_CONFIG=$<CONFIG>
             -DTOOLS_ENABLED=${MOMOTEN_BUILD_TOOLS}
+            -DBUILD_ICD_MANIFEST=${MOMOTEN_BUILD_ICD_MANIFEST}
             -P "${CMAKE_CURRENT_SOURCE_DIR}/runtime/install_layout_test.cmake")
     set_tests_properties(momoten_runtime_install PROPERTIES
         LABELS "momoten;runtime;install")
