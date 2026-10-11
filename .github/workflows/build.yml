@@ -65,7 +65,7 @@ jobs:
           test -f stage/lib/libmomoten.so
           nm -D --defined-only stage/lib/libmomoten.so | grep -E ' vkGetInstanceProcAddr$'
           readelf -d stage/lib/libmomoten.so > dynamic.txt
-          if grep -Ei 'NEEDED.*(libOpenCL|libstdc\\+\\+|libgcc_s)' dynamic.txt; then
+          if grep -Ei 'NEEDED.*(libOpenCL|libstdc\+\+|libgcc_s)' dynamic.txt; then
             echo 'Unexpected dynamic loader/C++ runtime dependency' >&2
             exit 1
           fi
@@ -76,7 +76,7 @@ jobs:
 
           versions = Path("version-info.txt").read_text()
           glibc = sorted({(int(major), int(minor)) for major, minor
-                          in re.findall(r"\\bGLIBC_(\\d+)\\.(\\d+)\\b", versions)})
+                          in re.findall(r"\bGLIBC_(\d+)\\.(\d+)\b", versions)})
           if not glibc:
               raise SystemExit("No GLIBC version requirements found")
           maximum = glibc[-1]
@@ -85,10 +85,10 @@ jobs:
               raise SystemExit("glibc requirement exceeds manylinux2014 (2.17)")
           for family in ("GLIBCXX", "CXXABI"):
               required = sorted({tuple(map(int, version.split(".")))
-                                 for version in re.findall(r"\\b" + family + r"_(\\d+(?:\\.\\d+)+)\\b", versions)})
+                                 for version in re.findall(r"\b" + family + r"_(\d+(?:\\.\d+)+)\b", versions)})
               print(family + " requirements:", required[-1] if required else "none")
           PY
-          if readelf -SW stage/lib/libmomoten.so | grep -E '\\.debug_'; then
+          if readelf -SW stage/lib/libmomoten.so | grep -E '\.debug_'; then
             echo 'Unexpected debug sections in Linux release library' >&2
             exit 1
           fi
@@ -134,7 +134,7 @@ jobs:
         run: |
           if (!(Test-Path stage/bin/momoten.dll)) { throw 'Missing DLL' }
           $vswhere = "${env:ProgramFiles(x86)}\\Microsoft Visual Studio\\Installer\\vswhere.exe"
-          $dumpbin = & $vswhere -latest -products '*' -find 'VC\\Tools\\MSVC\\**\\bin\\Hostx64\\x64\\dumpbin.exe' | Select-Object -Last 1
+          $dumpbin = & $vswhere -latest -products '*' -find 'VC\\Tools\\MSVC\\**\bin\\Hostx64\\x64\dumpbin.exe' | Select-Object -Last 1
           if (!$dumpbin) { throw 'MSVC dumpbin.exe was not found' }
           $exports = & $dumpbin /exports stage/bin/momoten.dll
           if ($LASTEXITCODE -ne 0 -or !($exports -match 'vkGetInstanceProcAddr')) {
