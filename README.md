@@ -73,23 +73,11 @@ momoten::translator
 momoten::headers
 ```
 
-The `momoten::driver`, `momoten::translator`, and `momoten::headers`
-targets are for build-tree consumers using `add_subdirectory`, not an
-installed CMake SDK. `version.h` is generated build-tree metadata and
-`spv_to_clc.h` is a development-only translator interface. The runtime
-installation does not contain headers, `momotenConfig.cmake`, or import
-libraries. With `MOMOTEN_BUILD_TOOLS=ON`, `momoten-spv-to-clc` can also
-be installed as a standalone tool.
+The `momoten::driver`, `momoten::translator`, and `momoten::headers` targets are for build-tree consumers using `add_subdirectory`, not an installed CMake SDK. `version.h` is generated build-tree metadata and `spv_to_clc.h` is a development-only translator interface. The runtime installation does not contain headers, `momotenConfig.cmake`, or import libraries. With `MOMOTEN_BUILD_TOOLS=ON`, `momoten-spv-to-clc` can also be installed as a standalone tool.
 
-When `MOMOTEN_BUILD_AMALGAMATION=ON`, the development-only
-`momoten_amalgamated_driver` and `momoten_amalgamated_translator` targets
-verify that the generated distribution remains buildable and behaviorally
-equivalent. The generated source stays in the build tree and is not part of
-the runtime installation.
+When `MOMOTEN_BUILD_AMALGAMATION=ON`, the development-only `momoten_amalgamated_driver` and `momoten_amalgamated_translator` targets verify that the generated distribution remains buildable and behaviorally equivalent. The generated source stays in the build tree and is not part of the runtime installation.
 
-The installed runtime consists of a single unversioned `libmomoten.so`,
-`momoten.dll`, or the platform equivalent, without `.so.0` or `.so.0.1.0`
-symlinks. SPIRV-Cross and SPIRV-Tools are linked into the shared library; it does not link the system OpenCL ICD loader. The selected device vendor's OpenCL runtime remains an external platform component and is opened directly by momoten. See [docs/opencl-loader.md](docs/opencl-loader.md) for Linux/Unix, Windows, Android and macOS discovery details.
+The installed runtime consists of a single unversioned `libmomoten.so`, `momoten.dll`, or the platform equivalent, without `.so.0` or `.so.0.1.0` symlinks. SPIRV-Cross and SPIRV-Tools are linked into the shared library; it does not link the system OpenCL ICD loader. The selected device vendor's OpenCL runtime remains an external platform component and is opened directly by momoten. See [docs/opencl-loader.md](docs/opencl-loader.md) for Linux/Unix, Windows, Android and macOS discovery details.
 
 ## Run ncnn through simplevk
 
