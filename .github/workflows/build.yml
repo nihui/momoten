@@ -61,7 +61,7 @@ jobs:
                 -DMOMOTEN_BUILD_TOOLS=OFF \
                 -DMOMOTEN_BUILD_TESTS=OFF \
                 -DMOMOTEN_INSTALL=ON
-              cmake --build build --target momoten_driver --parallel 2
+              cmake --build build --target momoten_driver --parallel 4
               cmake --install build --strip --prefix /project/stage
             '
 
@@ -137,7 +137,7 @@ jobs:
             -DMOMOTEN_INSTALL=ON
 
       - name: Build
-        run: cmake --build build --config Release --target momoten_driver --parallel 2
+        run: cmake --build build --config Release --target momoten_driver --parallel 4
 
       - name: Install
         run: cmake --install build --config Release --prefix stage
@@ -268,7 +268,7 @@ jobs:
           PY
 
       - name: Build
-        run: cmake --build build --target momoten_driver --parallel 2
+        run: cmake --build build --target momoten_driver --parallel 4
 
       - name: Install stripped release library
         run: cmake --install build --strip --prefix stage
