@@ -106,6 +106,15 @@ jobs:
           fi
           stat -Lc 'libmomoten.so size: %s bytes' stage/lib/libmomoten.so
 
+      - name: Smoke test system Vulkan Loader
+        if: matrix.name == 'x86_64'
+        shell: bash
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y libvulkan1
+          python3 tests/runtime/vulkan_loader_smoke.py \
+            stage/lib/libmomoten.so stage/lib/momoten_icd.json
+
       - name: Bundle license notices
         shell: bash
         run: cp LICENSE.txt THIRD_PARTY_NOTICES.md stage/
