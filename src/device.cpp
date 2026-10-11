@@ -220,6 +220,7 @@ VkResult impl_create_device(
     }
 
     VkDevice_T* value = new VkDevice_T;
+    set_loader_magic_value(value);
     value->physical_device = physical;
     value->api_version = physical->owner->api_version;
     for (uint32_t i = 0; i < create_info->enabledExtensionCount; i++)
@@ -229,6 +230,7 @@ VkResult impl_create_device(
     value->program_cache_capacity = memory_program_cache_capacity();
     value->enabled_shader_profile = enabled_shader_profile;
     value->queue = new VkQueue_T;
+    set_loader_magic_value(value->queue);
     value->queue->device = value;
     *device = value;
     return VK_SUCCESS;

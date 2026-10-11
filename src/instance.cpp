@@ -71,6 +71,7 @@ VkResult impl_create_instance(
             return VK_ERROR_EXTENSION_NOT_PRESENT;
     }
     VkInstance_T* value = new VkInstance_T;
+    set_loader_magic_value(value);
     const uint32_t requested_api_version = create_info->pApplicationInfo && create_info->pApplicationInfo->apiVersion
                                                ? create_info->pApplicationInfo->apiVersion
                                                : VK_API_VERSION_1_0;
