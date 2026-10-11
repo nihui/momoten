@@ -85,6 +85,22 @@ if(TARGET momoten_amalgamated_translator)
         LABELS "momoten;amalgamation;api;workgroup")
 endif()
 
+# Validate that the installed runtime does not expose a development SDK.
+if(TARGET momoten_driver AND MOMOTEN_INSTALL AND NOT CMAKE_CROSSCOMPILING)
+    add_test(NAME momoten_runtime_install
+        COMMAND "${CMAKE_COMMAND}"
+            -DBUILD_DIR=${CMAKE_BINARY_DIR}
+            -DSTAGE_DIR=${CMAKE_CURRENT_BINARY_DIR}/runtime-install
+            -DBIN_DIR=${CMAKE_INSTALL_BINDIR}
+            -DLIB_DIR=${CMAKE_INSTALL_LIBDIR}
+            -DRUNTIME_FILE=$<TARGET_FILE_NAME:momoten_driver>
+            -DTEST_CONFIG=$<CONFIG>
+            -DTOOLS_ENABLED=${MOMOTEN_BUILD_TOOLS}
+            -P "${CMAKE_CURRENT_SOURCE_DIR}/runtime/install_layout_test.cmake")
+    set_tests_properties(momoten_runtime_install PROPERTIES
+        LABELS "momoten;runtime;install")
+endif()
+
 if(TARGET momoten_driver AND NOT CMAKE_CROSSCOMPILING)
     add_test(NAME momoten_no_system_opencl_dependency
         COMMAND "${CMAKE_COMMAND}"

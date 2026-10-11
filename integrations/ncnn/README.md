@@ -2,6 +2,8 @@
 
 momoten is loaded through ncnn's existing simplevk path. The current ncnn
 checkout does not define `NCNN_BUILD_MOMOTEN`; do not pass that option.
+The integration uses build-tree targets, not an installed
+`find_package(momoten)` SDK.
 
 For sibling checkouts, create a small parent `CMakeLists.txt`:
 

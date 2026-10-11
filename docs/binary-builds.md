@@ -14,8 +14,9 @@ submodules. The resulting packages are available as workflow artifacts.
 | Android | arm64-v8a | 21 | GitHub hosted NDK |
 | Android | x86_64 | 21 | GitHub hosted NDK |
 
-Android builds use `ANDROID_STL=c++_static` and install an **unversioned**
-`libmomoten.so`, including its SONAME. The required vendor OpenCL library
+All platforms install a single unversioned runtime library without
+development headers, CMake package exports or versioned .so symlinks.
+Android builds use `ANDROID_STL=c++_static` and install `libmomoten.so`. The required vendor OpenCL library
 must be provided by the device; momoten opens it dynamically rather than
 linking an OpenCL ICD loader.
 
@@ -99,3 +100,17 @@ selects MSVC x64 or Win32.
 Workflow-level concurrency with `cancel-in-progress: true` cancels
 superseded runs for earlier commits on the same branch or pull request;
 jobs within the current run still use `fail-fast: false`.
+
+## Runtime-only distribution
+
+Linux CI packages `libmomoten.so` and `LICENSE.txt`/
+`THIRD_PARTY_NOTICES.md` in one `momoten-linux-<arch>.tar.gz`.
+Windows and Android similarly ship only the runtime library and notices.
+No installed CMake SDK, version header, Windows import library, or
+versioned `.so` symlinks are required.
+
+The build-tree targets `momoten::driver`, `momoten::translator`, and
+`momoten::headers` remain available to embedded/superbuild consumers.
+The generated version header remains build-tree metadata. Linux keeps
+`-static-libstdc++ -static-libgcc` for compatibility with older runtimes;
+changing that choice can be measured in a separate experiment.
