@@ -65,3 +65,33 @@ diff --git a/source/opt/optimizer.cpp b/source/opt/optimizer.cpp
      if (result.ec != std::errc() || result.ptr != end) {
        Errorf(consumer(), nullptr, {},
               "Invalid argument for --switch-descriptorset: %s",
+diff --git a/source/opt/trim_capabilities_pass.h b/source/opt/trim_capabilities_pass.h
+--- a/source/opt/trim_capabilities_pass.h
++++ b/source/opt/trim_capabilities_pass.h
+@@ -73,7 +73,7 @@
+  private:
+   // All the capabilities supported by this optimization pass. If your module
+   // contains unsupported instruction, the pass could yield bad results.
+-  static constexpr std::array kSupportedCapabilities{
++  static constexpr std::array<spv::Capability, 35> kSupportedCapabilities{
+       // clang-format off
+       spv::Capability::ComputeDerivativeGroupLinearKHR,
+       spv::Capability::ComputeDerivativeGroupQuadsKHR,
+@@ -114,7 +114,7 @@
+   };
+ 
+   // Those capabilities disable all transformation of the module.
+-  static constexpr std::array kForbiddenCapabilities{
++  static constexpr std::array<spv::Capability, 1> kForbiddenCapabilities{
+       spv::Capability::Linkage,
+   };
+ 
+@@ -120,7 +120,7 @@
+ 
+   // Those capabilities are never removed from a module because we cannot
+   // guess from the SPIR-V only if they are required or not.
+-  static constexpr std::array kUntouchableCapabilities{
++  static constexpr std::array<spv::Capability, 1> kUntouchableCapabilities{
+       spv::Capability::Shader,
+   };
+ 
