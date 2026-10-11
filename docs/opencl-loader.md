@@ -64,32 +64,20 @@ the Android Vulkan HAL discovery mechanism.
 
 ## Android Vulkan HAL
 
-Android 7.0 (API 24) and newer use a **hardware HAL module**, not the
-desktop Vulkan ICD JSON manifest. Build the optional adapter with
-`-DMOMOTEN_BUILD_ANDROID_HAL=ON`. Installation produces:
+The same `libmomoten.so` includes the Android Vulkan HAL `HMI` symbol,
+the `open("vk0")` callback and Vulkan function pointers. There is no separate
+`vulkan.momoten.so` adapter dependency.
 
-```text
-lib/libmomoten.so
-lib/hw/vulkan.momoten.so
-```
+For direct use by ncnn/simplevk, load `libmomoten.so` as before.
+For Android 7.0+ system HAL deployment, a device-image integrator may rename
+the **same binary** to `vulkan.<device-variant>.so` and install it in the
+device's vendor HAL directory (typically `/vendor/lib[64]/hw/`). The
+`<device-variant>` must match the device's HAL discovery configuration; it is
+not necessarily `momoten`. Device SELinux and linker namespace configuration
+may also need updating, and an unprivileged APK cannot replace a system HAL.
 
-The small `vulkan.momoten.so` adapter exports the Android `HMI` hardware
-module symbol, supports `open("vk0")`, and provides the
-`EnumerateInstanceExtensionProperties`, `CreateInstance`, and
-`GetInstanceProcAddr` function pointers. It links to the same
-`libmomoten.so` used by ncnn's direct Vulkan loading path.
-
-AOSP chooses the hardware module name from device properties; the
-`vulkan.momoten.so` suffix is selected only when the device's HAL discovery
-configuration resolves to `momoten`. Simply placing a file in
-`/vendor/lib[64]/hw/` on a stock device is not sufficient. System
-integration may require a device image configuration, partition permissions,
-SELinux policies, and correct linker namespaces; it is not achieved by an
-unprivileged APK. These binaries implement a restricted, nonconformant
-Vulkan subset and should not replace a conformant system Vulkan HAL by default.
-
-Android 4.0 (API 14) builds intentionally remain **direct-load-only**:
-they still provide just `libmomoten.so`, preserving the older Android
-compatibility target. Android CI builds the optional HAL on its newer NDK
-targets, but a successful cross-compile does not establish that a particular
-device image will load it.
+The Android 4.0 (API 14) binaries retain their legacy direct-load path. The
+HAL symbol is present but does not make Android 4.0 support the Android 7+
+system Vulkan HAL loader. This remains a restricted, non-conformant compute
+implementation and should not be installed as the system default driver on
+an ordinary device.

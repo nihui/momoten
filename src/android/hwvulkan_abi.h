@@ -9,7 +9,7 @@
 // Mirrors the binary layouts of AOSP hardware/hardware.h and
 // frameworks/native/vulkan/include/hardware/hwvulkan.h (HAL 0.1).
 // NDK builds cannot include those platform-private headers. Keep this
-// adapter isolated from the Vulkan driver and check both pointer sizes.
+// HAL interface isolated in src/android/ and check both pointer sizes.
 //
 // https://android.googlesource.com/platform/hardware/libhardware/
 // https://android.googlesource.com/platform/frameworks/native/
@@ -45,7 +45,11 @@ struct MomotenHwModule
     const char* author;
     MomotenHwModuleMethods* methods;
     void* dso;
+#if defined(__LP64__)
+    uint64_t reserved[25];
+#else
     uint32_t reserved[25];
+#endif
 };
 
 struct MomotenHwDevice
@@ -53,7 +57,11 @@ struct MomotenHwDevice
     uint32_t tag;
     uint32_t version;
     MomotenHwModule* module;
+#if defined(__LP64__)
+    uint64_t reserved[12];
+#else
     uint32_t reserved[12];
+#endif
     int (*close)(MomotenHwDevice* device);
 };
 
@@ -70,9 +78,9 @@ struct MomotenHwVulkanDevice
     PFN_vkGetInstanceProcAddr GetInstanceProcAddr;
 };
 
-static_assert(sizeof(MomotenHwModule) == (sizeof(void*) == 8 ? 152 : 128),
+static_assert(sizeof(MomotenHwModule) == (sizeof(void*) == 8 ? 248 : 128),
               "Unexpected Android hw_module_t ABI size");
-static_assert(sizeof(MomotenHwDevice) == (sizeof(void*) == 8 ? 72 : 64),
+static_assert(sizeof(MomotenHwDevice) == (sizeof(void*) == 8 ? 120 : 64),
               "Unexpected Android hw_device_t ABI size");
 static_assert(offsetof(MomotenHwVulkanDevice, EnumerateInstanceExtensionProperties)
                   == sizeof(MomotenHwDevice),

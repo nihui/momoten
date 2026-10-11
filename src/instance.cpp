@@ -47,7 +47,12 @@ VkResult impl_create_instance(
         || (create_info->enabledExtensionCount && !create_info->ppEnabledExtensionNames)
         || (create_info->enabledLayerCount && !create_info->ppEnabledLayerNames))
         return VK_ERROR_INITIALIZATION_FAILED;
-    if (allocator || create_info->pNext || create_info->flags)
+    // Loader and layer extensions may append structures to pNext. A Vulkan
+    // ICD must ignore structures it does not consume rather than reject
+    // VkInstanceCreateInfo solely because pNext is non-null.
+    if (allocator)
+        return VK_ERROR_FEATURE_NOT_PRESENT;
+    if (create_info->flags & ~VK_INSTANCE_CREATE_ENUMERATE_PORTABILITY_BIT_KHR)
         return VK_ERROR_FEATURE_NOT_PRESENT;
     if (create_info->enabledLayerCount)
         return VK_ERROR_LAYER_NOT_PRESENT;
@@ -56,8 +61,6 @@ VkResult impl_create_instance(
         if (create_info->pApplicationInfo->sType
             != VK_STRUCTURE_TYPE_APPLICATION_INFO)
             return VK_ERROR_INITIALIZATION_FAILED;
-        if (create_info->pApplicationInfo->pNext)
-            return VK_ERROR_FEATURE_NOT_PRESENT;
     }
     for (uint32_t i = 0; i < create_info->enabledExtensionCount; i++)
     {
@@ -75,20 +78,17 @@ VkResult impl_create_instance(
     const uint32_t requested_api_version = create_info->pApplicationInfo && create_info->pApplicationInfo->apiVersion
                                                ? create_info->pApplicationInfo->apiVersion
                                                : VK_API_VERSION_1_0;
-    if (VK_VERSION_MAJOR(requested_api_version) != 1 || VK_VERSION_MINOR(requested_api_version) > 1)
-    {
-        delete value;
-        return VK_ERROR_INCOMPATIBLE_DRIVER;
-    }
-    value->api_version = requested_api_version;
+    // Vulkan 1.1+ implementations must not reject vkCreateInstance with
+    // VK_ERROR_INCOMPATIBLE_DRIVER merely for a higher application version.
+    // Only expose the commands/features supported by our 1.1 profile.
+    value->api_version = std::min(requested_api_version, VK_API_VERSION_1_1);
     for (uint32_t i = 0; i < create_info->enabledExtensionCount; i++)
         value->enabled_extensions.push_back(create_info->ppEnabledExtensionNames[i]);
     value->physical_devices = discover_opencl_devices(value);
-    if (value->physical_devices.empty())
-    {
-        delete value;
-        return VK_ERROR_INCOMPATIBLE_DRIVER;
-    }
+    // Creating an instance must not require a usable OpenCL device. The
+    // loader can still enumerate zero physical devices without dropping us.
+    if (value->physical_devices.empty() && debug_enabled())
+        fprintf(stderr, "[momoten] no eligible OpenCL devices; vkEnumeratePhysicalDevices will return zero\n");
     *instance = value;
     return VK_SUCCESS;
 }
