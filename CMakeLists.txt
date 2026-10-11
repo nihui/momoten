@@ -161,6 +161,27 @@ if(MOMOTEN_BUILD_DRIVER)
     endif()
 endif()
 
+# Android's system Vulkan Loader uses a hardware HAL module, not ICD JSON.
+# Keep the ordinary libmomoten.so available for direct simplevk loading.
+option(MOMOTEN_BUILD_ANDROID_HAL "Build Android Vulkan hardware HAL adapter" OFF)
+if(MOMOTEN_BUILD_ANDROID_HAL)
+    if(NOT ANDROID OR NOT TARGET momoten_driver)
+        message(FATAL_ERROR "MOMOTEN_BUILD_ANDROID_HAL requires Android and MOMOTEN_BUILD_DRIVER")
+    endif()
+    add_library(momoten_android_hal SHARED src/android/hwvulkan_hal.cpp)
+    target_compile_features(momoten_android_hal PRIVATE cxx_std_11)
+    target_link_libraries(momoten_android_hal PRIVATE momoten_driver momoten_vulkan_headers)
+    set_target_properties(momoten_android_hal PROPERTIES
+        PREFIX ""
+        OUTPUT_NAME "vulkan.momoten"
+        CXX_VISIBILITY_PRESET hidden
+        VISIBILITY_INLINES_HIDDEN ON)
+    if(MOMOTEN_INSTALL)
+        install(TARGETS momoten_android_hal
+            LIBRARY DESTINATION "${CMAKE_INSTALL_LIBDIR}/hw")
+    endif()
+endif()
+
 if(MOMOTEN_BUILD_AMALGAMATION)
     find_package(Python3 REQUIRED COMPONENTS Interpreter)
 
