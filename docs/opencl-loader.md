@@ -61,3 +61,35 @@ nonconformant, compute-only Vulkan implementation: never copy the manifest
 into `/usr/share/vulkan/icd.d/` for automatic system discovery. Android
 continues using direct dynamic loading; desktop JSON registration is not
 the Android Vulkan HAL discovery mechanism.
+
+## Android Vulkan HAL
+
+Android 7.0 (API 24) and newer use a **hardware HAL module**, not the
+desktop Vulkan ICD JSON manifest. Build the optional adapter with
+`-DMOMOTEN_BUILD_ANDROID_HAL=ON`. Installation produces:
+
+```text
+lib/libmomoten.so
+lib/hw/vulkan.momoten.so
+```
+
+The small `vulkan.momoten.so` adapter exports the Android `HMI` hardware
+module symbol, supports `open("vk0")`, and provides the
+`EnumerateInstanceExtensionProperties`, `CreateInstance`, and
+`GetInstanceProcAddr` function pointers. It links to the same
+`libmomoten.so` used by ncnn's direct Vulkan loading path.
+
+AOSP chooses the hardware module name from device properties; the
+`vulkan.momoten.so` suffix is selected only when the device's HAL discovery
+configuration resolves to `momoten`. Simply placing a file in
+`/vendor/lib[64]/hw/` on a stock device is not sufficient. System
+integration may require a device image configuration, partition permissions,
+SELinux policies, and correct linker namespaces; it is not achieved by an
+unprivileged APK. These binaries implement a restricted, nonconformant
+Vulkan subset and should not replace a conformant system Vulkan HAL by default.
+
+Android 4.0 (API 14) builds intentionally remain **direct-load-only**:
+they still provide just `libmomoten.so`, preserving the older Android
+compatibility target. Android CI builds the optional HAL on its newer NDK
+targets, but a successful cross-compile does not establish that a particular
+device image will load it.
