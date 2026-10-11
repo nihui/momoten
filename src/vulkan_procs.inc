@@ -79,6 +79,13 @@ MOMOTEN_RESULT_PROC(vkGetPhysicalDeviceImageFormatProperties, impl_get_physical_
                      VkImageUsageFlags usage, VkImageCreateFlags flags, VkImageFormatProperties* properties),
                     (physical, format, type, tiling, usage, flags, properties),
                     PROC_SCOPE_INSTANCE, 0, VK_API_VERSION_1_0)
+// Vulkan 1.0 requires this entry point even if sparse image formats are unsupported.
+MOMOTEN_VOID_PROC(vkGetPhysicalDeviceSparseImageFormatProperties, impl_get_physical_device_sparse_image_format_properties,
+                  (VkPhysicalDevice physical, VkFormat format, VkImageType type, VkSampleCountFlagBits samples,
+                   VkImageUsageFlags usage, VkImageTiling tiling, uint32_t* count,
+                   VkSparseImageFormatProperties* properties),
+                  (physical, format, type, samples, usage, tiling, count, properties),
+                  PROC_SCOPE_INSTANCE, 0, VK_API_VERSION_1_0)
 MOMOTEN_RESULT_PROC(vkGetPhysicalDeviceImageFormatProperties2, impl_get_physical_device_image_format_properties2,
                     (VkPhysicalDevice physical, const VkPhysicalDeviceImageFormatInfo2* info,
                      VkImageFormatProperties2* properties),

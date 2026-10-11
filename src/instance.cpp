@@ -392,6 +392,16 @@ VkResult impl_get_physical_device_image_format_properties(
     return VK_ERROR_FORMAT_NOT_SUPPORTED;
 }
 
+void impl_get_physical_device_sparse_image_format_properties(
+    VkPhysicalDevice, VkFormat, VkImageType, VkSampleCountFlagBits,
+    VkImageUsageFlags, VkImageTiling, uint32_t* count,
+    VkSparseImageFormatProperties*)
+{
+    // momoten's buffer-only profile exposes no sparse image formats.
+    if (count)
+        *count = 0;
+}
+
 VkResult impl_get_physical_device_image_format_properties2(
     VkPhysicalDevice physical, const VkPhysicalDeviceImageFormatInfo2* info,
     VkImageFormatProperties2* properties)
