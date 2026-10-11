@@ -5,7 +5,7 @@ submodules. The resulting packages are available as workflow artifacts.
 
 | Target | ABI | Minimum Android API | Build toolchain |
 | --- | --- | --- | --- |
-| Linux | x86_64 | — | Ubuntu GCC |
+| Linux | x86_64 | — | cibuildwheel manylinux2014 (glibc 2.17) |
 | Windows | x86_64 | — | MSVC 2022 |
 | Android 4.0 | armeabi-v7a | 14 | NDK r17c |
 | Android | arm64-v8a | 21 | GitHub hosted NDK |
@@ -56,3 +56,26 @@ The installed `libmomoten.so` is also stripped using
 the dynamic Vulkan entry-point symbols. CI rejects debug sections and
 prints the final uncompressed library size. Debug builds outside this
 release workflow are unaffected.
+
+## Linux compatibility
+
+The Linux x86_64 shared library is built inside cibuildwheel's pinned
+`manylinux2014` container, following qwenimage-ncnn-vulkan's release
+approach. It targets glibc 2.17 (e.g. CentOS 7 or newer glibc-based
+distributions) instead of the Ubuntu runner's glibc.
+
+This is a native `libmomoten.so` distribution, **not a Python wheel**. A
+temporary setuptools placeholder only provides cibuildwheel with a build
+entry point; the real library is built with CMake in `CIBW_BEFORE_ALL`
+and installed to the host-mounted `stage/` directory.
+
+The Linux release links `libstdc++` and `libgcc` statically, to avoid
+newer libstdc++ runtime version requirements. CI verifies that
+`vkGetInstanceProcAddr` is still exported, that there are no dynamic
+dependencies on a system OpenCL ICD loader or C++ runtime, and that all
+recorded `GLIBC_*` versions are at most 2.17. It also strips the binary
+and checks that no `.debug_*` sections remain.
+
+The system still needs a compatible vendor OpenCL implementation at
+runtime. This compatibility check does not claim functional compatibility
+with every old GPU/driver combination.

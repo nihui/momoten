@@ -13,17 +13,102 @@ permissions:
   contents: read
 
 jobs:
-  desktop:
-    name: ${{ matrix.name }}
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - {name: linux-x86_64, os: ubuntu-22.04}
-          - {name: windows-x86_64, os: windows-2022}
+  linux:
+    name: linux-x86_64-manylinux2014
+    runs-on: ubuntu-22.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
+        with:
+          submodules: recursive
+
+      # cibuildwheel builds inside manylinux2014 (glibc 2.17).
+      # The placeholder wheel is not published: this workflow ships libmomoten.so.
+      - name: Create cibuildwheel placeholder
+        shell: bash
+        run: |
+          cat > setup.py <<'PY'
+          from setuptools import setup
+          from setuptools.dist import Distribution
+
+          class BinaryDistribution(Distribution):
+              def has_ext_modules(self):
+                  return True
+
+          setup(name="momoten-manylinux-build", version="0.0.0", distclass=BinaryDistribution)
+          PY
+
+      - name: Build in manylinux2014
+        uses: pypa/cibuildwheel@v4.3.1
+        env:
+          CIBW_ARCHS_LINUX: "x86_64"
+          CIBW_BUILD: "cp310-manylinux_x86_64"
+          CIBW_MANYLINUX_X86_64_IMAGE: "manylinux2014"
+          CIBW_BUILD_VERBOSITY: "1"
+          CIBW_REPAIR_WHEEL_COMMAND: ""
+          CIBW_BEFORE_ALL: >-
+            cmake -S /project -B /project/build
+            -DCMAKE_BUILD_TYPE=Release
+            "-DCMAKE_SHARED_LINKER_FLAGS=-static-libstdc++ -static-libgcc"
+            -DMOMOTEN_BUILD_DRIVER=ON
+            -DMOMOTEN_BUILD_TRANSLATOR=ON
+            -DMOMOTEN_BUILD_TOOLS=OFF
+            -DMOMOTEN_BUILD_TESTS=OFF
+            -DMOMOTEN_INSTALL=ON
+            &&
+            cmake --build /project/build --target momoten_driver --parallel 2
+            &&
+            cmake --install /project/build --strip --prefix /project/stage
+
+      - name: Verify Linux ABI and exported symbols
+        shell: bash
+        run: |
+          test -f stage/lib/libmomoten.so
+          nm -D --defined-only stage/lib/libmomoten.so | grep -E ' vkGetInstanceProcAddr$'
+          readelf -d stage/lib/libmomoten.so > dynamic.txt
+          if grep -Ei 'NEEDED.*(libOpenCL|libstdc\\+\\+|libgcc_s)' dynamic.txt; then
+            echo 'Unexpected dynamic loader/C++ runtime dependency' >&2
+            exit 1
+          fi
+          readelf --version-info stage/lib/libmomoten.so > version-info.txt
+          python3 - <<'PY'
+          import re
+          from pathlib import Path
+
+          versions = Path("version-info.txt").read_text()
+          glibc = sorted({(int(major), int(minor)) for major, minor
+                          in re.findall(r"\\bGLIBC_(\\d+)\\.(\\d+)\\b", versions)})
+          if not glibc:
+              raise SystemExit("No GLIBC version requirements found")
+          maximum = glibc[-1]
+          print("Maximum required glibc:", ".".join(map(str, maximum)))
+          if maximum > (2, 17):
+              raise SystemExit("glibc requirement exceeds manylinux2014 (2.17)")
+          for family in ("GLIBCXX", "CXXABI"):
+              required = sorted({tuple(map(int, version.split(".")))
+                                 for version in re.findall(r"\\b" + family + r"_(\\d+(?:\\.\\d+)+)\\b", versions)})
+              print(family + " requirements:", required[-1] if required else "none")
+          PY
+          if readelf -SW stage/lib/libmomoten.so | grep -E '\\.debug_'; then
+            echo 'Unexpected debug sections in Linux release library' >&2
+            exit 1
+          fi
+          stat -c 'libmomoten.so size: %s bytes' stage/lib/libmomoten.so
+
+      - name: Bundle license notices
+        shell: bash
+        run: cp LICENSE.txt THIRD_PARTY_NOTICES.md stage/
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: momoten-linux-x86_64
+          path: stage/
+          if-no-files-found: error
+
+  windows:
+    name: windows-x86_64
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v7
         with:
           submodules: recursive
 
@@ -44,19 +129,7 @@ jobs:
       - name: Install
         run: cmake --install build --config Release --prefix stage
 
-      - name: Verify Linux library exports
-        if: runner.os == 'Linux'
-        shell: bash
-        run: |
-          test -f stage/lib/libmomoten.so
-          nm -D --defined-only stage/lib/libmomoten.so | grep -E ' vkGetInstanceProcAddr$'
-          if ldd stage/lib/libmomoten.so | grep -i 'libOpenCL'; then
-            echo 'Unexpected OpenCL loader dependency' >&2
-            exit 1
-          fi
-
       - name: Verify Windows DLL exports
-        if: runner.os == 'Windows'
         shell: pwsh
         run: |
           if (!(Test-Path stage/bin/momoten.dll)) { throw 'Missing DLL' }
@@ -72,9 +145,9 @@ jobs:
         shell: bash
         run: cp LICENSE.txt THIRD_PARTY_NOTICES.md stage/
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
-          name: momoten-${{ matrix.name }}
+          name: momoten-windows-x86_64
           path: stage/
           if-no-files-found: error
 
@@ -91,7 +164,7 @@ jobs:
           - {abi: arm64-v8a, api: 21, legacy: false}
           - {abi: x86_64, api: 21, legacy: false}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           submodules: recursive
 
@@ -213,7 +286,7 @@ jobs:
         shell: bash
         run: cp LICENSE.txt THIRD_PARTY_NOTICES.md stage/
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: momoten-android-${{ matrix.abi }}-api${{ matrix.api }}
           path: stage/
