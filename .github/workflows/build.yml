@@ -71,7 +71,9 @@ jobs:
           test -f stage/lib/libmomoten.so
           test ! -L stage/lib/libmomoten.so
           test "$(find stage/lib -maxdepth 1 -name 'libmomoten.so*' | wc -l)" -eq 1
-          test "$(find stage -type f | wc -l)" -eq 1
+          test "$(find stage -type f | wc -l)" -eq 2
+          test -f stage/lib/momoten_icd.json
+          grep -q '"api_version": "1.1.0"' stage/lib/momoten_icd.json
           readelf -h stage/lib/libmomoten.so | grep -q "Class:.*ELF${{ matrix.elf_class }}"
           nm -D --defined-only stage/lib/libmomoten.so | grep -E ' vkGetInstanceProcAddr$'
           readelf -d stage/lib/libmomoten.so > dynamic.txt
@@ -104,6 +106,16 @@ jobs:
           fi
           stat -Lc 'libmomoten.so size: %s bytes' stage/lib/libmomoten.so
 
+      - name: Smoke test system Vulkan Loader
+        if: matrix.name == 'x86_64'
+        shell: bash
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y libvulkan1 pocl-opencl-icd
+          ldconfig -p | grep -Ei '(pocl|OpenCL)' || true
+          MOMOTEN_DEBUG=1 MOMOTEN_OPENCL_DRIVER=libOpenCL.so.1 python3 tests/runtime/vulkan_loader_smoke.py \
+            stage/lib/libmomoten.so stage/lib/momoten_icd.json
+
       - name: Bundle license notices
         shell: bash
         run: cp LICENSE.txt THIRD_PARTY_NOTICES.md stage/
@@ -112,7 +124,7 @@ jobs:
         shell: bash
         run: |
           tar -czf "momoten-linux-${{ matrix.name }}.tar.gz" \
-            -C stage/lib libmomoten.so \
+            -C stage/lib libmomoten.so momoten_icd.json \
             -C "$GITHUB_WORKSPACE/stage" LICENSE.txt THIRD_PARTY_NOTICES.md
 
       - uses: actions/upload-artifact@v7
@@ -156,6 +168,7 @@ jobs:
         shell: pwsh
         run: |
           if (!(Test-Path stage/bin/momoten.dll)) { throw 'Missing DLL' }
+          if (!(Test-Path stage/bin/momoten_icd.json)) { throw 'Missing ICD JSON' }
           if (Test-Path stage/lib/momoten.lib) { throw 'Import library must not be installed' }
           if (Test-Path stage/include) { throw 'Headers must not be installed' }
           if (Test-Path stage/lib/cmake) { throw 'CMake package must not be installed' }
@@ -291,6 +304,7 @@ jobs:
         run: |
           test -f stage/lib/libmomoten.so
           test "$(find stage -type f | wc -l)" -eq 1
+          readelf -Ws stage/lib/libmomoten.so | grep -E ' HMI$'
           case "${{ matrix.abi }}" in
             armeabi-v7a|x86) readelf -h stage/lib/libmomoten.so | grep -q 'Class:.*ELF32' ;;
             arm64-v8a|x86_64) readelf -h stage/lib/libmomoten.so | grep -q 'Class:.*ELF64' ;;

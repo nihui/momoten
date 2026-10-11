@@ -6,6 +6,8 @@
 #include "backend/runtime.h"
 #include "vulkan_internal.h"
 
+#include <vulkan/vk_layer.h>
+
 #include <cerrno>
 #include <cstdio>
 #include <cstdlib>
@@ -189,8 +191,18 @@ VkResult impl_create_device(
                 enabled_shader_profile.float_controls2 = true;
             }
         }
+        else if (feature->sType == VK_STRUCTURE_TYPE_LOADER_DEVICE_CREATE_INFO)
+        {
+            // Vulkan Loader and explicit layers prepend VkLayerDeviceCreateInfo
+            // nodes to pNext, even when the application supplied no extensions.
+            // These are loader-private metadata, not unsupported GPU features.
+            // They must not cause VK_ERROR_FEATURE_NOT_PRESENT.
+        }
         else
         {
+            if (momoten_detail::debug_enabled())
+                fprintf(stderr, "[momoten] unsupported VkDeviceCreateInfo pNext sType %d\n",
+                        static_cast<int>(feature->sType));
             return VK_ERROR_FEATURE_NOT_PRESENT;
         }
         feature = feature->pNext;
@@ -220,6 +232,7 @@ VkResult impl_create_device(
     }
 
     VkDevice_T* value = new VkDevice_T;
+    set_loader_magic_value(value);
     value->physical_device = physical;
     value->api_version = physical->owner->api_version;
     for (uint32_t i = 0; i < create_info->enabledExtensionCount; i++)
@@ -229,6 +242,7 @@ VkResult impl_create_device(
     value->program_cache_capacity = memory_program_cache_capacity();
     value->enabled_shader_profile = enabled_shader_profile;
     value->queue = new VkQueue_T;
+    set_loader_magic_value(value->queue);
     value->queue->device = value;
     *device = value;
     return VK_SUCCESS;
