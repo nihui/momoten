@@ -111,8 +111,8 @@ jobs:
         shell: bash
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y libvulkan1
-          python3 tests/runtime/vulkan_loader_smoke.py \
+          sudo apt-get install -y libvulkan1 pocl-opencl-icd
+          MOMOTEN_OPENCL_DRIVER=libpocl.so.2 python3 tests/runtime/vulkan_loader_smoke.py \
             stage/lib/libmomoten.so stage/lib/momoten_icd.json
 
       - name: Bundle license notices
