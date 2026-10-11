@@ -60,7 +60,10 @@ jobs:
         shell: pwsh
         run: |
           if (!(Test-Path stage/bin/momoten.dll)) { throw 'Missing DLL' }
-          $exports = & dumpbin /exports stage/bin/momoten.dll
+          $vswhere = "${env:ProgramFiles(x86)}\\Microsoft Visual Studio\\Installer\\vswhere.exe"
+          $dumpbin = & $vswhere -latest -products '*' -find 'VC\\Tools\\MSVC\\**\\bin\\Hostx64\\x64\\dumpbin.exe' | Select-Object -Last 1
+          if (!$dumpbin) { throw 'MSVC dumpbin.exe was not found' }
+          $exports = & $dumpbin /exports stage/bin/momoten.dll
           if ($LASTEXITCODE -ne 0 -or !($exports -match 'vkGetInstanceProcAddr')) {
             throw 'Missing Vulkan proc export'
           }
