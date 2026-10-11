@@ -74,6 +74,7 @@ enum.argtypes=[ctypes.c_void_p,ctypes.POINTER(ctypes.c_uint32),ctypes.c_void_p]
 enum.restype=ctypes.c_int32
 assert enum(instance,ctypes.byref(count),None) == 0
 print('Physical device count:',count.value,flush=True)
+assert count.value > 0, 'PoCL device not exposed through Vulkan Loader'
 print('destroying Vulkan instance',flush=True)
 v.vkDestroyInstance.argtypes=[ctypes.c_void_p,ctypes.c_void_p]
 v.vkDestroyInstance(instance,None)
