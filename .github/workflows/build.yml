@@ -25,59 +25,45 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - {name: x86_64, cibw_arch: x86_64, elf_class: 64}
-          - {name: x86, cibw_arch: i686, elf_class: 32}
+          # Reuse the exact manylinux2014 image digests from the last passing
+          # cibuildwheel run; glibc stays at 2.17 when newer images are published.
+          - name: x86_64
+            image: quay.io/pypa/manylinux2014_x86_64@sha256:f6a6f153c9cf45470507ebbc27013e5db14ce21331b62fd2c540561f25e5f0a5
+            platform: linux/amd64
+            elf_class: 64
+          - name: x86
+            image: quay.io/pypa/manylinux2014_i686@sha256:30305867f278896ee117b0d162a8e4f9b7b16819e6590f6139e14c5ed5b23fdd
+            platform: linux/386
+            elf_class: 32
     steps:
       - uses: actions/checkout@v7
         with:
           submodules: recursive
 
-      # cibuildwheel builds inside manylinux2014 (glibc 2.17).
-      # The placeholder wheel is not published: this workflow ships libmomoten.so.
-      - name: Create cibuildwheel placeholder
+      # momoten distributes a C++ shared library, not a Python wheel.
+      - name: Build directly in manylinux2014
         shell: bash
         run: |
-          cat > setup.py <<'PY'
-          from setuptools import setup
-          from setuptools.dist import Distribution
-
-          class BinaryDistribution(Distribution):
-              def has_ext_modules(self):
-                  return True
-
-          setup(name="momoten-manylinux-build", version="0.0.0", distclass=BinaryDistribution)
-          PY
-
-      - name: Build in manylinux2014
-        uses: pypa/cibuildwheel@v4.3.1
-        env:
-          CIBW_ARCHS_LINUX: "${{ matrix.cibw_arch }}"
-          CIBW_BUILD: "cp310-manylinux_${{ matrix.cibw_arch }}"
-          CIBW_MANYLINUX_X86_64_IMAGE: "manylinux2014"
-          CIBW_MANYLINUX_I686_IMAGE: "manylinux2014"
-          CIBW_BUILD_VERBOSITY: "1"
-          CIBW_REPAIR_WHEEL_COMMAND: ""
-          CIBW_BEFORE_ALL: >-
-            cmake -S /project -B /project/build
-            -DCMAKE_BUILD_TYPE=Release
-            -DCMAKE_INSTALL_LIBDIR=lib
-            "-DCMAKE_SHARED_LINKER_FLAGS=-static-libstdc++ -static-libgcc"
-            -DMOMOTEN_BUILD_DRIVER=ON
-            -DMOMOTEN_BUILD_TRANSLATOR=ON
-            -DMOMOTEN_BUILD_TOOLS=OFF
-            -DMOMOTEN_BUILD_TESTS=OFF
-            -DMOMOTEN_INSTALL=ON
-            &&
-            cmake --build /project/build --target momoten_driver --parallel 2
-            &&
-            cmake --install /project/build --strip --prefix /host/tmp/momoten-install
-
-      - name: Stage manylinux library on host
-        shell: bash
-        run: |
-          test -f /tmp/momoten-install/lib/libmomoten.so
-          mkdir -p stage
-          cp -a /tmp/momoten-install/. stage/
+          docker run --rm \
+            --platform "${{ matrix.platform }}" \
+            --user "$(id -u):$(id -g)" \
+            -e HOME=/tmp \
+            -v "$GITHUB_WORKSPACE:/project" \
+            -w /project \
+            "${{ matrix.image }}" \
+            bash -ec '
+              cmake -S . -B build \
+                -DCMAKE_BUILD_TYPE=Release \
+                -DCMAKE_INSTALL_LIBDIR=lib \
+                "-DCMAKE_SHARED_LINKER_FLAGS=-static-libstdc++ -static-libgcc" \
+                -DMOMOTEN_BUILD_DRIVER=ON \
+                -DMOMOTEN_BUILD_TRANSLATOR=ON \
+                -DMOMOTEN_BUILD_TOOLS=OFF \
+                -DMOMOTEN_BUILD_TESTS=OFF \
+                -DMOMOTEN_INSTALL=ON
+              cmake --build build --target momoten_driver --parallel 2
+              cmake --install build --strip --prefix /project/stage
+            '
 
       - name: Verify Linux ABI and exported symbols
         shell: bash

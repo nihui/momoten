@@ -5,8 +5,8 @@ submodules. The resulting packages are available as workflow artifacts.
 
 | Target | ABI | Minimum Android API | Build toolchain |
 | --- | --- | --- | --- |
-| Linux | x86_64 | — | cibuildwheel manylinux2014 (glibc 2.17) |
-| Linux | x86 (i686) | — | cibuildwheel manylinux2014 (glibc 2.17) |
+| Linux | x86_64 | — | Docker manylinux2014 (glibc 2.17) |
+| Linux | x86 (i686) | — | Docker manylinux2014 (glibc 2.17) |
 | Windows | x86_64 | — | MSVC 2022 (x64) |
 | Windows | x86 | — | MSVC 2022 (Win32) |
 | Android 4.0 | armeabi-v7a | 14 | NDK r17c |
@@ -62,28 +62,31 @@ release workflow are unaffected.
 
 ## Linux compatibility
 
-The Linux x86_64 and x86 (i686) shared libraries are built inside cibuildwheel's pinned
-`manylinux2014` container, following qwenimage-ncnn-vulkan's release
-approach. It targets glibc 2.17 (e.g. CentOS 7 or newer glibc-based
-distributions) instead of the Ubuntu runner's glibc.
+The Linux x86_64 and i686 shared libraries are built **directly** in
+pinned `quay.io/pypa/manylinux2014_x86_64` and
+`quay.io/pypa/manylinux2014_i686` Docker containers (glibc 2.17,
+GCC 10). The image digests are fixed in the workflow and originate from
+a passing cibuildwheel run. No Python package, dummy `setup.py`, or
+cibuildwheel wrapper is needed.
 
-This is a native `libmomoten.so` distribution, **not a Python wheel**. A
-temporary setuptools placeholder only provides cibuildwheel with a build
-entry point; the real library is built with CMake in `CIBW_BEFORE_ALL`
-and installed through the `/host/tmp/` host mount into `stage/`.
-`CMAKE_INSTALL_LIBDIR=lib` keeps both i686 and x86_64 builds under the same
-directory; manylinux x86_64 otherwise defaults to `lib64/`.
+The repository is bind-mounted into the container at `/project`. CMake
+compiles and installs directly to `/project/stage`, which is accessible
+on the host without any intermediate copy or `/host/tmp` mount. Docker
+uses the runner's UID and GID to avoid root-owned output files. The
+`i686` build selects Docker platform `linux/386`. Setting
+`CMAKE_INSTALL_LIBDIR=lib` makes both architectures install under
+`stage/lib/` rather than using `lib64/` on x86_64.
 
-The Linux release links `libstdc++` and `libgcc` statically, to avoid
-newer libstdc++ runtime version requirements. CI verifies that
-`vkGetInstanceProcAddr` is still exported, that there are no dynamic
-dependencies on a system OpenCL ICD loader or C++ runtime, and that all
-recorded `GLIBC_*` versions are at most 2.17. It also strips the binary
-and checks that no `.debug_*` sections remain.
+Both builds aim to run on glibc 2.17 and later (for example, RHEL/CentOS 7).
+The Linux release links `libstdc++` and `libgcc` statically to avoid
+depending on a newer system C++ runtime. CI verifies the ELF class,
+exports `vkGetInstanceProcAddr`, rejects dynamic OpenCL ICD/C++ runtime
+dependencies, and checks that required `GLIBC_*` versions do not exceed
+2.17. It also strips debug symbols and checks that no `.debug_*`
+sections remain.
 
-The system still needs a compatible vendor OpenCL implementation at
-runtime. This compatibility check does not claim functional compatibility
-with every old GPU/driver combination.
+A compatible vendor OpenCL implementation is still required at runtime;
+these checks do not prove functionality on every old GPU or driver.
 
 ## CI matrix and cancellation
 
