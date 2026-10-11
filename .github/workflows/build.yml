@@ -69,7 +69,14 @@ jobs:
             &&
             cmake --build /project/build --target momoten_driver --parallel 2
             &&
-            cmake --install /project/build --strip --prefix /project/stage
+            cmake --install /project/build --strip --prefix /host/tmp/momoten-install
+
+      - name: Stage manylinux library on host
+        shell: bash
+        run: |
+          test -f /tmp/momoten-install/lib/libmomoten.so
+          mkdir -p stage
+          cp -a /tmp/momoten-install/. stage/
 
       - name: Verify Linux ABI and exported symbols
         shell: bash
