@@ -70,7 +70,9 @@ distributions) instead of the Ubuntu runner's glibc.
 This is a native `libmomoten.so` distribution, **not a Python wheel**. A
 temporary setuptools placeholder only provides cibuildwheel with a build
 entry point; the real library is built with CMake in `CIBW_BEFORE_ALL`
-and installed to the host-mounted `stage/` directory.
+and installed through the `/host/tmp/` host mount into `stage/`.
+`CMAKE_INSTALL_LIBDIR=lib` keeps both i686 and x86_64 builds under the same
+directory; manylinux x86_64 otherwise defaults to `lib64/`.
 
 The Linux release links `libstdc++` and `libgcc` statically, to avoid
 newer libstdc++ runtime version requirements. CI verifies that
