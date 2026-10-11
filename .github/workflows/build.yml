@@ -303,38 +303,7 @@ jobs:
         run: |
           test -f stage/lib/libmomoten.so
           test "$(find stage -type f | wc -l)" -eq 1
-          readelf -Ws stage/lib/libmomoten.so | grep -E ' HMI          case "${{ matrix.abi }}" in
-            armeabi-v7a|x86) readelf -h stage/lib/libmomoten.so | grep -q 'Class:.*ELF32' ;;
-            arm64-v8a|x86_64) readelf -h stage/lib/libmomoten.so | grep -q 'Class:.*ELF64' ;;
-          esac
-          test ! -L stage/lib/libmomoten.so
-          test "$(find stage/lib -maxdepth 1 -name 'libmomoten.so*' | wc -l)" -eq 1
-          readelf -d stage/lib/libmomoten.so > dynamic.txt
-          if grep -q 'SONAME.*libmomoten.so\.' dynamic.txt; then
-            echo 'Unexpected versioned SONAME' >&2
-            exit 1
-          fi
-          if grep -Ei 'NEEDED.*(OpenCL|vulkan|c\+\+_shared)' dynamic.txt; then
-            echo 'Unexpected runtime dependency' >&2
-            exit 1
-          fi
-          readelf -Ws stage/lib/libmomoten.so | grep -E ' vkGetInstanceProcAddr$'
-          if readelf -SW stage/lib/libmomoten.so | grep -E '\.debug_'; then
-            echo 'Unexpected debug sections in Android release library' >&2
-            exit 1
-          fi
-          stat -c 'libmomoten.so size: %s bytes' stage/lib/libmomoten.so
-
-      - name: Bundle license notices
-        shell: bash
-        run: cp LICENSE.txt THIRD_PARTY_NOTICES.md stage/
-
-      - uses: actions/upload-artifact@v7
-        with:
-          name: momoten-android-${{ matrix.abi }}-api${{ matrix.api }}
-          path: stage/
-          if-no-files-found: error
-
+          readelf -Ws stage/lib/libmomoten.so | grep -E ' HMI$'
           case "${{ matrix.abi }}" in
             armeabi-v7a|x86) readelf -h stage/lib/libmomoten.so | grep -q 'Class:.*ELF32' ;;
             arm64-v8a|x86_64) readelf -h stage/lib/libmomoten.so | grep -q 'Class:.*ELF64' ;;
