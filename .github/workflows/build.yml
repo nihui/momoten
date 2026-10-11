@@ -60,6 +60,7 @@ jobs:
           CIBW_BEFORE_ALL: >-
             cmake -S /project -B /project/build
             -DCMAKE_BUILD_TYPE=Release
+            -DCMAKE_INSTALL_LIBDIR=lib
             "-DCMAKE_SHARED_LINKER_FLAGS=-static-libstdc++ -static-libgcc"
             -DMOMOTEN_BUILD_DRIVER=ON
             -DMOMOTEN_BUILD_TRANSLATOR=ON
@@ -112,7 +113,7 @@ jobs:
             echo 'Unexpected debug sections in Linux release library' >&2
             exit 1
           fi
-          stat -c 'libmomoten.so size: %s bytes' stage/lib/libmomoten.so
+          stat -Lc 'libmomoten.so size: %s bytes' stage/lib/libmomoten.so
 
       - name: Bundle license notices
         shell: bash
