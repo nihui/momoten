@@ -45,11 +45,7 @@ struct MomotenHwModule
     const char* author;
     MomotenHwModuleMethods* methods;
     void* dso;
-#if defined(__LP64__)
-    uint64_t reserved[25];
-#else
     uint32_t reserved[25];
-#endif
 };
 
 struct MomotenHwDevice
@@ -57,11 +53,7 @@ struct MomotenHwDevice
     uint32_t tag;
     uint32_t version;
     MomotenHwModule* module;
-#if defined(__LP64__)
-    uint64_t reserved[12];
-#else
     uint32_t reserved[12];
-#endif
     int (*close)(MomotenHwDevice* device);
 };
 
@@ -78,9 +70,9 @@ struct MomotenHwVulkanDevice
     PFN_vkGetInstanceProcAddr GetInstanceProcAddr;
 };
 
-static_assert(sizeof(MomotenHwModule) == (sizeof(void*) == 8 ? 248 : 128),
+static_assert(sizeof(MomotenHwModule) == (sizeof(void*) == 8 ? 152 : 128),
               "Unexpected Android hw_module_t ABI size");
-static_assert(sizeof(MomotenHwDevice) == (sizeof(void*) == 8 ? 120 : 64),
+static_assert(sizeof(MomotenHwDevice) == (sizeof(void*) == 8 ? 72 : 64),
               "Unexpected Android hw_device_t ABI size");
 static_assert(offsetof(MomotenHwVulkanDevice, EnumerateInstanceExtensionProperties)
                   == sizeof(MomotenHwDevice),
