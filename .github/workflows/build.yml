@@ -1,7 +1,7 @@
 # Copyright 2026 nihui
 # SPDX-License-Identifier: Apache-2.0
 
-name: Build shared libraries
+name: build
 
 on:
   push:
