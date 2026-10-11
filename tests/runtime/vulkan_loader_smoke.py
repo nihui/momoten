@@ -61,9 +61,15 @@ fn.argtypes=[ctypes.POINTER(Create),ctypes.c_void_p,ctypes.POINTER(ctypes.c_void
 fn.restype=ctypes.c_int32
 ret=fn(ctypes.byref(ci),None,ctypes.byref(instance))
 print('Vulkan Loader vkCreateInstance returned',ret)
-if ret == 0:
-    v.vkDestroyInstance.argtypes=[ctypes.c_void_p,ctypes.c_void_p]
-    v.vkDestroyInstance(instance,None)
+assert ret == 0, 'Loader failed to create a Vulkan instance'
+count=ctypes.c_uint32()
+enum=v.vkEnumeratePhysicalDevices
+enum.argtypes=[ctypes.c_void_p,ctypes.POINTER(ctypes.c_uint32),ctypes.c_void_p]
+enum.restype=ctypes.c_int32
+assert enum(instance,ctypes.byref(count),None) == 0
+print('Physical device count:',count.value)
+v.vkDestroyInstance.argtypes=[ctypes.c_void_p,ctypes.c_void_p]
+v.vkDestroyInstance(instance,None)
 """
     env = os.environ.copy()
     env["VK_DRIVER_FILES"] = str(manifest)
