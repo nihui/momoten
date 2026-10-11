@@ -122,6 +122,17 @@ jobs:
           # which the r17c libc++ does not yet provide.
           git -C third_party/spirv-tools apply --check ../../cmake/patches/spirv-tools-ndk-r17c.patch
           git -C third_party/spirv-tools apply ../../cmake/patches/spirv-tools-ndk-r17c.patch
+          # r17c libc++ also lacks the C++17 std::optional deduction guide.
+          # All 13 occurrences in this pinned file construct spv::Capability.
+          python3 - <<'PY'
+          from pathlib import Path
+          path = Path("third_party/spirv-tools/source/opt/trim_capabilities_pass.cpp")
+          source = path.read_text()
+          old = "std::optional(spv::Capability::"
+          if source.count(old) != 13:
+              raise SystemExit("Unexpected SPIRV-Tools optional construction count")
+          path.write_text(source.replace(old, "std::optional<spv::Capability>(spv::Capability::"))
+          PY
 
       - name: Configure
         shell: bash
