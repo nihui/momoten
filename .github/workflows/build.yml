@@ -76,7 +76,7 @@ jobs:
 
           versions = Path("version-info.txt").read_text()
           glibc = sorted({(int(major), int(minor)) for major, minor
-                          in re.findall(r"\bGLIBC_(\d+)\\.(\d+)\b", versions)})
+                          in re.findall(r"\bGLIBC_(\d+)\.(\d+)\b", versions)})
           if not glibc:
               raise SystemExit("No GLIBC version requirements found")
           maximum = glibc[-1]
@@ -85,7 +85,7 @@ jobs:
               raise SystemExit("glibc requirement exceeds manylinux2014 (2.17)")
           for family in ("GLIBCXX", "CXXABI"):
               required = sorted({tuple(map(int, version.split(".")))
-                                 for version in re.findall(r"\b" + family + r"_(\d+(?:\\.\d+)+)\b", versions)})
+                                 for version in re.findall(r"\b" + family + r"_(\d+(?:\.\d+)+)\b", versions)})
               print(family + " requirements:", required[-1] if required else "none")
           PY
           if readelf -SW stage/lib/libmomoten.so | grep -E '\.debug_'; then
