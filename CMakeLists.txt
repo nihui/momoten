@@ -34,7 +34,7 @@ else()
         ${MOMOTEN_IS_TOP_LEVEL})
 endif()
 
-option(MOMOTEN_INSTALL "Install momoten implementation, headers and package files"
+option(MOMOTEN_INSTALL "Install momoten runtime and optional command-line tools"
     ${MOMOTEN_IS_TOP_LEVEL})
 
 if(DEFINED NCNN_MOMOTEN_TEST_OPENCL_LIBRARY AND
@@ -60,9 +60,7 @@ add_library(momoten_headers INTERFACE)
 add_library(momoten::headers ALIAS momoten_headers)
 target_include_directories(momoten_headers INTERFACE
     "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>"
-    "$<BUILD_INTERFACE:${CMAKE_CURRENT_BINARY_DIR}/include>"
-    "$<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>")
-set_target_properties(momoten_headers PROPERTIES EXPORT_NAME headers)
+    "$<BUILD_INTERFACE:${CMAKE_CURRENT_BINARY_DIR}/include>")
 
 set(momoten_source_manifest
     "${CMAKE_CURRENT_SOURCE_DIR}/src/source_manifest.txt")
@@ -113,8 +111,7 @@ if(MOMOTEN_BUILD_DRIVER OR MOMOTEN_BUILD_TRANSLATOR OR MOMOTEN_BUILD_TOOLS OR MO
         PUBLIC momoten_headers
         PRIVATE spirv-cross-core spirv-cross-glsl SPIRV-Tools-opt)
     set_target_properties(momoten_translator PROPERTIES
-        POSITION_INDEPENDENT_CODE ON
-        EXPORT_NAME translator)
+        POSITION_INDEPENDENT_CODE ON)
 endif()
 
 foreach(momoten_pic_target spirv-cross-core spirv-cross-glsl SPIRV-Tools-opt SPIRV-Tools-static)
@@ -135,11 +132,13 @@ if(MOMOTEN_BUILD_DRIVER)
         ${CMAKE_DL_LIBS})
     set_target_properties(momoten_driver PROPERTIES
         OUTPUT_NAME momoten
-        VERSION ${MOMOTEN_VERSION}
-        SOVERSION 0
-        EXPORT_NAME driver
         CXX_VISIBILITY_PRESET hidden
         VISIBILITY_INLINES_HIDDEN ON)
+
+    # windows.h defines min/max macros unless NOMINMAX is set.
+    if(WIN32)
+        target_compile_definitions(momoten_driver PRIVATE NOMINMAX)
+    endif()
 
     if(UNIX AND NOT APPLE)
         target_link_options(momoten_driver PRIVATE
@@ -199,6 +198,9 @@ if(MOMOTEN_BUILD_AMALGAMATION)
             OUTPUT_NAME momoten-amalgamated
             CXX_VISIBILITY_PRESET hidden
             VISIBILITY_INLINES_HIDDEN ON)
+        if(WIN32)
+            target_compile_definitions(momoten_amalgamated_driver PRIVATE NOMINMAX)
+        endif()
         if(UNIX AND NOT APPLE)
             target_link_options(momoten_amalgamated_driver PRIVATE
                 "LINKER:--version-script=${CMAKE_CURRENT_SOURCE_DIR}/src/momoten.exports.map")
@@ -233,42 +235,18 @@ if(MOMOTEN_BUILD_TESTS)
 endif()
 
 if(MOMOTEN_INSTALL)
-    include(CMakePackageConfigHelpers)
-
-    set(momoten_install_targets momoten_headers)
+    # Applications load the Vulkan entry points dynamically. Do not export
+    # headers or a CMake SDK; superbuilds still use the in-tree CMake targets.
     if(TARGET momoten_driver)
-        list(APPEND momoten_install_targets momoten_driver)
+        install(TARGETS momoten_driver
+            RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}"
+            LIBRARY DESTINATION "${CMAKE_INSTALL_LIBDIR}"
+            # Exclude the Windows import library from normal installations.
+            ARCHIVE DESTINATION "${CMAKE_INSTALL_LIBDIR}"
+                COMPONENT Development EXCLUDE_FROM_ALL)
     endif()
-    install(TARGETS ${momoten_install_targets}
-        EXPORT momotenTargets
-        RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}"
-        LIBRARY DESTINATION "${CMAKE_INSTALL_LIBDIR}"
-        ARCHIVE DESTINATION "${CMAKE_INSTALL_LIBDIR}")
     if(TARGET momoten_spv_to_clc)
-        install(TARGETS momoten_spv_to_clc RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}")
+        install(TARGETS momoten_spv_to_clc
+            RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}")
     endif()
-
-    install(FILES
-        "${CMAKE_CURRENT_BINARY_DIR}/include/momoten/version.h"
-        DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}/momoten")
-    if(MOMOTEN_BUILD_AMALGAMATION)
-        install(FILES "${momoten_amalgamated_source}"
-            DESTINATION "${CMAKE_INSTALL_DATADIR}/momoten")
-    endif()
-    configure_package_config_file(
-        "${CMAKE_CURRENT_SOURCE_DIR}/momotenConfig.cmake.in"
-        "${CMAKE_CURRENT_BINARY_DIR}/momotenConfig.cmake"
-        INSTALL_DESTINATION "${CMAKE_INSTALL_LIBDIR}/cmake/momoten")
-    write_basic_package_version_file(
-        "${CMAKE_CURRENT_BINARY_DIR}/momotenConfigVersion.cmake"
-        VERSION ${MOMOTEN_VERSION}
-        COMPATIBILITY SameMajorVersion)
-    install(EXPORT momotenTargets
-        FILE momotenTargets.cmake
-        NAMESPACE momoten::
-        DESTINATION "${CMAKE_INSTALL_LIBDIR}/cmake/momoten")
-    install(FILES
-        "${CMAKE_CURRENT_BINARY_DIR}/momotenConfig.cmake"
-        "${CMAKE_CURRENT_BINARY_DIR}/momotenConfigVersion.cmake"
-        DESTINATION "${CMAKE_INSTALL_LIBDIR}/cmake/momoten")
 endif()

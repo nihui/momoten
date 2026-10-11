@@ -1,0 +1,324 @@
+# Copyright 2026 nihui
+# SPDX-License-Identifier: Apache-2.0
+
+name: build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# Cancel obsolete CI runs for earlier commits on the same branch / PR.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  linux:
+    name: linux-${{ matrix.name }}-manylinux2014
+    runs-on: ubuntu-22.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Reuse the exact manylinux2014 image digests from the last passing
+          # cibuildwheel run; glibc stays at 2.17 when newer images are published.
+          - name: x86_64
+            image: quay.io/pypa/manylinux2014_x86_64@sha256:f6a6f153c9cf45470507ebbc27013e5db14ce21331b62fd2c540561f25e5f0a5
+            platform: linux/amd64
+            elf_class: 64
+          - name: x86
+            image: quay.io/pypa/manylinux2014_i686@sha256:30305867f278896ee117b0d162a8e4f9b7b16819e6590f6139e14c5ed5b23fdd
+            platform: linux/386
+            elf_class: 32
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: recursive
+
+      # momoten distributes a C++ shared library, not a Python wheel.
+      - name: Build directly in manylinux2014
+        shell: bash
+        run: |
+          docker run --rm \
+            --platform "${{ matrix.platform }}" \
+            --user "$(id -u):$(id -g)" \
+            -e HOME=/tmp \
+            -v "$GITHUB_WORKSPACE:/project" \
+            -w /project \
+            "${{ matrix.image }}" \
+            bash -ec '
+              cmake -S . -B build \
+                -DCMAKE_BUILD_TYPE=Release \
+                -DCMAKE_INSTALL_LIBDIR=lib \
+                "-DCMAKE_SHARED_LINKER_FLAGS=-static-libstdc++ -static-libgcc" \
+                -DMOMOTEN_BUILD_DRIVER=ON \
+                -DMOMOTEN_BUILD_TRANSLATOR=ON \
+                -DMOMOTEN_BUILD_TOOLS=OFF \
+                -DMOMOTEN_BUILD_TESTS=OFF \
+                -DMOMOTEN_INSTALL=ON
+              cmake --build build --target momoten_driver --parallel 4
+              cmake --install build --strip --prefix /project/stage
+            '
+
+      - name: Verify Linux ABI and exported symbols
+        shell: bash
+        run: |
+          test -f stage/lib/libmomoten.so
+          test ! -L stage/lib/libmomoten.so
+          test "$(find stage/lib -maxdepth 1 -name 'libmomoten.so*' | wc -l)" -eq 1
+          test "$(find stage -type f | wc -l)" -eq 1
+          readelf -h stage/lib/libmomoten.so | grep -q "Class:.*ELF${{ matrix.elf_class }}"
+          nm -D --defined-only stage/lib/libmomoten.so | grep -E ' vkGetInstanceProcAddr$'
+          readelf -d stage/lib/libmomoten.so > dynamic.txt
+          if grep -Ei 'NEEDED.*(libOpenCL|libstdc\+\+|libgcc_s)' dynamic.txt; then
+            echo 'Unexpected dynamic loader/C++ runtime dependency' >&2
+            exit 1
+          fi
+          readelf --version-info stage/lib/libmomoten.so > version-info.txt
+          python3 - <<'PY'
+          import re
+          from pathlib import Path
+
+          versions = Path("version-info.txt").read_text()
+          glibc = sorted({(int(major), int(minor)) for major, minor
+                          in re.findall(r"\bGLIBC_(\d+)\.(\d+)\b", versions)})
+          if not glibc:
+              raise SystemExit("No GLIBC version requirements found")
+          maximum = glibc[-1]
+          print("Maximum required glibc:", ".".join(map(str, maximum)))
+          if maximum > (2, 17):
+              raise SystemExit("glibc requirement exceeds manylinux2014 (2.17)")
+          for family in ("GLIBCXX", "CXXABI"):
+              required = sorted({tuple(map(int, version.split(".")))
+                                 for version in re.findall(r"\b" + family + r"_(\d+(?:\.\d+)+)\b", versions)})
+              print(family + " requirements:", required[-1] if required else "none")
+          PY
+          if readelf -SW stage/lib/libmomoten.so | grep -E '\.debug_'; then
+            echo 'Unexpected debug sections in Linux release library' >&2
+            exit 1
+          fi
+          stat -Lc 'libmomoten.so size: %s bytes' stage/lib/libmomoten.so
+
+      - name: Bundle license notices
+        shell: bash
+        run: cp LICENSE.txt THIRD_PARTY_NOTICES.md stage/
+
+      - name: Package Linux runtime
+        shell: bash
+        run: |
+          tar -czf "momoten-linux-${{ matrix.name }}.tar.gz" \
+            -C stage/lib libmomoten.so \
+            -C "$GITHUB_WORKSPACE/stage" LICENSE.txt THIRD_PARTY_NOTICES.md
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: momoten-linux-${{ matrix.name }}
+          path: momoten-linux-${{ matrix.name }}.tar.gz
+          if-no-files-found: error
+
+  windows:
+    name: windows-${{ matrix.name }}
+    runs-on: windows-2022
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {name: x86_64, platform: x64, dumpbin_arch: x64}
+          - {name: x86, platform: Win32, dumpbin_arch: x86}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: recursive
+
+      - name: Configure
+        shell: bash
+        run: |
+          cmake -S . -B build -G "Visual Studio 17 2022" -A "${{ matrix.platform }}" \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DMOMOTEN_BUILD_DRIVER=ON \
+            -DMOMOTEN_BUILD_TRANSLATOR=ON \
+            -DMOMOTEN_BUILD_TOOLS=OFF \
+            -DMOMOTEN_BUILD_TESTS=OFF \
+            -DMOMOTEN_INSTALL=ON
+
+      - name: Build
+        run: cmake --build build --config Release --target momoten_driver --parallel 4
+
+      - name: Install
+        run: cmake --install build --config Release --prefix stage
+
+      - name: Verify Windows DLL exports
+        shell: pwsh
+        run: |
+          if (!(Test-Path stage/bin/momoten.dll)) { throw 'Missing DLL' }
+          if (Test-Path stage/lib/momoten.lib) { throw 'Import library must not be installed' }
+          if (Test-Path stage/include) { throw 'Headers must not be installed' }
+          if (Test-Path stage/lib/cmake) { throw 'CMake package must not be installed' }
+          $vswhere = "${env:ProgramFiles(x86)}\\Microsoft Visual Studio\\Installer\\vswhere.exe"
+          $dumpbin = & $vswhere -latest -products '*' -find 'VC\\Tools\\MSVC\\**\bin\\Hostx64\\${{ matrix.dumpbin_arch }}\dumpbin.exe' | Select-Object -Last 1
+          if (!$dumpbin) { throw 'MSVC dumpbin.exe was not found' }
+          $exports = & $dumpbin /exports stage/bin/momoten.dll
+          if ($LASTEXITCODE -ne 0 -or !($exports -match 'vkGetInstanceProcAddr')) {
+            throw 'Missing Vulkan proc export'
+          }
+
+      - name: Bundle license notices
+        shell: bash
+        run: cp LICENSE.txt THIRD_PARTY_NOTICES.md stage/
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: momoten-windows-${{ matrix.name }}
+          path: stage/
+          if-no-files-found: error
+
+  android:
+    name: android-${{ matrix.abi }}-api${{ matrix.api }}
+    runs-on: ubuntu-22.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Android 4.0 (API 14): 32-bit ARM and x86 using NDK r17c.
+          - {abi: armeabi-v7a, api: 14, legacy: true}
+          - {abi: x86, api: 14, legacy: true}
+          - {abi: arm64-v8a, api: 21, legacy: false}
+          - {abi: x86_64, api: 21, legacy: false}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: recursive
+
+      - name: Install legacy Android NDK r17c
+        if: matrix.legacy
+        shell: bash
+        run: |
+          # The bundled NDK r17c Clang requires libtinfo.so.5 on the host.
+          sudo apt-get update
+          sudo apt-get install -y libtinfo5
+          curl --fail --location --retry 3 --output ndk-r17c.zip \
+            https://dl.google.com/android/repository/android-ndk-r17c-linux-x86_64.zip
+          unzip -q ndk-r17c.zip
+          echo "MOMOTEN_NDK=$PWD/android-ndk-r17c" >> "$GITHUB_ENV"
+
+      - name: Select modern Android NDK
+        if: ${{ !matrix.legacy }}
+        shell: bash
+        run: |
+          test -f "$ANDROID_NDK_HOME/build/cmake/android.toolchain.cmake"
+          echo "MOMOTEN_NDK=$ANDROID_NDK_HOME" >> "$GITHUB_ENV"
+
+      - name: Backport SPIRV-Tools charconv for NDK r17c
+        if: matrix.legacy
+        shell: bash
+        run: |
+          # The pinned optimizer.cpp uses std::from_chars (C++17),
+          # which the r17c libc++ does not yet provide.
+          git -C third_party/spirv-tools apply --check ../../cmake/patches/spirv-tools-ndk-r17c.patch
+          git -C third_party/spirv-tools apply ../../cmake/patches/spirv-tools-ndk-r17c.patch
+          # r17c libc++ also lacks the C++17 std::optional deduction guide.
+          # All 13 occurrences in this pinned file construct spv::Capability.
+          python3 - <<'PY'
+          from pathlib import Path
+          path = Path("third_party/spirv-tools/source/opt/trim_capabilities_pass.cpp")
+          source = path.read_text()
+          old = "std::optional(spv::Capability::"
+          if source.count(old) != 13:
+              raise SystemExit("Unexpected SPIRV-Tools optional construction count")
+          path.write_text(source.replace(old, "std::optional<spv::Capability>(spv::Capability::"))
+          PY
+
+      - name: Remove NDK debug flags
+        shell: bash
+        run: |
+          # NDK toolchains inject -g even for Release builds.
+          # Match the approach used by ncnn's Android release workflow.
+          for toolchain in \
+            "$MOMOTEN_NDK/build/cmake/android.toolchain.cmake" \
+            "$MOMOTEN_NDK/build/cmake/android-legacy.toolchain.cmake"; do
+            if [ -f "$toolchain" ]; then
+              sed -i -e '/^[[:space:]]*-g[[:space:]]*$/d' "$toolchain"
+            fi
+          done
+
+      - name: Configure
+        shell: bash
+        run: |
+          cmake -S . -B build -G Ninja \
+            -DCMAKE_TOOLCHAIN_FILE="$MOMOTEN_NDK/build/cmake/android.toolchain.cmake" \
+            -DANDROID_ABI="${{ matrix.abi }}" \
+            -DANDROID_PLATFORM="android-${{ matrix.api }}" \
+            -DANDROID_STL=c++_static \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
+            -DMOMOTEN_BUILD_DRIVER=ON \
+            -DMOMOTEN_BUILD_TRANSLATOR=ON \
+            -DMOMOTEN_BUILD_TOOLS=OFF \
+            -DMOMOTEN_BUILD_TESTS=OFF \
+            -DMOMOTEN_INSTALL=ON
+
+      - name: Verify Android compile flags
+        shell: bash
+        run: |
+          # Fail if an NDK update moves -g to another toolchain location.
+          python3 - <<'PY'
+          import json
+          import shlex
+          from pathlib import Path
+
+          commands = json.loads(Path("build/compile_commands.json").read_text())
+          flagged = [item["file"] for item in commands
+                     if "-g" in shlex.split(item["command"])]
+          if flagged:
+              raise SystemExit("Unexpected -g in Android compiler flags: " +
+                               ", ".join(flagged[:5]))
+          print(f"Verified {len(commands)} compile commands without -g")
+          PY
+
+      - name: Build
+        run: cmake --build build --target momoten_driver --parallel 4
+
+      - name: Install stripped release library
+        run: cmake --install build --strip --prefix stage
+
+      - name: Verify unversioned Android library
+        shell: bash
+        run: |
+          test -f stage/lib/libmomoten.so
+          test "$(find stage -type f | wc -l)" -eq 1
+          case "${{ matrix.abi }}" in
+            armeabi-v7a|x86) readelf -h stage/lib/libmomoten.so | grep -q 'Class:.*ELF32' ;;
+            arm64-v8a|x86_64) readelf -h stage/lib/libmomoten.so | grep -q 'Class:.*ELF64' ;;
+          esac
+          test ! -L stage/lib/libmomoten.so
+          test "$(find stage/lib -maxdepth 1 -name 'libmomoten.so*' | wc -l)" -eq 1
+          readelf -d stage/lib/libmomoten.so > dynamic.txt
+          if grep -q 'SONAME.*libmomoten.so\.' dynamic.txt; then
+            echo 'Unexpected versioned SONAME' >&2
+            exit 1
+          fi
+          if grep -Ei 'NEEDED.*(OpenCL|vulkan|c\+\+_shared)' dynamic.txt; then
+            echo 'Unexpected runtime dependency' >&2
+            exit 1
+          fi
+          readelf -Ws stage/lib/libmomoten.so | grep -E ' vkGetInstanceProcAddr$'
+          if readelf -SW stage/lib/libmomoten.so | grep -E '\.debug_'; then
+            echo 'Unexpected debug sections in Android release library' >&2
+            exit 1
+          fi
+          stat -c 'libmomoten.so size: %s bytes' stage/lib/libmomoten.so
+
+      - name: Bundle license notices
+        shell: bash
+        run: cp LICENSE.txt THIRD_PARTY_NOTICES.md stage/
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: momoten-android-${{ matrix.abi }}-api${{ matrix.api }}
+          path: stage/
+          if-no-files-found: error
