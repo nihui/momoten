@@ -303,8 +303,7 @@ jobs:
         run: |
           test -f stage/lib/libmomoten.so
           test "$(find stage -type f | wc -l)" -eq 1
-          readelf -Ws stage/lib/libmomoten.so | grep -E ' HMI
-          case "${{ matrix.abi }}" in
+          readelf -Ws stage/lib/libmomoten.so | grep -E ' HMI          case "${{ matrix.abi }}" in
             armeabi-v7a|x86) readelf -h stage/lib/libmomoten.so | grep -q 'Class:.*ELF32' ;;
             arm64-v8a|x86_64) readelf -h stage/lib/libmomoten.so | grep -q 'Class:.*ELF64' ;;
           esac
