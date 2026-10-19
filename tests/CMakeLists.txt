@@ -247,10 +247,20 @@ if(DEFINED NCNN_MOMOTEN_CLANG AND NOT DEFINED MOMOTEN_CLANG)
         "Path to clang used by momoten syntax tests")
 endif()
 find_program(MOMOTEN_CLANG clang)
-if(MOMOTEN_CLANG AND TARGET momoten_spv_to_clc)
+if(MOMOTEN_CLANG)
+    # Keep syntax regressions active in runtime-only CI without installing a CLI.
+    if(TARGET momoten_spv_to_clc)
+        set(momoten_syntax_translator momoten_spv_to_clc)
+    else()
+        add_executable(momoten_test_spv_to_clc
+            "${CMAKE_CURRENT_SOURCE_DIR}/../tools/momoten_spv_to_clc.cpp")
+        target_compile_features(momoten_test_spv_to_clc PRIVATE cxx_std_11)
+        target_link_libraries(momoten_test_spv_to_clc PRIVATE momoten::translator)
+        set(momoten_syntax_translator momoten_test_spv_to_clc)
+    endif()
     add_test(NAME momoten_opencl_c_1_0_syntax
         COMMAND "${CMAKE_COMMAND}"
-            -DTRANSLATOR=$<TARGET_FILE:momoten_spv_to_clc>
+            -DTRANSLATOR=$<TARGET_FILE:${momoten_syntax_translator}>
             -DCLANG=${MOMOTEN_CLANG}
             -DSPV_FILE=${momoten_test_spv}
             -DATOMIC_SPV_FILE=${momoten_atomic_test_spv}
@@ -264,7 +274,7 @@ if(MOMOTEN_CLANG AND TARGET momoten_spv_to_clc)
 
     add_test(NAME momoten_opencl_apple_type_aliases
         COMMAND "${CMAKE_COMMAND}"
-            -DTRANSLATOR=$<TARGET_FILE:momoten_spv_to_clc>
+            -DTRANSLATOR=$<TARGET_FILE:${momoten_syntax_translator}>
             -DCLANG=${MOMOTEN_CLANG}
             -DSPV_FILE=${momoten_test_spv}
             -DATOMIC_SPV_FILE=${momoten_atomic_test_spv}
