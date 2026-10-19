@@ -177,7 +177,7 @@ jobs:
             -DCMAKE_OSX_DEPLOYMENT_TARGET="$MACOSX_DEPLOYMENT_TARGET" \
             "-DCMAKE_C_FLAGS=-Werror=unguarded-availability -Werror=unguarded-availability-new" \
             "-DCMAKE_CXX_FLAGS=-Werror=unguarded-availability -Werror=unguarded-availability-new" \
-            -DCMAKE_SHARED_LINKER_FLAGS=-Wl,-fatal_warnings \
+            -DCMAKE_SHARED_LINKER_FLAGS=-Wl,-no_warn_duplicate_libraries,-fatal_warnings \
             -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
             -DCMAKE_INSTALL_LIBDIR=lib \
             -DCMAKE_INSTALL_NAME_DIR=@rpath \
