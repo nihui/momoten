@@ -261,6 +261,21 @@ if(MOMOTEN_CLANG AND TARGET momoten_spv_to_clc)
             -P "${CMAKE_CURRENT_SOURCE_DIR}/translator/strict_cl10_test.cmake")
     set_tests_properties(momoten_opencl_c_1_0_syntax PROPERTIES
         LABELS "momoten;translator;opencl-1.0")
+
+    add_test(NAME momoten_opencl_apple_type_aliases
+        COMMAND "${CMAKE_COMMAND}"
+            -DTRANSLATOR=$<TARGET_FILE:momoten_spv_to_clc>
+            -DCLANG=${MOMOTEN_CLANG}
+            -DSPV_FILE=${momoten_test_spv}
+            -DATOMIC_SPV_FILE=${momoten_atomic_test_spv}
+            -DFP16_SPV_FILE=${momoten_fp16_test_spv}
+            -DFP64_SPV_FILE=${momoten_fp64_test_spv}
+            -DFP16_CONSTANT_SPV_FILE=${momoten_fp16_program_constant_test_spv}
+            -DAPPLE_TYPE_ALIASES=ON
+            -DOUTPUT_DIR=${CMAKE_CURRENT_BINARY_DIR}/apple-type-aliases
+            -P "${CMAKE_CURRENT_SOURCE_DIR}/translator/strict_cl10_test.cmake")
+    set_tests_properties(momoten_opencl_apple_type_aliases PROPERTIES
+        LABELS "momoten;translator;opencl-1.0;apple")
 endif()
 
 if(TARGET momoten_test_opencl)

@@ -7,12 +7,20 @@ namespace momoten {
 
 void CompilerOpenCL::emit_constructor_macros(const char* base)
 {
-    statement("#define ", base, "(...) ((", base, ")(__VA_ARGS__))");
-    statement("#define ", base, "2(...) ((", base, "2)(__VA_ARGS__))");
-    statement("#define ", base, "3(...) ((", base, "3)(__VA_ARGS__))");
-    statement("#define ", base, "4(...) ((", base, "4)(__VA_ARGS__))");
-    statement("#define ", base, "8(...) ((", base, "8)(__VA_ARGS__))");
-    statement("#define ", base, "16(...) ((", base, "16)(__VA_ARGS__))");
+    static const char* suffixes[] = {"", "2", "3", "4", "8", "16"};
+    for (const char* suffix : suffixes)
+    {
+        const std::string type = std::string(base) + suffix;
+        // Apple exposes vector types as macros, e.g. float4 -> __float4.
+        // Preserve their underlying types before replacing the macros with
+        // GLSL-style constructors, or ordinary type declarations stop working.
+        statement("#ifdef ", type);
+        statement("typedef ", type, " momo_native_", type, ";");
+        statement("#undef ", type);
+        statement("typedef momo_native_", type, " ", type, ";");
+        statement("#endif");
+        statement("#define ", type, "(...) ((", type, ")(__VA_ARGS__))");
+    }
 }
 
 void CompilerOpenCL::emit_fp64_vector_helpers()
