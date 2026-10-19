@@ -1,6 +1,8 @@
 // Copyright 2026 nihui
 // SPDX-License-Identifier: Apache-2.0
 
+#if defined(__ANDROID__)
+
 #include "hwvulkan_abi.h"
 
 #include <errno.h>
@@ -67,3 +69,5 @@ int open_device(const MomotenHwModule* module, const char* id,
 }
 
 } // namespace
+
+#endif // __ANDROID__

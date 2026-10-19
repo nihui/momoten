@@ -34,6 +34,12 @@ file(READ "${SOURCE_ROOT}/src/source_manifest.txt" manifest)
 if(NOT manifest MATCHES "driver[ \t]+src/vulkan_procs.inc")
     message(FATAL_ERROR "vulkan_procs.inc is absent from source_manifest.txt")
 endif()
+foreach(android_part hwvulkan_abi.h hwvulkan_hal.cpp)
+    if(NOT manifest MATCHES "driver[ \t]+src/android/${android_part}")
+        message(FATAL_ERROR
+            "android/${android_part} is absent from source_manifest.txt")
+    endif()
+endforeach()
 foreach(backend_part memory_sync replay runtime pipeline_build)
     if(NOT manifest MATCHES
        "driver[ \t]+src/backend/${backend_part}\\.cpp")

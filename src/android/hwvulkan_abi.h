@@ -4,6 +4,8 @@
 #ifndef MOMOTEN_ANDROID_HWVULKAN_ABI_H
 #define MOMOTEN_ANDROID_HWVULKAN_ABI_H
 
+#if defined(__ANDROID__)
+
 // Private Android Vulkan HAL ABI, not part of the public NDK.
 //
 // Mirrors the binary layouts of AOSP hardware/hardware.h and
@@ -85,5 +87,7 @@ static_assert(sizeof(MomotenHwDevice) == (sizeof(void*) == 8 ? 120 : 64),
 static_assert(offsetof(MomotenHwVulkanDevice, EnumerateInstanceExtensionProperties)
                   == sizeof(MomotenHwDevice),
               "Unexpected Android hwvulkan_device_t ABI layout");
+
+#endif // __ANDROID__
 
 #endif // MOMOTEN_ANDROID_HWVULKAN_ABI_H

@@ -39,7 +39,7 @@ def main():
         assert getattr(driver, name, None) is not None, name
 
     # Use the *system* loader, not a direct call to the ICD. A machine with
-    # no eligible OpenCL device can legitimately reject instance creation.
+    # no eligible OpenCL device must provide one before running this smoke test.
     script = """
 import ctypes
 import faulthandler
@@ -100,6 +100,69 @@ create_device.restype=ctypes.c_int32
 ret=create_device(physical[0],ctypes.byref(device_info),None,ctypes.byref(device))
 print('Vulkan Loader vkCreateDevice returned',ret,flush=True)
 assert ret == 0, 'Loader failed to create Vulkan device'
+# Exercise all five dispatchable handle types through the system loader.
+queue_handle=ctypes.c_void_p()
+v.vkGetDeviceQueue.argtypes=[ctypes.c_void_p,ctypes.c_uint32,ctypes.c_uint32,
+                            ctypes.POINTER(ctypes.c_void_p)]
+v.vkGetDeviceQueue.restype=None
+v.vkGetDeviceQueue(device,0,0,ctypes.byref(queue_handle))
+assert queue_handle.value, 'Loader failed to return a Vulkan queue'
+class PoolCreate(ctypes.Structure):
+    _fields_=[('sType',ctypes.c_int),('pNext',ctypes.c_void_p),
+              ('flags',ctypes.c_uint32),('queueFamilyIndex',ctypes.c_uint32)]
+class CommandAllocate(ctypes.Structure):
+    _fields_=[('sType',ctypes.c_int),('pNext',ctypes.c_void_p),
+              ('commandPool',ctypes.c_uint64),('level',ctypes.c_int),
+              ('commandBufferCount',ctypes.c_uint32)]
+class CommandBegin(ctypes.Structure):
+    _fields_=[('sType',ctypes.c_int),('pNext',ctypes.c_void_p),
+              ('flags',ctypes.c_uint32),('pInheritanceInfo',ctypes.c_void_p)]
+class Submit(ctypes.Structure):
+    _fields_=[('sType',ctypes.c_int),('pNext',ctypes.c_void_p),
+              ('waitSemaphoreCount',ctypes.c_uint32),('pWaitSemaphores',ctypes.c_void_p),
+              ('pWaitDstStageMask',ctypes.c_void_p),('commandBufferCount',ctypes.c_uint32),
+              ('pCommandBuffers',ctypes.POINTER(ctypes.c_void_p)),
+              ('signalSemaphoreCount',ctypes.c_uint32),('pSignalSemaphores',ctypes.c_void_p)]
+pool=ctypes.c_uint64()
+pool_info=PoolCreate(39,None,0,0)
+v.vkCreateCommandPool.argtypes=[ctypes.c_void_p,ctypes.POINTER(PoolCreate),
+                               ctypes.c_void_p,ctypes.POINTER(ctypes.c_uint64)]
+v.vkCreateCommandPool.restype=ctypes.c_int32
+assert v.vkCreateCommandPool(device,ctypes.byref(pool_info),None,ctypes.byref(pool)) == 0
+command=ctypes.c_void_p()
+allocate=CommandAllocate(40,None,pool.value,0,1)
+v.vkAllocateCommandBuffers.argtypes=[ctypes.c_void_p,ctypes.POINTER(CommandAllocate),
+                                    ctypes.POINTER(ctypes.c_void_p)]
+v.vkAllocateCommandBuffers.restype=ctypes.c_int32
+assert v.vkAllocateCommandBuffers(device,ctypes.byref(allocate),ctypes.byref(command)) == 0
+assert command.value, 'Loader failed to allocate a Vulkan command buffer'
+begin=CommandBegin(42,None,1,None)
+v.vkBeginCommandBuffer.argtypes=[ctypes.c_void_p,ctypes.POINTER(CommandBegin)]
+v.vkBeginCommandBuffer.restype=ctypes.c_int32
+assert v.vkBeginCommandBuffer(command,ctypes.byref(begin)) == 0
+v.vkCmdPipelineBarrier.argtypes=[ctypes.c_void_p,ctypes.c_uint32,ctypes.c_uint32,
+                                ctypes.c_uint32,ctypes.c_uint32,ctypes.c_void_p,
+                                ctypes.c_uint32,ctypes.c_void_p,ctypes.c_uint32,ctypes.c_void_p]
+v.vkCmdPipelineBarrier.restype=None
+v.vkCmdPipelineBarrier(command,0x800,0x800,0,0,None,0,None,0,None)
+v.vkEndCommandBuffer.argtypes=[ctypes.c_void_p]
+v.vkEndCommandBuffer.restype=ctypes.c_int32
+assert v.vkEndCommandBuffer(command) == 0
+submit=Submit(4,None,0,None,None,1,ctypes.pointer(command),0,None)
+v.vkQueueSubmit.argtypes=[ctypes.c_void_p,ctypes.c_uint32,ctypes.POINTER(Submit),ctypes.c_uint64]
+v.vkQueueSubmit.restype=ctypes.c_int32
+assert v.vkQueueSubmit(queue_handle,1,ctypes.byref(submit),0) == 0
+v.vkQueueWaitIdle.argtypes=[ctypes.c_void_p]
+v.vkQueueWaitIdle.restype=ctypes.c_int32
+assert v.vkQueueWaitIdle(queue_handle) == 0
+print('submitted command buffer and waited for Vulkan queue',flush=True)
+v.vkFreeCommandBuffers.argtypes=[ctypes.c_void_p,ctypes.c_uint64,ctypes.c_uint32,
+                                ctypes.POINTER(ctypes.c_void_p)]
+v.vkFreeCommandBuffers.restype=None
+v.vkFreeCommandBuffers(device,pool,1,ctypes.byref(command))
+v.vkDestroyCommandPool.argtypes=[ctypes.c_void_p,ctypes.c_uint64,ctypes.c_void_p]
+v.vkDestroyCommandPool.restype=None
+v.vkDestroyCommandPool(device,pool,None)
 v.vkDestroyDevice.argtypes=[ctypes.c_void_p,ctypes.c_void_p]
 v.vkDestroyDevice(device,None)
 print('destroyed Vulkan device',flush=True)

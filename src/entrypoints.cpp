@@ -15,6 +15,7 @@ enum ProcScope
     PROC_SCOPE_NONE = -1,
     PROC_SCOPE_GLOBAL,
     PROC_SCOPE_INSTANCE,
+    PROC_SCOPE_PHYSICAL_DEVICE,
     PROC_SCOPE_DEVICE
 };
 
@@ -148,12 +149,12 @@ vk_icdGetPhysicalDeviceProcAddr(VkInstance instance, const char* name) noexcept
 {
     if (!instance || !name)
         return 0;
-    // Physical-device entry points are instance-scope entries. Never
-    // return logical-device commands from this loader-specific hook.
+    // Only commands dispatched on VkPhysicalDevice belong to this hook.
+    // VkInstance commands remain available through vkGetInstanceProcAddr.
     const momoten_detail::VulkanProc* proc =
         momoten_detail::find_vulkan_proc(name,
-                                         momoten_detail::PROC_SCOPE_INSTANCE,
-                                         momoten_detail::PROC_SCOPE_INSTANCE);
+                                         momoten_detail::PROC_SCOPE_PHYSICAL_DEVICE,
+                                         momoten_detail::PROC_SCOPE_PHYSICAL_DEVICE);
     if (!proc)
         return 0;
     return momoten_detail::impl_get_instance_proc_addr(instance, name);

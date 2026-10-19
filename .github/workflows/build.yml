@@ -106,7 +106,7 @@ jobs:
           fi
           stat -Lc 'libmomoten.so size: %s bytes' stage/lib/libmomoten.so
 
-      - name: Smoke test system Vulkan Loader
+      - name: Smoke test system Vulkan Loader and proc registry
         if: matrix.name == 'x86_64'
         shell: bash
         run: |
@@ -115,6 +115,11 @@ jobs:
           ldconfig -p | grep -Ei '(pocl|OpenCL)' || true
           MOMOTEN_DEBUG=1 MOMOTEN_OPENCL_DRIVER=libOpenCL.so.1 python3 tests/runtime/vulkan_loader_smoke.py \
             stage/lib/libmomoten.so stage/lib/momoten_icd.json
+          g++ -std=c++11 tests/api/proc_registry_test.cpp \
+            -I third_party/vulkan-headers/include -L stage/lib \
+            -Wl,-rpath,"$PWD/stage/lib" -lmomoten -ldl -o build/proc_registry_test
+          MOMOTEN_OPENCL_DRIVER=libOpenCL.so.1 build/proc_registry_test \
+            "$PWD/stage/lib/libmomoten.so"
 
       - name: Bundle license notices
         shell: bash
@@ -271,6 +276,7 @@ jobs:
             -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
             -DMOMOTEN_BUILD_DRIVER=ON \
             -DMOMOTEN_BUILD_TRANSLATOR=ON \
+            -DMOMOTEN_BUILD_AMALGAMATION=ON \
             -DMOMOTEN_BUILD_TOOLS=OFF \
             -DMOMOTEN_BUILD_TESTS=OFF \
             -DMOMOTEN_INSTALL=ON
@@ -294,7 +300,7 @@ jobs:
           PY
 
       - name: Build
-        run: cmake --build build --target momoten_driver --parallel 4
+        run: cmake --build build --target momoten_driver momoten_amalgamated_driver --parallel 4
 
       - name: Install stripped release library
         run: cmake --install build --strip --prefix stage
@@ -305,6 +311,7 @@ jobs:
           test -f stage/lib/libmomoten.so
           test "$(find stage -type f | wc -l)" -eq 1
           readelf -Ws stage/lib/libmomoten.so | grep -E ' HMI$'
+          readelf -Ws build/libmomoten-amalgamated.so | grep -E ' HMI$'
           case "${{ matrix.abi }}" in
             armeabi-v7a|x86) readelf -h stage/lib/libmomoten.so | grep -q 'Class:.*ELF32' ;;
             arm64-v8a|x86_64) readelf -h stage/lib/libmomoten.so | grep -q 'Class:.*ELF64' ;;

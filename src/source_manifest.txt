@@ -53,3 +53,5 @@ driver src/command.cpp
 driver src/queue.cpp
 driver src/sync.cpp
 driver src/entrypoints.cpp
+driver src/android/hwvulkan_abi.h
+driver src/android/hwvulkan_hal.cpp

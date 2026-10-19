@@ -128,11 +128,6 @@ if(MOMOTEN_BUILD_DRIVER)
     add_library(momoten::driver ALIAS momoten_driver)
     target_compile_features(momoten_driver PRIVATE cxx_std_11)
     target_compile_definitions(momoten_driver PRIVATE CL_TARGET_OPENCL_VERSION=100)
-    if(ANDROID)
-        # One libmomoten.so supports both direct simplevk loading and the
-        # Android Vulkan HAL (after device-specific deployment/renaming).
-        target_sources(momoten_driver PRIVATE src/android/hwvulkan_hal.cpp)
-    endif()
     target_link_libraries(momoten_driver PRIVATE
         momoten_translator
         momoten_opencl_headers
