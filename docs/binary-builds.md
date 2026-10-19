@@ -8,7 +8,7 @@ submodules. The resulting packages are available as workflow artifacts. Version 
 | --- | --- | --- | --- |
 | Linux | x86_64 | — | Docker manylinux2014 (glibc 2.17) |
 | Linux | x86 (i686) | — | Docker manylinux2014 (glibc 2.17) |
-| macOS | x86_64 | — | Xcode 16.4, macos-15-intel (deployment target 11.0) |
+| macOS | x86_64 | — | Xcode 16.4, macos-15-intel (deployment target 10.13) |
 | macOS | arm64 | — | Xcode 16.4, macos-15 (deployment target 11.0) |
 | Windows | x86_64 | — | MSVC 2022 (x64) |
 | Windows | x86 | — | MSVC 2022 (Win32) |
@@ -41,12 +41,13 @@ cmake --build build-android-14 --target momoten_driver
 ```
 
 The build uses pinned SPIRV-Tools (C++17 required). NDK r17c's libc++ lacks
-`<charconv>`. For the legacy job only, the workflow applies the narrow
-`cmake/patches/spirv-tools-ndk-r17c.patch`, replacing the optimizer's two
+`<charconv>`. The legacy Android and Intel macOS jobs apply
+`cmake/patches/spirv-tools-charconv.patch`, replacing the optimizer's two
 `std::from_chars` calls with a decimal-only parser of identical accepted
-syntax and uint32 overflow behavior. The patch also gives three constexpr capability arrays explicit template
-parameters, avoiding C++17 array deduction guides missing from r17c's libc++.
-The upstream submodule and all other platform builds are unmodified. **Do not silently upgrade the minimum
+syntax and uint32 overflow behavior. Android r17c additionally applies
+`cmake/patches/spirv-tools-ndk-r17c.patch` to give three constexpr capability
+arrays explicit template parameters, avoiding missing C++17 array deduction
+guides. The upstream submodule revision and other platform builds are unchanged. **Do not silently upgrade the minimum
 Android API**. Desktop jobs check the Vulkan proc exports,
 while cross-compiled Android jobs inspect the ELF dynamic section.
 
@@ -121,7 +122,8 @@ changing that choice can be measured in a separate experiment.
 ## Experimental macOS builds
 
 Native Intel and Apple Silicon jobs run on `macos-15-intel` and `macos-15`,
-respectively, with Xcode 16.4 and an explicit macOS 11.0 deployment target.
+respectively, with Xcode 16.4. Intel builds target macOS 10.13 (High Sierra);
+Apple Silicon builds target macOS 11.0.
 They produce separate `momoten-macos-x86_64.tar.gz` and
 `momoten-macos-arm64.tar.gz` archives containing:
 
@@ -129,14 +131,41 @@ They produce separate `momoten-macos-x86_64.tar.gz` and
 - `momoten_icd.json`
 - `LICENSE.txt` and `THIRD_PARTY_NOTICES.md`
 
-The deployment target is a build compatibility baseline. CI runs on macOS 15;
-it does not establish runtime compatibility with macOS 11, older macOS/OS X
-versions, or old Mac GPUs. The dylib uses the system libc++ and libSystem.
-CI checks the native Mach-O architecture, minimum-OS load command,
-`@rpath/libmomoten.dylib` install name, Vulkan/ICD exports, and absence of
-build-machine, Homebrew, OpenCL, Vulkan, or MoltenVK link dependencies.
-It also extracts the archive into a different directory and loads it there.
+These are **build compatibility baselines**, not verified old-OS runtime
+support. CI executes on macOS 15, not 10.13 or 11, and cannot establish
+compatibility with old Mac GPUs or their OpenCL drivers. Apple lists 10.13 as
+the lower end of the deployment range for the pinned Xcode 16.4 in its
+[toolchain table](https://developer.apple.com/xcode/system-requirements).
+That is the conservative baseline used here, not proof that every earlier
+macOS version is technically impossible. Earlier targets require a separate
+legacy toolchain, SDK, dependency, and physical-runtime investigation.
+
+The dylib uses the system libc++ and libSystem; neither runtime is bundled.
+Apple's [C++ availability table](https://developer.apple.com/xcode/cpp/) puts
+integral `std::from_chars` at macOS 10.15. The Intel build therefore applies
+the same narrow decimal-parser patch used for Android r17c, without the
+Android-only deduction-guide changes. The optimizer flag regression covers
+zero, uint32 limits, overflow, signs, whitespace, and malformed separators.
+The pinned SPIRV-Tools still requires C++17; changing a deployment flag alone
+would not address its library API requirements.
+
+All compiled sources, including static SPIRV dependencies and both driver
+variants, receive the selected deployment target and hard availability errors.
+CI checks their compile commands, native Mach-O architecture, exact minimum-OS
+load command, `@rpath` install name, Vulkan/ICD exports, and exact link dependencies
+(`/usr/lib/libc++.1.dylib` and `/usr/lib/libSystem.B.dylib`). Build-machine or
+Homebrew libraries, OpenCL/Vulkan/MoltenVK links, embedded rpaths, and weak dylib
+loads are rejected. The full undefined-symbol inventory is printed for both
+drivers; an Intel guard rejects known newer libc++/libSystem API families.
+This guard is not an exhaustive old-OS symbol database or an old-OS execution
+test. CI also extracts the archive into a different directory and loads it.
 These archives are not Developer ID signed or notarized.
+
+To reproduce the Intel build with the pinned Xcode, initialize submodules,
+apply `cmake/patches/spirv-tools-charconv.patch` from `third_party/spirv-tools`,
+and configure with `CMAKE_OSX_ARCHITECTURES=x86_64` and
+`CMAKE_OSX_DEPLOYMENT_TARGET=10.13`, as shown in the workflow. Do not bypass
+availability diagnostics to force an older target.
 
 The backend dynamically opens Apple's
 `/System/Library/Frameworks/OpenCL.framework/OpenCL`; Apple OpenCL is

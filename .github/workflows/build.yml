@@ -147,11 +147,11 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - {arch: x86_64, runner: macos-15-intel}
-          - {arch: arm64, runner: macos-15}
+          - {arch: x86_64, runner: macos-15-intel, deployment_target: '10.13'}
+          - {arch: arm64, runner: macos-15, deployment_target: '11.0'}
     env:
       DEVELOPER_DIR: /Applications/Xcode_16.4.app/Contents/Developer
-      MACOSX_DEPLOYMENT_TARGET: '11.0'
+      MACOSX_DEPLOYMENT_TARGET: ${{ matrix.deployment_target }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -159,6 +159,12 @@ jobs:
 
       - name: Install test tools
         run: brew install glslang vulkan-loader
+
+      - name: Back-deploy SPIRV-Tools integer parsing on Intel
+        if: matrix.arch == 'x86_64'
+        run: |
+          git -C third_party/spirv-tools apply --check ../../cmake/patches/spirv-tools-charconv.patch
+          git -C third_party/spirv-tools apply ../../cmake/patches/spirv-tools-charconv.patch
 
       - name: Configure native macOS build
         run: |
@@ -169,7 +175,10 @@ jobs:
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_OSX_ARCHITECTURES="${{ matrix.arch }}" \
             -DCMAKE_OSX_DEPLOYMENT_TARGET="$MACOSX_DEPLOYMENT_TARGET" \
-            -DCMAKE_CXX_FLAGS=-Werror=unguarded-availability-new \
+            "-DCMAKE_C_FLAGS=-Werror=unguarded-availability -Werror=unguarded-availability-new" \
+            "-DCMAKE_CXX_FLAGS=-Werror=unguarded-availability -Werror=unguarded-availability-new" \
+            -DCMAKE_SHARED_LINKER_FLAGS=-Wl,-fatal_warnings \
+            -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
             -DCMAKE_INSTALL_LIBDIR=lib \
             -DCMAKE_INSTALL_NAME_DIR=@rpath \
             -DMOMOTEN_BUILD_DRIVER=ON \
@@ -180,6 +189,24 @@ jobs:
             -DMOMOTEN_GLSLANG_VALIDATOR="$(command -v glslangValidator)" \
             -DMOMOTEN_TEST_OPENCL_LIBRARY="$(xcrun --show-sdk-path)/System/Library/Frameworks/OpenCL.framework/OpenCL.tbd" \
             -DMOMOTEN_INSTALL=ON
+
+      - name: Check deployment flags cover every compiled dependency
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+          import shlex
+          commands = json.loads(Path("build/compile_commands.json").read_text())
+          assert commands
+          for entry in commands:
+              args = shlex.split(entry["command"])
+              assert "-mmacosx-version-min=" + os.environ["MACOSX_DEPLOYMENT_TARGET"] in args, entry
+              assert "-Werror=unguarded-availability" in args, entry
+              assert "-Werror=unguarded-availability-new" in args, entry
+              assert not any("DISABLE_AVAILABILITY" in arg for arg in args), entry
+          print("Checked deployment and availability flags on", len(commands), "compilation units")
+          PY
 
       - name: Build modular and amalgamated drivers and tests
         run: cmake --build build --parallel 3
@@ -291,14 +318,31 @@ jobs:
               identity = output("otool", "-D", str(library)).splitlines()[1].strip()
               assert identity == "@rpath/" + library.name, identity
               loads = output("otool", "-l", str(library))
-              minimum = re.findall(r"^\s+(?:minos|version) (\d+\.\d+(?:\.\d+)?)$", loads, re.M)
-              assert os.environ["MACOSX_DEPLOYMENT_TARGET"] in minimum, minimum
+              commands = re.split(r"^Load command \d+$", loads, flags=re.M)
+              minimum = []
+              for command in commands:
+                  if re.search(r"cmd LC_(?:VERSION_MIN_MACOSX|BUILD_VERSION)$", command, re.M):
+                      minimum += re.findall(r"^\s+(?:minos|version) (\d+\.\d+(?:\.\d+)?)$", command, re.M)
+              assert minimum == [os.environ["MACOSX_DEPLOYMENT_TARGET"]], minimum
+              assert "LC_RPATH" not in loads, "Unexpected runtime search path"
+              assert "LC_LOAD_WEAK_DYLIB" not in loads, "Unexpected weak dylib dependency"
               assert "__DWARF" not in loads, "Unexpected debug sections"
               dependencies = output("otool", "-L", str(library)).splitlines()[2:]
-              for dependency in dependencies:
-                  name = dependency.strip().split(" (", 1)[0]
-                  assert name.startswith(("/usr/lib/", "/System/Library/")), name
-                  assert not any(word in name.lower() for word in ("opencl", "vulkan", "moltenvk")), name
+              names = {dependency.strip().split(" (", 1)[0] for dependency in dependencies}
+              assert names == {"/usr/lib/libc++.1.dylib", "/usr/lib/libSystem.B.dylib"}, names
+              imports = output("nm", "-m", "-u", str(library))
+              assert imports, "Missing imported-symbol inventory"
+              print("Imported system symbols for", library, "\n" + imports)
+              assert "(dynamically looked up)" not in imports, "Unbound system symbol"
+              # A regression guard, not an exhaustive old-OS symbol database.
+              # Clang availability checking is mandatory for all source units.
+              if os.environ["EXPECTED_ARCH"] == "x86_64":
+                  assert "LC_DYLD_CHAINED_FIXUPS" not in loads, "Modern dyld fixups"
+                  assert "LC_DYLD_EXPORTS_TRIE" not in loads, "Modern dyld exports"
+                  for newer_api in ("from_chars", "to_chars", "__fs", "filesystem",
+                                    "_aligned_alloc", "_timespec_get", "____chkstk_darwin",
+                                    "_os_unfair_lock_lock_with_options"):
+                      assert newer_api not in imports, ("Newer runtime API", newer_api)
               exports = output("nm", "-gU", str(library))
               for symbol in ("vkGetInstanceProcAddr", "vkCreateInstance", "vk_icdGetInstanceProcAddr",
                              "vk_icdGetPhysicalDeviceProcAddr", "vk_icdNegotiateLoaderICDInterfaceVersion"):
@@ -469,6 +513,8 @@ jobs:
         run: |
           # The pinned optimizer.cpp uses std::from_chars (C++17),
           # which the r17c libc++ does not yet provide.
+          git -C third_party/spirv-tools apply --check ../../cmake/patches/spirv-tools-charconv.patch
+          git -C third_party/spirv-tools apply ../../cmake/patches/spirv-tools-charconv.patch
           git -C third_party/spirv-tools apply --check ../../cmake/patches/spirv-tools-ndk-r17c.patch
           git -C third_party/spirv-tools apply ../../cmake/patches/spirv-tools-ndk-r17c.patch
           # r17c libc++ also lacks the C++17 std::optional deduction guide.

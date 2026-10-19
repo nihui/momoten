@@ -1,6 +1,13 @@
 # Copyright 2026 nihui
 # SPDX-License-Identifier: Apache-2.0
 
+add_executable(momoten_optimizer_flags_test translator/optimizer_flags_test.cpp)
+target_compile_features(momoten_optimizer_flags_test PRIVATE cxx_std_11)
+target_link_libraries(momoten_optimizer_flags_test PRIVATE SPIRV-Tools-opt)
+add_test(NAME momoten_optimizer_flags COMMAND momoten_optimizer_flags_test)
+set_tests_properties(momoten_optimizer_flags PROPERTIES
+    LABELS "momoten;translator;compatibility")
+
 add_executable(momoten_memory_state_test
     runtime/memory_state_test.cpp
     "${CMAKE_CURRENT_SOURCE_DIR}/../src/backend/memory_state.cpp")
