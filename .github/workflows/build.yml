@@ -19,6 +19,43 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  macos-opencl-diagnostics:
+    runs-on: macos-15
+    steps:
+      - name: Compare native SDK device enumeration forms
+        run: |
+          cat > probe.c <<'C'
+          #define CL_SILENCE_DEPRECATION
+          #include <OpenCL/opencl.h>
+          #include <stdio.h>
+          int main(void) {
+              cl_platform_id platforms[16] = {0};
+              cl_uint count = 0;
+              cl_int result = clGetPlatformIDs(16, platforms, &count);
+              printf("platform enumeration: %d, count=%u\n", result, count);
+              for (cl_uint p = 0; result == CL_SUCCESS && p < count && p < 16; ++p) {
+                  char name[512] = {0};
+                  clGetPlatformInfo(platforms[p], CL_PLATFORM_NAME, sizeof(name), name, NULL);
+                  printf("platform[%u]: %p %s\n", p, (void*)platforms[p], name);
+                  cl_device_type types[] = {CL_DEVICE_TYPE_ALL, CL_DEVICE_TYPE_DEFAULT, CL_DEVICE_TYPE_CPU, CL_DEVICE_TYPE_GPU, CL_DEVICE_TYPE_ACCELERATOR};
+                  for (unsigned t = 0; t < sizeof(types)/sizeof(types[0]); ++t) {
+                      cl_uint n = 0;
+                      cl_int a = clGetDeviceIDs(platforms[p], types[t], 0, NULL, &n);
+                      printf("type=%llx count-only: %d count=%u\n", (unsigned long long)types[t], a, n);
+                      cl_device_id devices[16] = {0};
+                      n = 0;
+                      cl_int b = clGetDeviceIDs(platforms[p], types[t], 16, devices, &n);
+                      printf("type=%llx buffer+count: %d count=%u first=%p\n", (unsigned long long)types[t], b, n, (void*)devices[0]);
+                      cl_int c = clGetDeviceIDs(platforms[p], types[t], 16, devices, NULL);
+                      printf("type=%llx buffer-only: %d first=%p\n", (unsigned long long)types[t], c, (void*)devices[0]);
+                  }
+              }
+              return 0;
+          }
+          C
+          clang probe.c -framework OpenCL -o probe
+          ./probe
+
   linux:
     name: linux-${{ matrix.name }}-manylinux2014
     runs-on: ubuntu-22.04
