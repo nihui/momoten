@@ -1,12 +1,15 @@
 # Cross-platform binary build
 
 GitHub Actions builds desktop and Android libraries using the pinned Git
-submodules. The resulting packages are available as workflow artifacts.
+submodules. The resulting packages are available as workflow artifacts. Version tags matching
+`v*` also publish the verified platform archives as GitHub Release assets.
 
 | Target | ABI | Minimum Android API | Build toolchain |
 | --- | --- | --- | --- |
 | Linux | x86_64 | — | Docker manylinux2014 (glibc 2.17) |
 | Linux | x86 (i686) | — | Docker manylinux2014 (glibc 2.17) |
+| macOS | x86_64 | — | Xcode 16.4, macos-15-intel (deployment target 11.0) |
+| macOS | arm64 | — | Xcode 16.4, macos-15 (deployment target 11.0) |
 | Windows | x86_64 | — | MSVC 2022 (x64) |
 | Windows | x86 | — | MSVC 2022 (Win32) |
 | Android 4.0 | armeabi-v7a | 14 | NDK r17c |
@@ -92,7 +95,7 @@ these checks do not prove functionality on every old GPU or driver.
 ## CI matrix and cancellation
 
 The workflow produces distinct artifacts for Linux x86_64/x86,
-Windows x86_64/x86, and Android armeabi-v7a/x86 (API 14) plus
+macOS x86_64/arm64, Windows x86_64/x86, and Android armeabi-v7a/x86 (API 14) plus
 arm64-v8a/x86_64 (API 21). The Android and Linux shared libraries
 are checked for the expected ELF class. The Windows generator explicitly
 selects MSVC x64 or Win32.
@@ -103,7 +106,7 @@ jobs within the current run still use `fail-fast: false`.
 
 ## Runtime-only distribution
 
-Linux CI packages `libmomoten.so` and `LICENSE.txt`/
+Linux CI packages `libmomoten.so`, `momoten_icd.json`, and `LICENSE.txt`/
 `THIRD_PARTY_NOTICES.md` in one `momoten-linux-<arch>.tar.gz`.
 Windows and Android similarly ship only the runtime library and notices.
 No installed CMake SDK, version header, Windows import library, or
@@ -114,3 +117,64 @@ The build-tree targets `momoten::driver`, `momoten::translator`, and
 The generated version header remains build-tree metadata. Linux keeps
 `-static-libstdc++ -static-libgcc` for compatibility with older runtimes;
 changing that choice can be measured in a separate experiment.
+
+## Experimental macOS builds
+
+Native Intel and Apple Silicon jobs run on `macos-15-intel` and `macos-15`,
+respectively, with Xcode 16.4 and an explicit macOS 11.0 deployment target.
+They produce separate `momoten-macos-x86_64.tar.gz` and
+`momoten-macos-arm64.tar.gz` archives containing:
+
+- `libmomoten.dylib`
+- `momoten_icd.json`
+- `LICENSE.txt` and `THIRD_PARTY_NOTICES.md`
+
+The deployment target is a build compatibility baseline. CI runs on macOS 15;
+it does not establish runtime compatibility with macOS 11, older macOS/OS X
+versions, or old Mac GPUs. The dylib uses the system libc++ and libSystem.
+CI checks the native Mach-O architecture, minimum-OS load command,
+`@rpath/libmomoten.dylib` install name, Vulkan/ICD exports, and absence of
+build-machine, Homebrew, OpenCL, Vulkan, or MoltenVK link dependencies.
+It also extracts the archive into a different directory and loads it there.
+These archives are not Developer ID signed or notarized.
+
+The backend dynamically opens Apple's
+`/System/Library/Frameworks/OpenCL.framework/OpenCL`; Apple OpenCL is
+deprecated and compatible devices/online compilers may be unavailable.
+No MoltenVK or Metal backend is involved. Applications may load the dylib
+and its Vulkan entry points directly. Applications using the Khronos Vulkan
+Loader need that loader installed separately and must opt in with an absolute
+`VK_DRIVER_FILES=/path/to/momoten_icd.json`. Keep the JSON next to the dylib.
+The manifest is not installed globally. momoten remains an experimental,
+non-conformant compute-only Vulkan implementation.
+
+Both modular and generated amalgamated drivers are compiled and tested;
+only the modular runtime is packaged, matching the other platforms.
+Homebrew `glslang` and `vulkan-loader` are test tools, not shipped dependencies.
+The optional direct-OpenCL tests link to the SDK's framework stub; the momoten
+dylib itself still loads OpenCL dynamically.
+
+Hosted macOS VMs may not expose an OpenCL device, particularly on Apple
+Silicon. Device-independent translation/ABI/load checks always run.
+Hardware-dependent CTest cases are explicitly skipped when no compatible
+device exists, and their names/counts appear in the job summary. A separate
+Apple OpenCL probe guards the system Vulkan Loader smoke test: no compatible
+device is a reported skip, while API, library-loading, and ICD failures remain
+failures. Passing such a build is not evidence of a successful GPU dispatch.
+
+## Tagged releases
+
+Pull requests, pushes to `main`, and manual `workflow_dispatch` runs build
+and validate all ten platform packages. The `package-release` job checks the
+complete artifact matrix and runtime-only archive contents, then creates
+`SHA256SUMS`. It preserves Linux/macOS `.tar.gz` packages and wraps the
+Windows/Android runtime trees in `.zip` files. The aggregate is also available
+as the `momoten-release` workflow artifact, so packaging is tested before a
+release is requested.
+
+Only a push of a `v*` tag enables the final publishing job, after every build
+and aggregation job succeeds. That job alone receives `contents: write`;
+`gh release create --verify-tag` attaches the ten archives and `SHA256SUMS`
+to a release for the existing tag. PRs and manual runs cannot publish releases
+or create tags. To reproduce a build without publishing, choose **Run workflow**
+for `build` and select the desired branch.

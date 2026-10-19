@@ -20,7 +20,9 @@ Tests are separated by ownership and runtime requirements:
 
 CTest labels include `translator`, `runtime`, `opencl-1.0`, `cache`, `api`,
 `abi`, `proc`, `architecture`, and `integration;ncnn`. Runtime-dependent tests
-return 77 when no suitable OpenCL device is available. The optional
+return 77 when no suitable OpenCL device is available. The CMake cache-test
+wrapper preserves this as a distinct CTest skip marker; driver/API errors
+remain test failures. The optional
 direct-OpenCL test is enabled only when `MOMOTEN_TEST_OPENCL_LIBRARY` is
 explicitly supplied and never changes the driver's link dependencies.
 
@@ -62,3 +64,12 @@ OpenCL program cache retains at most 8 entries by default; set
 `MOMOTEN_MEMORY_CACHE_ENTRIES=0` to measure the vendor runtime without that
 cache, or raise it only when the selected driver has a low per-program memory
 cost. This setting does not disable `MOMOTEN_CACHE` binary files.
+
+On macOS, build CI runs the generic suite for both native architectures and
+both modular/amalgamated drivers. `vulkan_loader_smoke.py` accepts `--loader`
+for the Khronos loader dylib and `--probe-opencl` for Apple's framework.
+The optional probe returns 77 only when that backend reports no compatible
+devices; ICD ABI/manifest/loading checks still run first. Without the probe,
+the smoke test retains its strict requirement for a working OpenCL backend.
+See [binary builds](binary-builds.md#experimental-macos-builds) for the
+runtime-coverage limitations of hosted macOS VMs.

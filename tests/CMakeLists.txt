@@ -358,7 +358,7 @@ if(TARGET momoten_driver)
             -P "${CMAKE_CURRENT_SOURCE_DIR}/runtime/cache_test.cmake")
     set_tests_properties(momoten_program_cache PROPERTIES
         LABELS "momoten;runtime;cache"
-        SKIP_RETURN_CODE 77)
+        SKIP_REGULAR_EXPRESSION "MOMOTEN_TEST_SKIP: no compatible OpenCL device for program cache test")
 endif()
 
 add_test(NAME momoten_source_architecture

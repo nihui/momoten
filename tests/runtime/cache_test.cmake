@@ -18,7 +18,10 @@ execute_process(
     OUTPUT_VARIABLE first_stdout
     ERROR_VARIABLE first_stderr)
 if(first_result EQUAL 77)
-    message(FATAL_ERROR "OpenCL runtime unavailable")
+    # CMake script mode cannot forward an arbitrary process exit code.
+    # CTest recognizes this marker via SKIP_REGULAR_EXPRESSION instead.
+    message(STATUS "MOMOTEN_TEST_SKIP: no compatible OpenCL device for program cache test")
+    return()
 endif()
 if(NOT first_result EQUAL 0)
     message(FATAL_ERROR "cache-miss execution failed: ${first_stdout}${first_stderr}")

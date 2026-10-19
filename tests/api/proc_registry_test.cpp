@@ -293,8 +293,17 @@ int main(int argc, char** argv)
     }
 
     uint32_t physical_count = 0;
-    if (vkEnumeratePhysicalDevices(instance10, &physical_count, 0) != VK_SUCCESS || physical_count == 0)
+    result = vkEnumeratePhysicalDevices(instance10, &physical_count, 0);
+    if (result != VK_SUCCESS)
     {
+        fprintf(stderr, "proc_registry_test: vkEnumeratePhysicalDevices(count) failed with Vulkan error %d\n", result);
+        vkDestroyInstance(instance10, 0);
+        close_library(library);
+        return 1;
+    }
+    if (physical_count == 0)
+    {
+        fprintf(stderr, "proc_registry_test: no compatible OpenCL device; skipping\n");
         vkDestroyInstance(instance10, 0);
         close_library(library);
         return 77;

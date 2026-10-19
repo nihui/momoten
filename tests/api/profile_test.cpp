@@ -107,8 +107,17 @@ int main()
 
     uint32_t physical_device_count = 0;
     result = vkEnumeratePhysicalDevices(instance, &physical_device_count, 0);
-    if (result != VK_SUCCESS || physical_device_count == 0)
+    if (result != VK_SUCCESS)
+    {
+        vkDestroyInstance(instance, 0);
         return check_result("vkEnumeratePhysicalDevices(count)", result);
+    }
+    if (physical_device_count == 0)
+    {
+        fprintf(stderr, "profile_test: no compatible OpenCL device; skipping\n");
+        vkDestroyInstance(instance, 0);
+        return 77;
+    }
     std::vector<VkPhysicalDevice> physical_devices(physical_device_count);
     result = vkEnumeratePhysicalDevices(
         instance, &physical_device_count, physical_devices.data());

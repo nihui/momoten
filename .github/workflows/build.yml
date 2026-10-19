@@ -6,6 +6,7 @@ name: build
 on:
   push:
     branches: [main]
+    tags: ['v*']
   pull_request:
   workflow_dispatch:
 
@@ -136,6 +137,169 @@ jobs:
         with:
           name: momoten-linux-${{ matrix.name }}
           path: momoten-linux-${{ matrix.name }}.tar.gz
+          if-no-files-found: error
+
+  macos:
+    name: macos-${{ matrix.arch }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {arch: x86_64, runner: macos-15-intel}
+          - {arch: arm64, runner: macos-15}
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_16.4.app/Contents/Developer
+      MACOSX_DEPLOYMENT_TARGET: '11.0'
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: recursive
+
+      - name: Install test tools
+        run: brew install glslang vulkan-loader
+
+      - name: Configure native macOS build
+        run: |
+          test "$(uname -m)" = "${{ matrix.arch }}"
+          xcodebuild -version
+          test -f "$(xcrun --show-sdk-path)/System/Library/Frameworks/OpenCL.framework/OpenCL.tbd"
+          cmake -S . -B build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_OSX_ARCHITECTURES="${{ matrix.arch }}" \
+            -DCMAKE_OSX_DEPLOYMENT_TARGET="$MACOSX_DEPLOYMENT_TARGET" \
+            -DCMAKE_CXX_FLAGS=-Werror=unguarded-availability-new \
+            -DCMAKE_INSTALL_LIBDIR=lib \
+            -DCMAKE_INSTALL_NAME_DIR=@rpath \
+            -DMOMOTEN_BUILD_DRIVER=ON \
+            -DMOMOTEN_BUILD_TRANSLATOR=ON \
+            -DMOMOTEN_BUILD_AMALGAMATION=ON \
+            -DMOMOTEN_BUILD_TOOLS=OFF \
+            -DMOMOTEN_BUILD_TESTS=ON \
+            -DMOMOTEN_GLSLANG_VALIDATOR="$(command -v glslangValidator)" \
+            -DMOMOTEN_TEST_OPENCL_LIBRARY="$(xcrun --show-sdk-path)/System/Library/Frameworks/OpenCL.framework/OpenCL.tbd" \
+            -DMOMOTEN_INSTALL=ON
+
+      - name: Build modular and amalgamated drivers and tests
+        run: cmake --build build --parallel 3
+
+      - name: Run generic tests (unavailable OpenCL devices are explicit skips)
+        run: ctest --test-dir build --output-on-failure --timeout 180 --output-junit ctest.xml
+
+      - name: Report test coverage
+        if: always()
+        run: |
+          python3 - <<'PY'
+          import os
+          from pathlib import Path
+          import xml.etree.ElementTree as ET
+
+          report = Path("build/ctest.xml")
+          if report.exists():
+              tests = ET.parse(report).getroot().findall("testcase")
+              skipped = [test.attrib["name"] for test in tests if test.find("skipped") is not None]
+              failed = [test.attrib["name"] for test in tests if test.find("failure") is not None]
+              with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as summary:
+                  summary.write(f"CTest: {len(tests)} total, {len(failed)} failed, {len(skipped)} skipped.\n\n")
+                  for name in skipped:
+                      summary.write(f"- Skipped (device or optional feature unavailable): {name}\n")
+          PY
+
+      - name: Install stripped runtime
+        run: cmake --install build --strip --prefix stage
+
+      - name: Verify Mach-O architecture, deployment target and dependencies
+        env:
+          EXPECTED_ARCH: ${{ matrix.arch }}
+        run: |
+          test -f stage/lib/libmomoten.dylib
+          test ! -L stage/lib/libmomoten.dylib
+          test -f stage/lib/momoten_icd.json
+          test "$(find stage -type f | wc -l | tr -d ' ')" -eq 2
+          python3 - <<'PY'
+          import os
+          from pathlib import Path
+          import re
+          import subprocess
+
+          for library in (Path("stage/lib/libmomoten.dylib"), Path("build/libmomoten-amalgamated.dylib")):
+              def output(*args):
+                  return subprocess.check_output(args, text=True).strip()
+              assert output("lipo", "-archs", str(library)) == os.environ["EXPECTED_ARCH"]
+              identity = output("otool", "-D", str(library)).splitlines()[1].strip()
+              assert identity == "@rpath/" + library.name, identity
+              loads = output("otool", "-l", str(library))
+              minimum = re.findall(r"^\s+(?:minos|version) (\d+\.\d+(?:\.\d+)?)$", loads, re.M)
+              assert os.environ["MACOSX_DEPLOYMENT_TARGET"] in minimum, minimum
+              assert "__DWARF" not in loads, "Unexpected debug sections"
+              dependencies = output("otool", "-L", str(library)).splitlines()[2:]
+              for dependency in dependencies:
+                  name = dependency.strip().split(" (", 1)[0]
+                  assert name.startswith(("/usr/lib/", "/System/Library/")), name
+                  assert not any(word in name.lower() for word in ("opencl", "vulkan", "moltenvk")), name
+              exports = output("nm", "-gU", str(library))
+              for symbol in ("vkGetInstanceProcAddr", "vkCreateInstance", "vk_icdGetInstanceProcAddr",
+                             "vk_icdGetPhysicalDeviceProcAddr", "vk_icdNegotiateLoaderICDInterfaceVersion"):
+                  assert re.search(r"\b_" + symbol + r"$", exports, re.M), symbol
+              print(library, identity, minimum, dependencies, "size:", library.stat().st_size)
+          PY
+
+      - name: Smoke test installed ICD and amalgamation with Apple OpenCL
+        run: |
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          manifest = json.loads(Path("stage/lib/momoten_icd.json").read_text())
+          manifest["ICD"]["library_path"] = "./libmomoten-amalgamated.dylib"
+          Path("build/momoten-amalgamated-icd.json").write_text(json.dumps(manifest))
+          PY
+          for variant in modular amalgamated; do
+            if [ "$variant" = modular ]; then
+              library=stage/lib/libmomoten.dylib
+              manifest=stage/lib/momoten_icd.json
+            else
+              library=build/libmomoten-amalgamated.dylib
+              manifest=build/momoten-amalgamated-icd.json
+            fi
+            set +e
+            MOMOTEN_DEBUG=1 python3 tests/runtime/vulkan_loader_smoke.py "$library" "$manifest" \
+              --loader "$(brew --prefix vulkan-loader)/lib/libvulkan.1.dylib" \
+              --probe-opencl /System/Library/Frameworks/OpenCL.framework/OpenCL
+            result=$?
+            set -e
+            case "$result" in
+              0) echo "- $variant: ICD ABI and system Vulkan Loader runtime passed" >> "$GITHUB_STEP_SUMMARY" ;;
+              77) echo "::notice::$variant: ICD ABI passed; runtime skipped because no compatible Apple OpenCL device is exposed"
+                  echo "- $variant: ICD ABI passed; OpenCL/Vulkan runtime SKIPPED (no compatible device)" >> "$GITHUB_STEP_SUMMARY" ;;
+              *) exit "$result" ;;
+            esac
+          done
+
+      - name: Package macOS runtime
+        run: |
+          cp LICENSE.txt THIRD_PARTY_NOTICES.md stage/
+          tar -czf "momoten-macos-${{ matrix.arch }}.tar.gz" \
+            -C stage/lib libmomoten.dylib momoten_icd.json \
+            -C "$GITHUB_WORKSPACE/stage" LICENSE.txt THIRD_PARTY_NOTICES.md
+          mkdir relocated
+          tar -xzf "momoten-macos-${{ matrix.arch }}.tar.gz" -C relocated
+          python3 - <<'PY'
+          import ctypes
+          import json
+          from pathlib import Path
+          manifest = Path("relocated/momoten_icd.json").resolve()
+          info = json.loads(manifest.read_text())
+          library = manifest.parent / info["ICD"]["library_path"]
+          assert library.name == "libmomoten.dylib"
+          assert ctypes.CDLL(str(library)).vkGetInstanceProcAddr
+          print("Packaged runtime loads after extraction:", library)
+          PY
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: momoten-macos-${{ matrix.arch }}
+          path: momoten-macos-${{ matrix.arch }}.tar.gz
           if-no-files-found: error
 
   windows:
@@ -343,3 +507,89 @@ jobs:
           name: momoten-android-${{ matrix.abi }}-api${{ matrix.api }}
           path: stage/
           if-no-files-found: error
+
+  package-release:
+    name: package-release
+    needs: [linux, macos, windows, android]
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: momoten-*
+          path: artifacts
+
+      # Exercise release aggregation on PRs too, without publishing anything.
+      - name: Assemble release archives and checksums
+        run: |
+          python3 - <<'PY'
+          import hashlib
+          from pathlib import Path
+          import shutil
+          import tarfile
+          import zipfile
+
+          targets = ["linux-x86_64", "linux-x86", "macos-x86_64", "macos-arm64",
+                     "windows-x86_64", "windows-x86", "android-armeabi-v7a-api14",
+                     "android-x86-api14", "android-arm64-v8a-api21", "android-x86_64-api21"]
+          expected = {"momoten-" + target for target in targets}
+          artifacts = Path("artifacts")
+          # A rerun may also download the previous aggregate from this run.
+          actual = {path.name for path in artifacts.iterdir()} - {"momoten-release"}
+          assert actual == expected, "Incomplete artifact matrix"
+          release = Path("release")
+          release.mkdir()
+          notices = {"LICENSE.txt", "THIRD_PARTY_NOTICES.md"}
+          for name in sorted(expected):
+              directory = artifacts / name
+              files = {path.relative_to(directory).as_posix() for path in directory.rglob("*") if path.is_file()}
+              if name.startswith(("momoten-linux-", "momoten-macos-")):
+                  archive = name + ".tar.gz"
+                  assert files == {archive}, (name, files)
+                  runtime = "libmomoten.dylib" if "-macos-" in name else "libmomoten.so"
+                  with tarfile.open(directory / archive) as bundle:
+                      assert set(bundle.getnames()) == notices | {runtime, "momoten_icd.json"}
+                      assert all(member.isfile() for member in bundle.getmembers())
+                  shutil.copy2(directory / archive, release / archive)
+              else:
+                  runtime = {"bin/momoten.dll", "bin/momoten_icd.json"} if "-windows-" in name else {"lib/libmomoten.so"}
+                  assert files == notices | runtime, (name, files)
+                  with zipfile.ZipFile(release / (name + ".zip"), "w", zipfile.ZIP_DEFLATED) as bundle:
+                      for filename in sorted(files):
+                          bundle.write(directory / filename, filename)
+          archives = sorted(release.iterdir())
+          assert len(archives) == len(expected)
+          (release / "SHA256SUMS").write_text("".join(
+              hashlib.sha256(path.read_bytes()).hexdigest() + "  " + path.name + "\n"
+              for path in archives))
+          PY
+          (cd release && sha256sum --check SHA256SUMS)
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: momoten-release
+          path: release/
+          if-no-files-found: error
+          overwrite: true
+
+  release:
+    name: publish-tagged-release
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    needs: package-release
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: momoten-release
+          path: release
+
+      - name: Publish verified version-tag assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          (cd release && sha256sum --check SHA256SUMS)
+          gh release create "$RELEASE_TAG" release/* \
+            --verify-tag --title "$RELEASE_TAG" --generate-notes
