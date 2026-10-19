@@ -8,9 +8,16 @@ import argparse
 import ctypes
 import json
 import os
+import platform
 from pathlib import Path
 import subprocess
 import sys
+
+
+class OpenCLEnumerationError(RuntimeError):
+    def __init__(self, result):
+        super().__init__(f"clGetDeviceIDs failed: {result}")
+        self.result = result
 
 
 def has_opencl_device(path):
@@ -41,7 +48,8 @@ def has_opencl_device(path):
         result = cl.clGetDeviceIDs(platform, 0xffffffff, 0, None, ctypes.byref(count))
         if result == -1:  # CL_DEVICE_NOT_FOUND
             continue
-        assert result == 0, f"clGetDeviceIDs failed: {result}"
+        if result != 0:
+            raise OpenCLEnumerationError(result)
         if count.value == 0:
             continue
         devices = (handle * count.value)()
@@ -70,7 +78,17 @@ def main():
                         help="system Vulkan Loader library (not the momoten ICD)")
     parser.add_argument("--probe-opencl", metavar="LIBRARY",
                         help="return 77 only if this backend has no compatible devices")
+    parser.add_argument("--apple-opencl-unavailable-probe", metavar="EXECUTABLE",
+                        help="on hosted macOS ARM64, confirm Apple's -30 error with a native SDK probe")
     args = parser.parse_args()
+    if args.apple_opencl_unavailable_probe:
+        assert (sys.platform == "darwin" and platform.machine() == "arm64" and
+                os.environ.get("GITHUB_ACTIONS") == "true" and
+                os.environ.get("RUNNER_ENVIRONMENT") == "github-hosted" and
+                os.environ.get("RUNNER_OS") == "macOS" and
+                os.environ.get("RUNNER_ARCH") == "ARM64" and
+                args.probe_opencl == "/System/Library/Frameworks/OpenCL.framework/OpenCL"), \
+            "The Apple OpenCL environment exception is restricted to hosted macOS ARM64"
     library = Path(args.library).resolve()
     manifest = Path(args.manifest).resolve()
     info = json.loads(manifest.read_text())
@@ -95,11 +113,26 @@ def main():
 
     print("ICD manifest, dynamic loading and ABI exports passed:", library, flush=True)
     # Run this probe only when explicitly requested by hardware-limited CI.
-    # The ABI checks above still run, and backend API errors remain failures.
-    if args.probe_opencl and not has_opencl_device(args.probe_opencl):
-        print("SKIP: no compatible OpenCL device; system Vulkan Loader runtime untested",
-              flush=True)
-        return 77
+    # The ABI checks above still run. API errors fail, apart from the narrowly
+    # verified hosted Apple ARM64 environment limitation below.
+    if args.probe_opencl:
+        try:
+            available = has_opencl_device(args.probe_opencl)
+        except OpenCLEnumerationError as error:
+            if error.result != -30 or not args.apple_opencl_unavailable_probe:
+                raise
+            # Do not infer absent hardware from CL_INVALID_VALUE. Reproduce the
+            # failure independently, without ctypes or any momoten code.
+            probe = subprocess.run([args.apple_opencl_unavailable_probe], check=False, timeout=30)
+            if probe.returncode != 78:
+                raise
+            print("SKIP: Apple OpenCL enumeration unavailable (CL_INVALID_VALUE); "
+                  "native SDK probe agrees; system Vulkan Loader runtime untested", flush=True)
+            return 78
+        if not available:
+            print("SKIP: no compatible OpenCL device; system Vulkan Loader runtime untested",
+                  flush=True)
+            return 77
 
     # Use the *system* loader, not a direct call to the ICD.
     script = """

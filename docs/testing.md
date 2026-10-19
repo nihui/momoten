@@ -69,7 +69,13 @@ On macOS, build CI runs the generic suite for both native architectures and
 both modular/amalgamated drivers. `vulkan_loader_smoke.py` accepts `--loader`
 for the Khronos loader dylib and `--probe-opencl` for Apple's framework.
 The optional probe returns 77 only when that backend reports no compatible
-devices; ICD ABI/manifest/loading checks still run first. Without the probe,
-the smoke test retains its strict requirement for a working OpenCL backend.
+devices; ICD ABI/manifest/loading checks still run first. The hosted ARM64 job
+also supplies `--apple-opencl-unavailable-probe`: only for the system Apple
+framework, `CL_INVALID_VALUE` from device enumeration can produce the distinct
+exit code 78 after a separately compiled SDK probe reproduces the same error
+with both count-only and non-null device-buffer calls. This is reported as an
+unavailable backend, not absent hardware or a passed runtime test. All other
+API errors remain failures. Without these opt-ins, the smoke test requires a
+working OpenCL backend.
 See [binary builds](binary-builds.md#experimental-macos-builds) for the
 runtime-coverage limitations of hosted macOS VMs.

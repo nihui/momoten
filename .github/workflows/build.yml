@@ -19,43 +19,6 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  macos-opencl-diagnostics:
-    runs-on: macos-15
-    steps:
-      - name: Compare native SDK device enumeration forms
-        run: |
-          cat > probe.c <<'C'
-          #define CL_SILENCE_DEPRECATION
-          #include <OpenCL/opencl.h>
-          #include <stdio.h>
-          int main(void) {
-              cl_platform_id platforms[16] = {0};
-              cl_uint count = 0;
-              cl_int result = clGetPlatformIDs(16, platforms, &count);
-              printf("platform enumeration: %d, count=%u\n", result, count);
-              for (cl_uint p = 0; result == CL_SUCCESS && p < count && p < 16; ++p) {
-                  char name[512] = {0};
-                  clGetPlatformInfo(platforms[p], CL_PLATFORM_NAME, sizeof(name), name, NULL);
-                  printf("platform[%u]: %p %s\n", p, (void*)platforms[p], name);
-                  cl_device_type types[] = {CL_DEVICE_TYPE_ALL, CL_DEVICE_TYPE_DEFAULT, CL_DEVICE_TYPE_CPU, CL_DEVICE_TYPE_GPU, CL_DEVICE_TYPE_ACCELERATOR};
-                  for (unsigned t = 0; t < sizeof(types)/sizeof(types[0]); ++t) {
-                      cl_uint n = 0;
-                      cl_int a = clGetDeviceIDs(platforms[p], types[t], 0, NULL, &n);
-                      printf("type=%llx count-only: %d count=%u\n", (unsigned long long)types[t], a, n);
-                      cl_device_id devices[16] = {0};
-                      n = 0;
-                      cl_int b = clGetDeviceIDs(platforms[p], types[t], 16, devices, &n);
-                      printf("type=%llx buffer+count: %d count=%u first=%p\n", (unsigned long long)types[t], b, n, (void*)devices[0]);
-                      cl_int c = clGetDeviceIDs(platforms[p], types[t], 16, devices, NULL);
-                      printf("type=%llx buffer-only: %d first=%p\n", (unsigned long long)types[t], c, (void*)devices[0]);
-                  }
-              }
-              return 0;
-          }
-          C
-          clang probe.c -framework OpenCL -o probe
-          ./probe
-
   linux:
     name: linux-${{ matrix.name }}-manylinux2014
     runs-on: ubuntu-22.04
@@ -240,7 +203,7 @@ jobs:
               with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as summary:
                   summary.write(f"CTest: {len(tests)} total, {len(failed)} failed, {len(skipped)} skipped.\n\n")
                   for name in skipped:
-                      summary.write(f"- Skipped (device or optional feature unavailable): {name}\n")
+                      summary.write(f"- Skipped (OpenCL runtime or optional feature unavailable): {name}\n")
           PY
 
       - name: Install stripped runtime
@@ -291,6 +254,11 @@ jobs:
           manifest["ICD"]["library_path"] = "./libmomoten-amalgamated.dylib"
           Path("build/momoten-amalgamated-icd.json").write_text(json.dumps(manifest))
           PY
+          probe_args=()
+          if [ "$(uname -m)" = arm64 ]; then
+            clang tests/runtime/apple_opencl_probe.c -framework OpenCL -o "$RUNNER_TEMP/apple-opencl-probe"
+            probe_args=(--apple-opencl-unavailable-probe "$RUNNER_TEMP/apple-opencl-probe")
+          fi
           for variant in modular amalgamated; do
             if [ "$variant" = modular ]; then
               library=stage/lib/libmomoten.dylib
@@ -302,13 +270,15 @@ jobs:
             set +e
             MOMOTEN_DEBUG=1 python3 tests/runtime/vulkan_loader_smoke.py "$library" "$manifest" \
               --loader "$(brew --prefix vulkan-loader)/lib/libvulkan.1.dylib" \
-              --probe-opencl /System/Library/Frameworks/OpenCL.framework/OpenCL
+              --probe-opencl /System/Library/Frameworks/OpenCL.framework/OpenCL "${probe_args[@]}"
             result=$?
             set -e
             case "$result" in
               0) echo "- $variant: ICD ABI and system Vulkan Loader runtime passed" >> "$GITHUB_STEP_SUMMARY" ;;
               77) echo "::notice::$variant: ICD ABI passed; runtime skipped because no compatible Apple OpenCL device is exposed"
                   echo "- $variant: ICD ABI passed; OpenCL/Vulkan runtime SKIPPED (no compatible device)" >> "$GITHUB_STEP_SUMMARY" ;;
+              78) echo "::notice::$variant: ICD ABI passed; Apple OpenCL runtime unavailable (native SDK also returns CL_INVALID_VALUE)"
+                  echo "- $variant: ICD ABI passed; OpenCL/Vulkan runtime SKIPPED (Apple framework CL_INVALID_VALUE, independently reproduced with the SDK)" >> "$GITHUB_STEP_SUMMARY" ;;
               *) exit "$result" ;;
             esac
           done

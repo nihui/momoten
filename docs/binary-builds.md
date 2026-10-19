@@ -159,7 +159,12 @@ Silicon. Device-independent translation/ABI/load checks always run.
 Hardware-dependent CTest cases are explicitly skipped when no compatible
 device exists, and their names/counts appear in the job summary. A separate
 Apple OpenCL probe guards the system Vulkan Loader smoke test: no compatible
-device is a reported skip, while API, library-loading, and ICD failures remain
+device is a reported skip. The hosted ARM64 Apple framework can instead return
+`CL_INVALID_VALUE` for valid device-enumeration calls. Only on that hosted
+architecture and system framework, CI reports this as an unavailable backend
+if an independent native SDK probe reproduces the error with both count-only
+and non-null device-buffer calls. This distinct skip does not claim hardware
+is absent. Other API errors, library-loading errors, and ICD failures remain
 failures. Passing such a build is not evidence of a successful GPU dispatch.
 
 ## Tagged releases
