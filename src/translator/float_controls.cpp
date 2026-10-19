@@ -3,6 +3,7 @@
 
 #include "translator_internal.h"
 
+#include <exception>
 #include <stdexcept>
 
 #include "spirv-tools/libspirv.hpp"
@@ -96,7 +97,10 @@ void CompilerOpenCL::reflect_float_controls(KernelABI& abi)
     // for floating-point IDs. Loads, stores, comparisons and conversions all
     // matter when selecting an option that affects the entire OpenCL program.
     spvtools::SpirvTools tools(SPV_ENV_VULKAN_1_1);
-    if (!tools.Parse(ir.spirv, [](spv_endianness_t, const spv_parsed_header_t&) { return SPV_SUCCESS; }, [&](const spv_parsed_instruction_t& instruction) {
+    std::exception_ptr parse_exception;
+    const bool parsed = tools.Parse(ir.spirv, [](spv_endianness_t, const spv_parsed_header_t&) { return SPV_SUCCESS; }, [&](const spv_parsed_instruction_t& instruction) {
+        try
+        {
             const uint32_t* words = instruction.words;
             const Op opcode = static_cast<Op>(instruction.opcode);
             if (instruction.type_id && instruction.result_id)
@@ -146,7 +150,18 @@ void CompilerOpenCL::reflect_float_controls(KernelABI& abi)
                     operation.operands.push_back(words[operand.offset]);
             }
             functions[current_function].push_back(operation);
-            return SPV_SUCCESS; }))
+            return SPV_SUCCESS;
+        }
+        catch (...)
+        {
+            // SPIRV-Tools may be built without exception support. Unwind
+            // only our callback, then rethrow after its parser returns.
+            parse_exception = std::current_exception();
+            return SPV_ERROR_INTERNAL;
+        } });
+    if (parse_exception)
+        std::rethrow_exception(parse_exception);
+    if (!parsed)
         throw std::runtime_error("failed to parse SPIR-V floating-point operands");
 
     uint32_t common_flags = vulkan_fast_math_flags;
