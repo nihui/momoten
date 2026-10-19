@@ -65,8 +65,8 @@ OpenCL program cache retains at most 8 entries by default; set
 cache, or raise it only when the selected driver has a low per-program memory
 cost. This setting does not disable `MOMOTEN_CACHE` binary files.
 
-On macOS, build CI runs the generic suite for both native architectures and
-both modular/amalgamated drivers. `vulkan_loader_smoke.py` accepts `--loader`
+On macOS, build CI exercises both native architectures and both
+modular/amalgamated drivers. Device-independent tests always run. `vulkan_loader_smoke.py` accepts `--loader`
 for the Khronos loader dylib and `--probe-opencl` for Apple's framework.
 The optional probe returns 77 only when that backend reports no compatible
 devices; ICD ABI/manifest/loading checks still run first. The hosted ARM64 job
@@ -77,5 +77,26 @@ with both count-only and non-null device-buffer calls. This is reported as an
 unavailable backend, not absent hardware or a passed runtime test. All other
 API errors remain failures. Without these opt-ins, the smoke test requires a
 working OpenCL backend.
+The hosted Intel job also compiles `apple_barrier_probe.cpp` against the native
+SDK, without momoten. A four-lane control kernel must execute and produce the
+correct values. Only when a minimal barrier kernel independently reports a
+one-lane maximum and rejects a four-lane dispatch, **and** a two-argument
+struct/barrier kernel reports three arguments and rejects dispatch with
+`CL_INVALID_KERNEL_ARGS`, CI excludes these five tests:
+
+- `momoten_opencl_simple`: four-lane barrier and by-value push-constant struct
+- `momoten_opencl_subgroup_basic`: four-lane subgroup barrier
+- `momoten_driver_simple`, `momoten_program_cache`, and
+  `momoten_amalgamated_driver_simple`: pipeline creation correctly rejects the
+  barrier kernel's workgroup limit before reaching dispatch
+
+The job summary lists them separately as **not run**, with reasons; they are
+not passed tests. The probe requires a single Apple CPU device, checks exact
+error signatures, and fails on unexpected errors or partially matching
+limitations. If the capabilities work or another device topology is present,
+the full suite runs. The exclusion applies only to that hosted Intel CI job;
+normal CTest runs remain unchanged. All other tests, including actual supported
+OpenCL dispatches and system Vulkan Loader checks, remain mandatory.
+
 See [binary builds](binary-builds.md#experimental-macos-builds) for the
 runtime-coverage limitations of hosted macOS VMs.

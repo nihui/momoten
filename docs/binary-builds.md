@@ -167,6 +167,18 @@ and non-null device-buffer calls. This distinct skip does not claim hardware
 is absent. Other API errors, library-loading errors, and ICD failures remain
 failures. Passing such a build is not evidence of a successful GPU dispatch.
 
+The hosted Intel Apple CPU backend executes the fp64, int16, packed-atomic,
+and virtual-workgroup direct OpenCL tests, but currently cannot execute the
+four-lane barrier kernels used by the simple-buffer and subgroup tests. A
+separate native SDK reproducer also exposes a by-value struct-argument ABI
+mismatch. CI requires a correct four-lane control dispatch and both exact
+failure signatures before excluding five affected runtime tests; their names
+and reasons appear as **not run**, separately from passing and skipped tests.
+The remaining tests and modular/amalgamated Vulkan Loader smoke tests still
+run. See [testing](testing.md) for the precise exclusion conditions. These
+artifacts are experimental build/release deliverables, not a claim of complete
+Apple OpenCL shader, push-constant, or barrier compatibility.
+
 ## Tagged releases
 
 Pull requests, pushes to `main`, and manual `workflow_dispatch` runs build
