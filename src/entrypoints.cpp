@@ -15,6 +15,7 @@ enum ProcScope
     PROC_SCOPE_NONE = -1,
     PROC_SCOPE_GLOBAL,
     PROC_SCOPE_INSTANCE,
+    PROC_SCOPE_PHYSICAL_DEVICE,
     PROC_SCOPE_DEVICE
 };
 
@@ -130,3 +131,54 @@ PFN_vkVoidFunction impl_get_instance_proc_addr(VkInstance instance, const char* 
 #undef MOMOTEN_RESULT_PROC
 #undef MOMOTEN_VOID_PROC
 #undef MOMOTEN_PFN_PROC
+
+extern "C" MOMOTEN_EXPORT VKAPI_ATTR VkResult VKAPI_CALL
+vk_icdNegotiateLoaderICDInterfaceVersion(uint32_t* version) noexcept
+{
+    if (!version)
+        return VK_ERROR_INITIALIZATION_FAILED;
+    // Vulkan 1.1 requires loader/ICD interface version 5 or newer.
+    if (*version < 5)
+        return VK_ERROR_INCOMPATIBLE_DRIVER;
+    *version = 5;
+    return VK_SUCCESS;
+}
+
+extern "C" MOMOTEN_EXPORT VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL
+vk_icdGetPhysicalDeviceProcAddr(VkInstance instance, const char* name) noexcept
+{
+    if (!instance || !name)
+        return 0;
+    // Only commands dispatched on VkPhysicalDevice belong to this hook.
+    // VkInstance commands remain available through vkGetInstanceProcAddr.
+    const momoten_detail::VulkanProc* proc =
+        momoten_detail::find_vulkan_proc(name,
+                                         momoten_detail::PROC_SCOPE_PHYSICAL_DEVICE,
+                                         momoten_detail::PROC_SCOPE_PHYSICAL_DEVICE);
+    if (!proc)
+        return 0;
+    return momoten_detail::impl_get_instance_proc_addr(instance, name);
+}
+
+extern "C" MOMOTEN_EXPORT VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL
+vk_icdGetInstanceProcAddr(VkInstance instance, const char* name) noexcept
+{
+    if (!name)
+        return 0;
+
+    if (strcmp(name, "vk_icdNegotiateLoaderICDInterfaceVersion") == 0)
+        return reinterpret_cast<PFN_vkVoidFunction>(vk_icdNegotiateLoaderICDInterfaceVersion);
+    if (strcmp(name, "vk_icdGetPhysicalDeviceProcAddr") == 0)
+        return reinterpret_cast<PFN_vkVoidFunction>(vk_icdGetPhysicalDeviceProcAddr);
+
+    // The loader obtains vkGetDeviceProcAddr before a device exists.
+    if (!instance && strcmp(name, "vkGetDeviceProcAddr") == 0)
+    {
+        const momoten_detail::VulkanProc* proc =
+            momoten_detail::find_vulkan_proc(name,
+                                             momoten_detail::PROC_SCOPE_DEVICE,
+                                             momoten_detail::PROC_SCOPE_DEVICE);
+        return proc ? proc->function : 0;
+    }
+    return momoten_detail::impl_get_instance_proc_addr(instance, name);
+}

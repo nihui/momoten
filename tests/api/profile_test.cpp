@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 #include <vulkan/vulkan.h>
+#include <vulkan/vk_layer.h>
 
 #include <cstdio>
 #include <cstring>
@@ -62,14 +63,16 @@ int main()
                       vkCreateInstance(&invalid_instance_info, 0, &instance),
                       VK_ERROR_INITIALIZATION_FAILED))
         return 1;
-    VkBaseInStructure unsupported_instance_chain = {};
-    unsupported_instance_chain.sType = VK_STRUCTURE_TYPE_APPLICATION_INFO;
+    // The loader may prepend private instance metadata that the ICD ignores.
+    VkLayerInstanceCreateInfo loader_instance_chain = {};
+    loader_instance_chain.sType = VK_STRUCTURE_TYPE_LOADER_INSTANCE_CREATE_INFO;
     invalid_instance_info = instance_info;
-    invalid_instance_info.pNext = &unsupported_instance_chain;
-    if (expect_result("vkCreateInstance(unsupported pNext)",
-                      vkCreateInstance(&invalid_instance_info, 0, &instance),
-                      VK_ERROR_FEATURE_NOT_PRESENT))
+    invalid_instance_info.pNext = &loader_instance_chain;
+    if (check_result("vkCreateInstance(loader pNext)",
+                     vkCreateInstance(&invalid_instance_info, 0, &instance)))
         return 1;
+    vkDestroyInstance(instance, 0);
+    instance = VK_NULL_HANDLE;
     VkAllocationCallbacks unsupported_allocator = {};
     if (expect_result("vkCreateInstance(custom allocator)",
                       vkCreateInstance(&instance_info, &unsupported_allocator,

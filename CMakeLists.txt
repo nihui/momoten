@@ -20,6 +20,9 @@ endif()
 include(GNUInstallDirs)
 
 option(MOMOTEN_BUILD_DRIVER "Build the shared restricted-API implementation" ON)
+option(MOMOTEN_BUILD_ICD_MANIFEST
+    "Generate optional desktop Vulkan Loader ICD JSON alongside the driver"
+    ON)
 option(MOMOTEN_BUILD_TRANSLATOR "Build the SPIR-V to OpenCL C translator library" ON)
 option(MOMOTEN_BUILD_TOOLS "Build momoten command-line tools" ON)
 option(MOMOTEN_BUILD_AMALGAMATION
@@ -140,8 +143,18 @@ if(MOMOTEN_BUILD_DRIVER)
         target_compile_definitions(momoten_driver PRIVATE NOMINMAX)
     endif()
 
+    if(MOMOTEN_BUILD_ICD_MANIFEST AND NOT ANDROID)
+        set(MOMOTEN_ICD_LIBRARY_FILENAME
+            "${CMAKE_SHARED_LIBRARY_PREFIX}momoten${CMAKE_SHARED_LIBRARY_SUFFIX}")
+        configure_file(
+            "${CMAKE_CURRENT_SOURCE_DIR}/cmake/momoten_icd.json.in"
+            "${CMAKE_CURRENT_BINARY_DIR}/momoten_icd.json"
+            @ONLY)
+    endif()
+
     if(UNIX AND NOT APPLE)
         target_link_options(momoten_driver PRIVATE
+            "LINKER:-Bsymbolic"
             "LINKER:--version-script=${CMAKE_CURRENT_SOURCE_DIR}/src/momoten.exports.map")
         set_property(TARGET momoten_driver APPEND PROPERTY
             LINK_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/src/momoten.exports.map")
@@ -203,7 +216,8 @@ if(MOMOTEN_BUILD_AMALGAMATION)
         endif()
         if(UNIX AND NOT APPLE)
             target_link_options(momoten_amalgamated_driver PRIVATE
-                "LINKER:--version-script=${CMAKE_CURRENT_SOURCE_DIR}/src/momoten.exports.map")
+                "LINKER:-Bsymbolic"
+            "LINKER:--version-script=${CMAKE_CURRENT_SOURCE_DIR}/src/momoten.exports.map")
             set_property(TARGET momoten_amalgamated_driver APPEND PROPERTY
                 LINK_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/src/momoten.exports.map")
         endif()
@@ -244,6 +258,15 @@ if(MOMOTEN_INSTALL)
             # Exclude the Windows import library from normal installations.
             ARCHIVE DESTINATION "${CMAKE_INSTALL_LIBDIR}"
                 COMPONENT Development EXCLUDE_FROM_ALL)
+        if(MOMOTEN_BUILD_ICD_MANIFEST AND NOT ANDROID)
+            if(WIN32)
+                set(momoten_icd_install_dir "${CMAKE_INSTALL_BINDIR}")
+            else()
+                set(momoten_icd_install_dir "${CMAKE_INSTALL_LIBDIR}")
+            endif()
+            install(FILES "${CMAKE_CURRENT_BINARY_DIR}/momoten_icd.json"
+                DESTINATION "${momoten_icd_install_dir}")
+        endif()
     endif()
     if(TARGET momoten_spv_to_clc)
         install(TARGETS momoten_spv_to_clc

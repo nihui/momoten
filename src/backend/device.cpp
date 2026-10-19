@@ -190,6 +190,7 @@ std::vector<VkPhysicalDevice> discover_opencl_devices(VkInstance instance)
                 continue;
 
             VkPhysicalDevice_T* physical = new VkPhysicalDevice_T;
+            set_loader_magic_value(physical);
             physical->owner = instance;
             physical->platform = platforms[p];
             physical->device = devices[d];

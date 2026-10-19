@@ -5,6 +5,8 @@
 // MOMOTEN_RESULT_PROC, MOMOTEN_VOID_PROC, and MOMOTEN_PFN_PROC. Entries whose
 // metadata scope is PROC_SCOPE_NONE remain directly exported but are excluded
 // from Vulkan proc lookup, preserving the historical driver ABI.
+// PROC_SCOPE_PHYSICAL_DEVICE identifies commands whose first dispatchable
+// handle is VkPhysicalDevice, including vkCreateDevice.
 
 MOMOTEN_PFN_PROC(vkGetInstanceProcAddr, impl_get_instance_proc_addr,
                  (VkInstance instance, const char* name), (instance, name),
@@ -29,78 +31,85 @@ MOMOTEN_RESULT_PROC(vkEnumeratePhysicalDevices, impl_enumerate_physical_devices,
                     PROC_SCOPE_INSTANCE, 0, VK_API_VERSION_1_0)
 MOMOTEN_VOID_PROC(vkGetPhysicalDeviceFeatures, impl_get_physical_device_features,
                   (VkPhysicalDevice physical, VkPhysicalDeviceFeatures* features), (physical, features),
-                  PROC_SCOPE_INSTANCE, 0, VK_API_VERSION_1_0)
+                  PROC_SCOPE_PHYSICAL_DEVICE, 0, VK_API_VERSION_1_0)
 MOMOTEN_VOID_PROC(vkGetPhysicalDeviceFeatures2, impl_get_physical_device_features2,
                   (VkPhysicalDevice physical, VkPhysicalDeviceFeatures2* features), (physical, features),
-                  PROC_SCOPE_INSTANCE, 0, VK_API_VERSION_1_1)
+                  PROC_SCOPE_PHYSICAL_DEVICE, 0, VK_API_VERSION_1_1)
 MOMOTEN_VOID_PROC(vkGetPhysicalDeviceFeatures2KHR, impl_get_physical_device_features2,
                   (VkPhysicalDevice physical, VkPhysicalDeviceFeatures2* features), (physical, features),
-                  PROC_SCOPE_INSTANCE, VK_KHR_GET_PHYSICAL_DEVICE_PROPERTIES_2_EXTENSION_NAME, 0)
+                  PROC_SCOPE_PHYSICAL_DEVICE, VK_KHR_GET_PHYSICAL_DEVICE_PROPERTIES_2_EXTENSION_NAME, 0)
 MOMOTEN_VOID_PROC(vkGetPhysicalDeviceProperties, impl_get_physical_device_properties,
                   (VkPhysicalDevice physical, VkPhysicalDeviceProperties* properties), (physical, properties),
-                  PROC_SCOPE_INSTANCE, 0, VK_API_VERSION_1_0)
+                  PROC_SCOPE_PHYSICAL_DEVICE, 0, VK_API_VERSION_1_0)
 MOMOTEN_VOID_PROC(vkGetPhysicalDeviceProperties2, impl_get_physical_device_properties2,
                   (VkPhysicalDevice physical, VkPhysicalDeviceProperties2* properties), (physical, properties),
-                  PROC_SCOPE_INSTANCE, 0, VK_API_VERSION_1_1)
+                  PROC_SCOPE_PHYSICAL_DEVICE, 0, VK_API_VERSION_1_1)
 MOMOTEN_VOID_PROC(vkGetPhysicalDeviceProperties2KHR, impl_get_physical_device_properties2,
                   (VkPhysicalDevice physical, VkPhysicalDeviceProperties2* properties), (physical, properties),
-                  PROC_SCOPE_INSTANCE, VK_KHR_GET_PHYSICAL_DEVICE_PROPERTIES_2_EXTENSION_NAME, 0)
+                  PROC_SCOPE_PHYSICAL_DEVICE, VK_KHR_GET_PHYSICAL_DEVICE_PROPERTIES_2_EXTENSION_NAME, 0)
 MOMOTEN_VOID_PROC(vkGetPhysicalDeviceQueueFamilyProperties, impl_get_physical_device_queue_family_properties,
                   (VkPhysicalDevice physical, uint32_t* count, VkQueueFamilyProperties* properties),
-                  (physical, count, properties), PROC_SCOPE_INSTANCE, 0, VK_API_VERSION_1_0)
+                  (physical, count, properties), PROC_SCOPE_PHYSICAL_DEVICE, 0, VK_API_VERSION_1_0)
 MOMOTEN_VOID_PROC(vkGetPhysicalDeviceQueueFamilyProperties2, impl_get_physical_device_queue_family_properties2,
                   (VkPhysicalDevice physical, uint32_t* count, VkQueueFamilyProperties2* properties),
-                  (physical, count, properties), PROC_SCOPE_INSTANCE, 0, VK_API_VERSION_1_1)
+                  (physical, count, properties), PROC_SCOPE_PHYSICAL_DEVICE, 0, VK_API_VERSION_1_1)
 MOMOTEN_VOID_PROC(vkGetPhysicalDeviceQueueFamilyProperties2KHR, impl_get_physical_device_queue_family_properties2,
                   (VkPhysicalDevice physical, uint32_t* count, VkQueueFamilyProperties2* properties),
-                  (physical, count, properties), PROC_SCOPE_INSTANCE,
+                  (physical, count, properties), PROC_SCOPE_PHYSICAL_DEVICE,
                   VK_KHR_GET_PHYSICAL_DEVICE_PROPERTIES_2_EXTENSION_NAME, 0)
 MOMOTEN_VOID_PROC(vkGetPhysicalDeviceMemoryProperties, impl_get_physical_device_memory_properties,
                   (VkPhysicalDevice physical, VkPhysicalDeviceMemoryProperties* properties), (physical, properties),
-                  PROC_SCOPE_INSTANCE, 0, VK_API_VERSION_1_0)
+                  PROC_SCOPE_PHYSICAL_DEVICE, 0, VK_API_VERSION_1_0)
 MOMOTEN_VOID_PROC(vkGetPhysicalDeviceMemoryProperties2, impl_get_physical_device_memory_properties2,
                   (VkPhysicalDevice physical, VkPhysicalDeviceMemoryProperties2* properties), (physical, properties),
-                  PROC_SCOPE_INSTANCE, 0, VK_API_VERSION_1_1)
+                  PROC_SCOPE_PHYSICAL_DEVICE, 0, VK_API_VERSION_1_1)
 MOMOTEN_VOID_PROC(vkGetPhysicalDeviceMemoryProperties2KHR, impl_get_physical_device_memory_properties2,
                   (VkPhysicalDevice physical, VkPhysicalDeviceMemoryProperties2* properties), (physical, properties),
-                  PROC_SCOPE_INSTANCE, VK_KHR_GET_PHYSICAL_DEVICE_PROPERTIES_2_EXTENSION_NAME, 0)
+                  PROC_SCOPE_PHYSICAL_DEVICE, VK_KHR_GET_PHYSICAL_DEVICE_PROPERTIES_2_EXTENSION_NAME, 0)
 MOMOTEN_VOID_PROC(vkGetPhysicalDeviceFormatProperties, impl_get_physical_device_format_properties,
                   (VkPhysicalDevice physical, VkFormat format, VkFormatProperties* properties),
-                  (physical, format, properties), PROC_SCOPE_INSTANCE, 0, VK_API_VERSION_1_0)
+                  (physical, format, properties), PROC_SCOPE_PHYSICAL_DEVICE, 0, VK_API_VERSION_1_0)
 MOMOTEN_VOID_PROC(vkGetPhysicalDeviceFormatProperties2, impl_get_physical_device_format_properties2,
                   (VkPhysicalDevice physical, VkFormat format, VkFormatProperties2* properties),
-                  (physical, format, properties), PROC_SCOPE_INSTANCE, 0, VK_API_VERSION_1_1)
+                  (physical, format, properties), PROC_SCOPE_PHYSICAL_DEVICE, 0, VK_API_VERSION_1_1)
 MOMOTEN_VOID_PROC(vkGetPhysicalDeviceFormatProperties2KHR, impl_get_physical_device_format_properties2,
                   (VkPhysicalDevice physical, VkFormat format, VkFormatProperties2* properties),
-                  (physical, format, properties), PROC_SCOPE_INSTANCE,
+                  (physical, format, properties), PROC_SCOPE_PHYSICAL_DEVICE,
                   VK_KHR_GET_PHYSICAL_DEVICE_PROPERTIES_2_EXTENSION_NAME, 0)
 MOMOTEN_RESULT_PROC(vkGetPhysicalDeviceImageFormatProperties, impl_get_physical_device_image_format_properties,
                     (VkPhysicalDevice physical, VkFormat format, VkImageType type, VkImageTiling tiling,
                      VkImageUsageFlags usage, VkImageCreateFlags flags, VkImageFormatProperties* properties),
                     (physical, format, type, tiling, usage, flags, properties),
-                    PROC_SCOPE_INSTANCE, 0, VK_API_VERSION_1_0)
+                    PROC_SCOPE_PHYSICAL_DEVICE, 0, VK_API_VERSION_1_0)
+// Vulkan 1.0 requires this entry point even if sparse image formats are unsupported.
+MOMOTEN_VOID_PROC(vkGetPhysicalDeviceSparseImageFormatProperties, impl_get_physical_device_sparse_image_format_properties,
+                  (VkPhysicalDevice physical, VkFormat format, VkImageType type, VkSampleCountFlagBits samples,
+                   VkImageUsageFlags usage, VkImageTiling tiling, uint32_t* count,
+                   VkSparseImageFormatProperties* properties),
+                  (physical, format, type, samples, usage, tiling, count, properties),
+                  PROC_SCOPE_PHYSICAL_DEVICE, 0, VK_API_VERSION_1_0)
 MOMOTEN_RESULT_PROC(vkGetPhysicalDeviceImageFormatProperties2, impl_get_physical_device_image_format_properties2,
                     (VkPhysicalDevice physical, const VkPhysicalDeviceImageFormatInfo2* info,
                      VkImageFormatProperties2* properties),
                     (physical, info, properties),
-                    PROC_SCOPE_INSTANCE, 0, VK_API_VERSION_1_1)
+                    PROC_SCOPE_PHYSICAL_DEVICE, 0, VK_API_VERSION_1_1)
 MOMOTEN_RESULT_PROC(vkGetPhysicalDeviceImageFormatProperties2KHR, impl_get_physical_device_image_format_properties2,
                     (VkPhysicalDevice physical, const VkPhysicalDeviceImageFormatInfo2* info,
                      VkImageFormatProperties2* properties),
                     (physical, info, properties),
-                    PROC_SCOPE_INSTANCE, VK_KHR_GET_PHYSICAL_DEVICE_PROPERTIES_2_EXTENSION_NAME, 0)
+                    PROC_SCOPE_PHYSICAL_DEVICE, VK_KHR_GET_PHYSICAL_DEVICE_PROPERTIES_2_EXTENSION_NAME, 0)
 MOMOTEN_RESULT_PROC(vkEnumerateDeviceExtensionProperties, impl_enumerate_device_extension_properties,
                     (VkPhysicalDevice physical, const char* layer_name, uint32_t* count,
                      VkExtensionProperties* properties),
                     (physical, layer_name, count, properties),
-                    PROC_SCOPE_INSTANCE, 0, VK_API_VERSION_1_0)
+                    PROC_SCOPE_PHYSICAL_DEVICE, 0, VK_API_VERSION_1_0)
 MOMOTEN_RESULT_PROC(vkEnumerateDeviceLayerProperties, impl_enumerate_device_layer_properties,
                     (VkPhysicalDevice physical, uint32_t* count, VkLayerProperties* properties),
-                    (physical, count, properties), PROC_SCOPE_INSTANCE, 0, VK_API_VERSION_1_0)
+                    (physical, count, properties), PROC_SCOPE_PHYSICAL_DEVICE, 0, VK_API_VERSION_1_0)
 MOMOTEN_RESULT_PROC(vkCreateDevice, impl_create_device,
                     (VkPhysicalDevice physical, const VkDeviceCreateInfo* create_info,
                      const VkAllocationCallbacks* allocator, VkDevice* device),
-                    (physical, create_info, allocator, device), PROC_SCOPE_INSTANCE, 0, VK_API_VERSION_1_0)
+                    (physical, create_info, allocator, device), PROC_SCOPE_PHYSICAL_DEVICE, 0, VK_API_VERSION_1_0)
 
 MOMOTEN_PFN_PROC(vkGetDeviceProcAddr, impl_get_device_proc_addr,
                  (VkDevice device, const char* name), (device, name), PROC_SCOPE_DEVICE, 0, VK_API_VERSION_1_0)

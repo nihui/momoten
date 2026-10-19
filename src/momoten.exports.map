@@ -4,6 +4,7 @@
 {
     global:
         vk*;
+        HMI;
     local:
         *;
 };

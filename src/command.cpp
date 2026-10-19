@@ -58,6 +58,7 @@ VkResult impl_allocate_command_buffers(
     for (uint32_t i = 0; i < info->commandBufferCount; i++)
     {
         VkCommandBuffer_T* buffer = new VkCommandBuffer_T;
+        set_loader_magic_value(buffer);
         buffer->device = device;
         buffer->pool = pool;
         buffer->state = momoten_detail::COMMAND_BUFFER_STATE_INITIAL;

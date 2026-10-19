@@ -5,6 +5,7 @@
 #define MOMOTEN_BACKEND_OBJECTS_H
 
 #include "../vulkan_internal.h"
+#include <vulkan/vk_icd.h>
 #include "command_stream.h"
 #include "device_profile.h"
 #include "memory_state.h"
@@ -20,6 +21,7 @@
 
 struct VkInstance_T
 {
+    VK_LOADER_DATA loader_data;
     uint32_t api_version;
     std::vector<std::string> enabled_extensions;
     std::vector<VkPhysicalDevice> physical_devices;
@@ -27,6 +29,7 @@ struct VkInstance_T
 
 struct VkPhysicalDevice_T
 {
+    VK_LOADER_DATA loader_data;
     VkInstance owner;
     cl_platform_id platform;
     cl_device_id device;
@@ -61,6 +64,7 @@ struct PendingSubmission
 
 struct VkDevice_T
 {
+    VK_LOADER_DATA loader_data;
     VkPhysicalDevice physical_device;
     uint32_t api_version;
     std::vector<std::string> enabled_extensions;
@@ -79,6 +83,7 @@ struct VkDevice_T
 
 struct VkQueue_T
 {
+    VK_LOADER_DATA loader_data;
     VkDevice device;
 };
 
@@ -163,6 +168,7 @@ struct CommandPool
 
 struct VkCommandBuffer_T
 {
+    VK_LOADER_DATA loader_data;
     VkDevice device;
     std::weak_ptr<CommandPool> pool;
     momoten_detail::CommandBufferState state;

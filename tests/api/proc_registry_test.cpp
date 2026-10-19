@@ -3,6 +3,11 @@
 
 #include <vulkan/vulkan.h>
 
+#if defined(__ANDROID__)
+#include "../../src/android/hwvulkan_abi.h"
+#include <cerrno>
+#endif
+
 #include <cstdio>
 #include <cstring>
 #include <string>
@@ -19,6 +24,7 @@ enum ProcScope
     PROC_SCOPE_NONE = -1,
     PROC_SCOPE_GLOBAL,
     PROC_SCOPE_INSTANCE,
+    PROC_SCOPE_PHYSICAL_DEVICE,
     PROC_SCOPE_DEVICE
 };
 
@@ -105,7 +111,10 @@ static void close_library(void* library)
 #endif
 }
 
-static int verify_instance_registry(VkInstance instance, uint32_t api_version,
+typedef PFN_vkVoidFunction(VKAPI_PTR* GetPhysicalDeviceProcAddr)(VkInstance instance, const char* name);
+
+static int verify_instance_registry(GetPhysicalDeviceProcAddr physical_proc,
+                                    VkInstance instance, uint32_t api_version,
                                     const std::vector<std::string>& instance_extensions,
                                     const std::vector<std::string>& device_extensions)
 {
@@ -120,6 +129,28 @@ static int verify_instance_registry(VkInstance instance, uint32_t api_version,
                     expectations[i].name);
             return 1;
         }
+        const bool physical_expected = expected && expectations[i].scope == PROC_SCOPE_PHYSICAL_DEVICE;
+        const PFN_vkVoidFunction physical_found = physical_proc(instance, expectations[i].name);
+        if ((physical_found != 0) != physical_expected ||
+            (physical_found && physical_found != vkGetInstanceProcAddr(instance, expectations[i].name)))
+        {
+            fprintf(stderr, "proc_registry_test: physical-device lookup mismatch for %s\n",
+                    expectations[i].name);
+            return 1;
+        }
+    }
+    // These checks are independent of the manifest's scope metadata.
+    if (!physical_proc(instance, "vkGetPhysicalDeviceFeatures") ||
+        !physical_proc(instance, "vkCreateDevice") ||
+        !physical_proc(instance, "vkEnumerateDeviceExtensionProperties") ||
+        physical_proc(instance, "vkDestroyInstance") ||
+        physical_proc(instance, "vkEnumeratePhysicalDevices") ||
+        physical_proc(instance, "vkDestroyDevice") ||
+        physical_proc(instance, "vkUnknownMomotenCommand") ||
+        physical_proc(instance, 0))
+    {
+        fprintf(stderr, "proc_registry_test: invalid physical-device dispatch scope\n");
+        return 1;
     }
     return 0;
 }
@@ -195,6 +226,39 @@ int main(int argc, char** argv)
         fprintf(stderr, "proc_registry_test: cannot open driver %s\n", argv[1]);
         return 1;
     }
+    GetPhysicalDeviceProcAddr physical_proc = reinterpret_cast<GetPhysicalDeviceProcAddr>(
+        find_symbol(library, "vk_icdGetPhysicalDeviceProcAddr"));
+    if (!physical_proc || physical_proc(VK_NULL_HANDLE, "vkGetPhysicalDeviceFeatures"))
+    {
+        fprintf(stderr, "proc_registry_test: invalid physical-device resolver\n");
+        close_library(library);
+        return 1;
+    }
+#if defined(__ANDROID__)
+    MomotenHwVulkanModule* hal = reinterpret_cast<MomotenHwVulkanModule*>(find_symbol(library, "HMI"));
+    if (!hal || hal->common.tag != MOMOTEN_HW_MODULE_TAG ||
+        strcmp(hal->common.id, MOMOTEN_HWVULKAN_MODULE_ID) != 0 || !hal->common.methods)
+        return 1;
+    MomotenHwDevice* hal_device = 0;
+    if (hal->common.methods->open(&hal->common, MOMOTEN_HWVULKAN_DEVICE_0, 0) != -EINVAL ||
+        hal->common.methods->open(0, MOMOTEN_HWVULKAN_DEVICE_0, &hal_device) != -ENOENT ||
+        hal->common.methods->open(&hal->common, 0, &hal_device) != -ENOENT ||
+        hal->common.methods->open(&hal->common, "invalid", &hal_device) != -ENOENT || hal_device ||
+        hal->common.methods->open(&hal->common, MOMOTEN_HWVULKAN_DEVICE_0, &hal_device) != 0 || !hal_device)
+        return 1;
+    MomotenHwVulkanDevice* hal_vulkan = reinterpret_cast<MomotenHwVulkanDevice*>(hal_device);
+    if (hal_device->module != &hal->common || hal_device->tag != MOMOTEN_HW_DEVICE_TAG ||
+        !hal_vulkan->EnumerateInstanceExtensionProperties || !hal_vulkan->CreateInstance ||
+        !hal_vulkan->GetInstanceProcAddr || hal_device->close(hal_device) != 0)
+        return 1;
+#else
+    if (find_symbol(library, "HMI"))
+    {
+        fprintf(stderr, "proc_registry_test: Android HAL exported on a non-Android build\n");
+        close_library(library);
+        return 1;
+    }
+#endif
     for (size_t i = 0; i < sizeof(expectations) / sizeof(expectations[0]); i++)
     {
         if (!find_symbol(library, expectations[i].name))
@@ -256,7 +320,7 @@ int main(int argc, char** argv)
         available_device_extensions.push_back(properties[i].extensionName);
 
     const std::vector<std::string> no_extension_strings;
-    if (verify_instance_registry(instance10, VK_API_VERSION_1_0,
+    if (verify_instance_registry(physical_proc, instance10, VK_API_VERSION_1_0,
                                  no_extension_strings, available_device_extensions))
         return 1;
     vkDestroyInstance(instance10, 0);
@@ -278,7 +342,7 @@ int main(int argc, char** argv)
         return 1;
     VkPhysicalDevice physical = physical_devices[0];
     const std::vector<std::string> enabled_instance_extensions(1, properties2_extension);
-    if (verify_instance_registry(instance11, VK_API_VERSION_1_1,
+    if (verify_instance_registry(physical_proc, instance11, VK_API_VERSION_1_1,
                                  enabled_instance_extensions,
                                  available_device_extensions))
         return 1;

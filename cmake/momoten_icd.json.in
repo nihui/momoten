@@ -1,0 +1,7 @@
+{
+  "file_format_version": "1.0.0",
+  "ICD": {
+    "library_path": "./@MOMOTEN_ICD_LIBRARY_FILENAME@",
+    "api_version": "1.1.0"
+  }
+}
