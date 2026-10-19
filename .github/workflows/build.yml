@@ -321,8 +321,11 @@ jobs:
               commands = re.split(r"^Load command \d+$", loads, flags=re.M)
               minimum = []
               for command in commands:
-                  if re.search(r"cmd LC_(?:VERSION_MIN_MACOSX|BUILD_VERSION)$", command, re.M):
-                      minimum += re.findall(r"^\s+(?:minos|version) (\d+\.\d+(?:\.\d+)?)$", command, re.M)
+                  if re.search(r"cmd LC_VERSION_MIN_MACOSX$", command, re.M):
+                      minimum += re.findall(r"^\s+version (\d+\.\d+(?:\.\d+)?)$", command, re.M)
+                  elif re.search(r"cmd LC_BUILD_VERSION$", command, re.M):
+                      # Nested tool records also have a 'version' field.
+                      minimum += re.findall(r"^\s+minos (\d+\.\d+(?:\.\d+)?)$", command, re.M)
               assert minimum == [os.environ["MACOSX_DEPLOYMENT_TARGET"]], minimum
               assert "LC_RPATH" not in loads, "Unexpected runtime search path"
               assert "LC_LOAD_WEAK_DYLIB" not in loads, "Unexpected weak dylib dependency"
