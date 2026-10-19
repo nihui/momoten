@@ -55,8 +55,11 @@ function(check_opencl_c_1_0 name input)
         file(APPEND "${source}" "}\n")
     endif()
 
+    # Syntax validation must not inherit the host CPU's OpenCL capabilities.
+    # SPIR exposes optional extensions such as fp16/fp64 without requiring
+    # hardware support; the separate runtime tests check actual device support.
     execute_process(
-        COMMAND "${CLANG}" -x cl -cl-std=CL1.0 -fsyntax-only
+        COMMAND "${CLANG}" -target spir64 -x cl -cl-std=CL1.0 -fsyntax-only
             ${compile_options} "${source}"
         RESULT_VARIABLE compile_result
         OUTPUT_VARIABLE compile_stdout

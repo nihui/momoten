@@ -19,6 +19,15 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  macos-native-diagnostics:
+    runs-on: macos-15-intel
+    steps:
+      - uses: actions/checkout@v7
+      - name: Compare native OpenCL kernel compilation and dispatch
+        run: |
+          clang++ tests/runtime/apple_barrier_probe.cpp -framework OpenCL -o probe
+          ./probe
+
   linux:
     name: linux-${{ matrix.name }}-manylinux2014
     runs-on: ubuntu-22.04
