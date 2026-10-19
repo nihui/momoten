@@ -6,6 +6,7 @@ name: build
 on:
   push:
     branches: [main]
+    tags: ['v*']
   pull_request:
   workflow_dispatch:
 
@@ -138,6 +139,284 @@ jobs:
           path: momoten-linux-${{ matrix.name }}.tar.gz
           if-no-files-found: error
 
+  macos:
+    name: macos-${{ matrix.arch }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {arch: x86_64, runner: macos-15-intel, deployment_target: '10.13'}
+          - {arch: arm64, runner: macos-15, deployment_target: '11.0'}
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_16.4.app/Contents/Developer
+      MACOSX_DEPLOYMENT_TARGET: ${{ matrix.deployment_target }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: recursive
+
+      - name: Install test tools
+        run: brew install glslang vulkan-loader
+
+      - name: Back-deploy SPIRV-Tools integer parsing on Intel
+        if: matrix.arch == 'x86_64'
+        run: |
+          git -C third_party/spirv-tools apply --check ../../cmake/patches/spirv-tools-charconv.patch
+          git -C third_party/spirv-tools apply ../../cmake/patches/spirv-tools-charconv.patch
+
+      - name: Configure native macOS build
+        run: |
+          test "$(uname -m)" = "${{ matrix.arch }}"
+          xcodebuild -version
+          test -f "$(xcrun --show-sdk-path)/System/Library/Frameworks/OpenCL.framework/OpenCL.tbd"
+          cmake -S . -B build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_OSX_ARCHITECTURES="${{ matrix.arch }}" \
+            -DCMAKE_OSX_DEPLOYMENT_TARGET="$MACOSX_DEPLOYMENT_TARGET" \
+            "-DCMAKE_C_FLAGS=-Werror=unguarded-availability -Werror=unguarded-availability-new" \
+            "-DCMAKE_CXX_FLAGS=-Werror=unguarded-availability -Werror=unguarded-availability-new" \
+            -DCMAKE_SHARED_LINKER_FLAGS=-Wl,-no_warn_duplicate_libraries,-fatal_warnings \
+            -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
+            -DCMAKE_INSTALL_LIBDIR=lib \
+            -DCMAKE_INSTALL_NAME_DIR=@rpath \
+            -DMOMOTEN_BUILD_DRIVER=ON \
+            -DMOMOTEN_BUILD_TRANSLATOR=ON \
+            -DMOMOTEN_BUILD_AMALGAMATION=ON \
+            -DMOMOTEN_BUILD_TOOLS=OFF \
+            -DMOMOTEN_BUILD_TESTS=ON \
+            -DMOMOTEN_GLSLANG_VALIDATOR="$(command -v glslangValidator)" \
+            -DMOMOTEN_TEST_OPENCL_LIBRARY="$(xcrun --show-sdk-path)/System/Library/Frameworks/OpenCL.framework/OpenCL.tbd" \
+            -DMOMOTEN_INSTALL=ON
+
+      - name: Check deployment flags cover every compiled dependency
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+          import shlex
+          commands = json.loads(Path("build/compile_commands.json").read_text())
+          assert commands
+          for entry in commands:
+              args = shlex.split(entry["command"])
+              assert "-mmacosx-version-min=" + os.environ["MACOSX_DEPLOYMENT_TARGET"] in args, entry
+              assert "-Werror=unguarded-availability" in args, entry
+              assert "-Werror=unguarded-availability-new" in args, entry
+              assert not any("DISABLE_AVAILABILITY" in arg for arg in args), entry
+          print("Checked deployment and availability flags on", len(commands), "compilation units")
+          PY
+
+      - name: Build modular and amalgamated drivers and tests
+        run: cmake --build build --parallel 3
+
+      - name: Probe hosted Intel OpenCL kernel capabilities
+        if: matrix.arch == 'x86_64'
+        run: |
+          clang++ -std=c++11 -Wall -Wextra -Werror tests/runtime/apple_barrier_probe.cpp \
+            -framework OpenCL -o "$RUNNER_TEMP/apple-cpu-probe"
+          python3 - <<'PYPROBE'
+          import json
+          import os
+          from pathlib import Path
+          import platform
+          import subprocess
+          import sys
+
+          assert sys.platform == "darwin" and platform.machine() == "x86_64"
+          assert os.environ["GITHUB_ACTIONS"] == "true"
+          assert os.environ["RUNNER_ENVIRONMENT"] == "github-hosted"
+          assert os.environ["RUNNER_ARCH"] == "X64"
+          Path("build/ci-runtime-exclusions.json").unlink(missing_ok=True)
+          result = subprocess.run([os.environ["RUNNER_TEMP"] + "/apple-cpu-probe"], timeout=60)
+          if result.returncode == 77:
+              # Every excluded shader needs a four-lane barrier. The direct
+              # simple-buffer test additionally exposes the struct argument ABI.
+              exclusions = {
+                  "momoten_opencl_simple": "Apple CPU barrier workgroup limit and by-value struct ABI",
+                  "momoten_opencl_subgroup_basic": "Apple CPU barrier workgroup limit",
+                  "momoten_driver_simple": "Apple CPU barrier workgroup limit (pipeline rejected)",
+                  "momoten_program_cache": "Apple CPU barrier workgroup limit (pipeline rejected)",
+                  "momoten_amalgamated_driver_simple": "Apple CPU barrier workgroup limit (pipeline rejected)",
+              }
+              Path("build/ci-runtime-exclusions.json").write_text(json.dumps(exclusions))
+              for name, reason in exclusions.items():
+                  print(f"::notice::NOT RUN: {name}: {reason}; independently reproduced with native SDK kernels")
+          elif result.returncode != 0:
+              raise SystemExit(result.returncode)
+          PYPROBE
+
+      - name: Run generic tests (report unavailable runtime capabilities explicitly)
+        run: |
+          python3 - <<'PYTEST'
+          import json
+          from pathlib import Path
+          import re
+          import subprocess
+
+          args = ["ctest", "--test-dir", "build", "--output-on-failure", "--timeout", "180",
+                  "--output-junit", "ctest.xml"]
+          report = Path("build/ci-runtime-exclusions.json")
+          if report.exists():
+              exclusions = json.loads(report.read_text())
+              inventory = json.loads(subprocess.check_output(
+                  ["ctest", "--test-dir", "build", "--show-only=json-v1"], text=True))
+              assert set(exclusions) <= {test["name"] for test in inventory["tests"]}
+              args += ["--exclude-regex", "^(" + "|".join(re.escape(name) for name in exclusions) + ")$"]
+          raise SystemExit(subprocess.run(args).returncode)
+          PYTEST
+
+      - name: Report test coverage
+        if: always()
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+          import xml.etree.ElementTree as ET
+
+          exclusions_file = Path("build/ci-runtime-exclusions.json")
+          exclusions = json.loads(exclusions_file.read_text()) if exclusions_file.exists() else {}
+          report = Path("build/ctest.xml")
+          if report.exists():
+              tests = ET.parse(report).getroot().findall("testcase")
+              skipped = [test.attrib["name"] for test in tests if test.find("skipped") is not None]
+              failed = [test.attrib["name"] for test in tests if test.find("failure") is not None]
+              with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as summary:
+                  passed = len(tests) - len(failed) - len(skipped)
+                  summary.write(f"CTest: {len(tests) + len(exclusions)} registered, {passed} passed, "
+                                f"{len(failed)} failed, {len(skipped)} skipped, "
+                                f"{len(exclusions)} not run after native capability checks.\n\n")
+                  for name in skipped:
+                      summary.write(f"- Skipped (OpenCL runtime or optional feature unavailable): {name}\n")
+                  for name, reason in exclusions.items():
+                      summary.write(f"- NOT RUN: {name}: {reason} (native SDK reproduction).\n")
+          PY
+
+      - name: Install stripped runtime
+        run: cmake --install build --strip --prefix stage
+
+      - name: Verify Mach-O architecture, deployment target and dependencies
+        env:
+          EXPECTED_ARCH: ${{ matrix.arch }}
+        run: |
+          test -f stage/lib/libmomoten.dylib
+          test ! -L stage/lib/libmomoten.dylib
+          test -f stage/lib/momoten_icd.json
+          test "$(find stage -type f | wc -l | tr -d ' ')" -eq 2
+          python3 - <<'PY'
+          import os
+          from pathlib import Path
+          import re
+          import subprocess
+
+          for library in (Path("stage/lib/libmomoten.dylib"), Path("build/libmomoten-amalgamated.dylib")):
+              def output(*args):
+                  return subprocess.check_output(args, text=True).strip()
+              assert output("lipo", "-archs", str(library)) == os.environ["EXPECTED_ARCH"]
+              identity = output("otool", "-D", str(library)).splitlines()[1].strip()
+              assert identity == "@rpath/" + library.name, identity
+              loads = output("otool", "-l", str(library))
+              commands = re.split(r"^Load command \d+$", loads, flags=re.M)
+              minimum = []
+              for command in commands:
+                  if re.search(r"cmd LC_VERSION_MIN_MACOSX$", command, re.M):
+                      minimum += re.findall(r"^\s+version (\d+\.\d+(?:\.\d+)?)$", command, re.M)
+                  elif re.search(r"cmd LC_BUILD_VERSION$", command, re.M):
+                      # Nested tool records also have a 'version' field.
+                      minimum += re.findall(r"^\s+minos (\d+\.\d+(?:\.\d+)?)$", command, re.M)
+              assert minimum == [os.environ["MACOSX_DEPLOYMENT_TARGET"]], minimum
+              assert "LC_RPATH" not in loads, "Unexpected runtime search path"
+              assert "LC_LOAD_WEAK_DYLIB" not in loads, "Unexpected weak dylib dependency"
+              assert "__DWARF" not in loads, "Unexpected debug sections"
+              dependencies = output("otool", "-L", str(library)).splitlines()[2:]
+              names = {dependency.strip().split(" (", 1)[0] for dependency in dependencies}
+              assert names == {"/usr/lib/libc++.1.dylib", "/usr/lib/libSystem.B.dylib"}, names
+              imports = output("nm", "-m", "-u", str(library))
+              assert imports, "Missing imported-symbol inventory"
+              print("Imported system symbols for", library, "\n" + imports)
+              assert "(dynamically looked up)" not in imports, "Unbound system symbol"
+              # A regression guard, not an exhaustive old-OS symbol database.
+              # Clang availability checking is mandatory for all source units.
+              if os.environ["EXPECTED_ARCH"] == "x86_64":
+                  assert "LC_DYLD_CHAINED_FIXUPS" not in loads, "Modern dyld fixups"
+                  assert "LC_DYLD_EXPORTS_TRIE" not in loads, "Modern dyld exports"
+                  for newer_api in ("from_chars", "to_chars", "__fs", "filesystem",
+                                    "_aligned_alloc", "_timespec_get", "____chkstk_darwin",
+                                    "_os_unfair_lock_lock_with_options"):
+                      assert newer_api not in imports, ("Newer runtime API", newer_api)
+              exports = output("nm", "-gU", str(library))
+              for symbol in ("vkGetInstanceProcAddr", "vkCreateInstance", "vk_icdGetInstanceProcAddr",
+                             "vk_icdGetPhysicalDeviceProcAddr", "vk_icdNegotiateLoaderICDInterfaceVersion"):
+                  assert re.search(r"\b_" + symbol + r"$", exports, re.M), symbol
+              print(library, identity, minimum, dependencies, "size:", library.stat().st_size)
+          PY
+
+      - name: Smoke test installed ICD and amalgamation with Apple OpenCL
+        run: |
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          manifest = json.loads(Path("stage/lib/momoten_icd.json").read_text())
+          manifest["ICD"]["library_path"] = "./libmomoten-amalgamated.dylib"
+          Path("build/momoten-amalgamated-icd.json").write_text(json.dumps(manifest))
+          PY
+          probe_args=()
+          if [ "$(uname -m)" = arm64 ]; then
+            clang tests/runtime/apple_opencl_probe.c -framework OpenCL -o "$RUNNER_TEMP/apple-opencl-probe"
+            probe_args=(--apple-opencl-unavailable-probe "$RUNNER_TEMP/apple-opencl-probe")
+          fi
+          for variant in modular amalgamated; do
+            if [ "$variant" = modular ]; then
+              library=stage/lib/libmomoten.dylib
+              manifest=stage/lib/momoten_icd.json
+            else
+              library=build/libmomoten-amalgamated.dylib
+              manifest=build/momoten-amalgamated-icd.json
+            fi
+            set +e
+            MOMOTEN_DEBUG=1 python3 tests/runtime/vulkan_loader_smoke.py "$library" "$manifest" \
+              --loader "$(brew --prefix vulkan-loader)/lib/libvulkan.1.dylib" \
+              --probe-opencl /System/Library/Frameworks/OpenCL.framework/OpenCL "${probe_args[@]}"
+            result=$?
+            set -e
+            case "$result" in
+              0) echo "- $variant: ICD ABI and system Vulkan Loader runtime passed" >> "$GITHUB_STEP_SUMMARY" ;;
+              77) echo "::notice::$variant: ICD ABI passed; runtime skipped because no compatible Apple OpenCL device is exposed"
+                  echo "- $variant: ICD ABI passed; OpenCL/Vulkan runtime SKIPPED (no compatible device)" >> "$GITHUB_STEP_SUMMARY" ;;
+              78) echo "::notice::$variant: ICD ABI passed; Apple OpenCL runtime unavailable (native SDK also returns CL_INVALID_VALUE)"
+                  echo "- $variant: ICD ABI passed; OpenCL/Vulkan runtime SKIPPED (Apple framework CL_INVALID_VALUE, independently reproduced with the SDK)" >> "$GITHUB_STEP_SUMMARY" ;;
+              *) exit "$result" ;;
+            esac
+          done
+
+      - name: Package macOS runtime
+        run: |
+          cp LICENSE.txt THIRD_PARTY_NOTICES.md stage/
+          tar -czf "momoten-macos-${{ matrix.arch }}.tar.gz" \
+            -C stage/lib libmomoten.dylib momoten_icd.json \
+            -C "$GITHUB_WORKSPACE/stage" LICENSE.txt THIRD_PARTY_NOTICES.md
+          mkdir relocated
+          tar -xzf "momoten-macos-${{ matrix.arch }}.tar.gz" -C relocated
+          python3 - <<'PY'
+          import ctypes
+          import json
+          from pathlib import Path
+          manifest = Path("relocated/momoten_icd.json").resolve()
+          info = json.loads(manifest.read_text())
+          library = manifest.parent / info["ICD"]["library_path"]
+          assert library.name == "libmomoten.dylib"
+          assert ctypes.CDLL(str(library)).vkGetInstanceProcAddr
+          print("Packaged runtime loads after extraction:", library)
+          PY
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: momoten-macos-${{ matrix.arch }}
+          path: momoten-macos-${{ matrix.arch }}.tar.gz
+          if-no-files-found: error
+
   windows:
     name: windows-${{ matrix.name }}
     runs-on: windows-2022
@@ -237,6 +516,8 @@ jobs:
         run: |
           # The pinned optimizer.cpp uses std::from_chars (C++17),
           # which the r17c libc++ does not yet provide.
+          git -C third_party/spirv-tools apply --check ../../cmake/patches/spirv-tools-charconv.patch
+          git -C third_party/spirv-tools apply ../../cmake/patches/spirv-tools-charconv.patch
           git -C third_party/spirv-tools apply --check ../../cmake/patches/spirv-tools-ndk-r17c.patch
           git -C third_party/spirv-tools apply ../../cmake/patches/spirv-tools-ndk-r17c.patch
           # r17c libc++ also lacks the C++17 std::optional deduction guide.
@@ -343,3 +624,89 @@ jobs:
           name: momoten-android-${{ matrix.abi }}-api${{ matrix.api }}
           path: stage/
           if-no-files-found: error
+
+  package-release:
+    name: package-release
+    needs: [linux, macos, windows, android]
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: momoten-*
+          path: artifacts
+
+      # Exercise release aggregation on PRs too, without publishing anything.
+      - name: Assemble release archives and checksums
+        run: |
+          python3 - <<'PY'
+          import hashlib
+          from pathlib import Path
+          import shutil
+          import tarfile
+          import zipfile
+
+          targets = ["linux-x86_64", "linux-x86", "macos-x86_64", "macos-arm64",
+                     "windows-x86_64", "windows-x86", "android-armeabi-v7a-api14",
+                     "android-x86-api14", "android-arm64-v8a-api21", "android-x86_64-api21"]
+          expected = {"momoten-" + target for target in targets}
+          artifacts = Path("artifacts")
+          # A rerun may also download the previous aggregate from this run.
+          actual = {path.name for path in artifacts.iterdir()} - {"momoten-release"}
+          assert actual == expected, "Incomplete artifact matrix"
+          release = Path("release")
+          release.mkdir()
+          notices = {"LICENSE.txt", "THIRD_PARTY_NOTICES.md"}
+          for name in sorted(expected):
+              directory = artifacts / name
+              files = {path.relative_to(directory).as_posix() for path in directory.rglob("*") if path.is_file()}
+              if name.startswith(("momoten-linux-", "momoten-macos-")):
+                  archive = name + ".tar.gz"
+                  assert files == {archive}, (name, files)
+                  runtime = "libmomoten.dylib" if "-macos-" in name else "libmomoten.so"
+                  with tarfile.open(directory / archive) as bundle:
+                      assert set(bundle.getnames()) == notices | {runtime, "momoten_icd.json"}
+                      assert all(member.isfile() for member in bundle.getmembers())
+                  shutil.copy2(directory / archive, release / archive)
+              else:
+                  runtime = {"bin/momoten.dll", "bin/momoten_icd.json"} if "-windows-" in name else {"lib/libmomoten.so"}
+                  assert files == notices | runtime, (name, files)
+                  with zipfile.ZipFile(release / (name + ".zip"), "w", zipfile.ZIP_DEFLATED) as bundle:
+                      for filename in sorted(files):
+                          bundle.write(directory / filename, filename)
+          archives = sorted(release.iterdir())
+          assert len(archives) == len(expected)
+          (release / "SHA256SUMS").write_text("".join(
+              hashlib.sha256(path.read_bytes()).hexdigest() + "  " + path.name + "\n"
+              for path in archives))
+          PY
+          (cd release && sha256sum --check SHA256SUMS)
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: momoten-release
+          path: release/
+          if-no-files-found: error
+          overwrite: true
+
+  release:
+    name: publish-tagged-release
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    needs: package-release
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: momoten-release
+          path: release
+
+      - name: Publish verified version-tag assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          (cd release && sha256sum --check SHA256SUMS)
+          gh release create "$RELEASE_TAG" release/* \
+            --verify-tag --title "$RELEASE_TAG" --generate-notes

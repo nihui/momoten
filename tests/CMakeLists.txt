@@ -1,6 +1,13 @@
 # Copyright 2026 nihui
 # SPDX-License-Identifier: Apache-2.0
 
+add_executable(momoten_optimizer_flags_test translator/optimizer_flags_test.cpp)
+target_compile_features(momoten_optimizer_flags_test PRIVATE cxx_std_11)
+target_link_libraries(momoten_optimizer_flags_test PRIVATE SPIRV-Tools-opt)
+add_test(NAME momoten_optimizer_flags COMMAND momoten_optimizer_flags_test)
+set_tests_properties(momoten_optimizer_flags PROPERTIES
+    LABELS "momoten;translator;compatibility")
+
 add_executable(momoten_memory_state_test
     runtime/memory_state_test.cpp
     "${CMAKE_CURRENT_SOURCE_DIR}/../src/backend/memory_state.cpp")
@@ -247,10 +254,20 @@ if(DEFINED NCNN_MOMOTEN_CLANG AND NOT DEFINED MOMOTEN_CLANG)
         "Path to clang used by momoten syntax tests")
 endif()
 find_program(MOMOTEN_CLANG clang)
-if(MOMOTEN_CLANG AND TARGET momoten_spv_to_clc)
+if(MOMOTEN_CLANG)
+    # Keep syntax regressions active in runtime-only CI without installing a CLI.
+    if(TARGET momoten_spv_to_clc)
+        set(momoten_syntax_translator momoten_spv_to_clc)
+    else()
+        add_executable(momoten_test_spv_to_clc
+            "${CMAKE_CURRENT_SOURCE_DIR}/../tools/momoten_spv_to_clc.cpp")
+        target_compile_features(momoten_test_spv_to_clc PRIVATE cxx_std_11)
+        target_link_libraries(momoten_test_spv_to_clc PRIVATE momoten::translator)
+        set(momoten_syntax_translator momoten_test_spv_to_clc)
+    endif()
     add_test(NAME momoten_opencl_c_1_0_syntax
         COMMAND "${CMAKE_COMMAND}"
-            -DTRANSLATOR=$<TARGET_FILE:momoten_spv_to_clc>
+            -DTRANSLATOR=$<TARGET_FILE:${momoten_syntax_translator}>
             -DCLANG=${MOMOTEN_CLANG}
             -DSPV_FILE=${momoten_test_spv}
             -DATOMIC_SPV_FILE=${momoten_atomic_test_spv}
@@ -261,6 +278,21 @@ if(MOMOTEN_CLANG AND TARGET momoten_spv_to_clc)
             -P "${CMAKE_CURRENT_SOURCE_DIR}/translator/strict_cl10_test.cmake")
     set_tests_properties(momoten_opencl_c_1_0_syntax PROPERTIES
         LABELS "momoten;translator;opencl-1.0")
+
+    add_test(NAME momoten_opencl_apple_type_aliases
+        COMMAND "${CMAKE_COMMAND}"
+            -DTRANSLATOR=$<TARGET_FILE:${momoten_syntax_translator}>
+            -DCLANG=${MOMOTEN_CLANG}
+            -DSPV_FILE=${momoten_test_spv}
+            -DATOMIC_SPV_FILE=${momoten_atomic_test_spv}
+            -DFP16_SPV_FILE=${momoten_fp16_test_spv}
+            -DFP64_SPV_FILE=${momoten_fp64_test_spv}
+            -DFP16_CONSTANT_SPV_FILE=${momoten_fp16_program_constant_test_spv}
+            -DAPPLE_TYPE_ALIASES=ON
+            -DOUTPUT_DIR=${CMAKE_CURRENT_BINARY_DIR}/apple-type-aliases
+            -P "${CMAKE_CURRENT_SOURCE_DIR}/translator/strict_cl10_test.cmake")
+    set_tests_properties(momoten_opencl_apple_type_aliases PROPERTIES
+        LABELS "momoten;translator;opencl-1.0;apple")
 endif()
 
 if(TARGET momoten_test_opencl)
@@ -358,7 +390,7 @@ if(TARGET momoten_driver)
             -P "${CMAKE_CURRENT_SOURCE_DIR}/runtime/cache_test.cmake")
     set_tests_properties(momoten_program_cache PROPERTIES
         LABELS "momoten;runtime;cache"
-        SKIP_RETURN_CODE 77)
+        SKIP_REGULAR_EXPRESSION "MOMOTEN_TEST_SKIP: no compatible OpenCL device for program cache test")
 endif()
 
 add_test(NAME momoten_source_architecture

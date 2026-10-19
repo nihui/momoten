@@ -1,12 +1,15 @@
 # Cross-platform binary build
 
 GitHub Actions builds desktop and Android libraries using the pinned Git
-submodules. The resulting packages are available as workflow artifacts.
+submodules. The resulting packages are available as workflow artifacts. Version tags matching
+`v*` also publish the verified platform archives as GitHub Release assets.
 
 | Target | ABI | Minimum Android API | Build toolchain |
 | --- | --- | --- | --- |
 | Linux | x86_64 | — | Docker manylinux2014 (glibc 2.17) |
 | Linux | x86 (i686) | — | Docker manylinux2014 (glibc 2.17) |
+| macOS | x86_64 | — | Xcode 16.4, macos-15-intel (deployment target 10.13) |
+| macOS | arm64 | — | Xcode 16.4, macos-15 (deployment target 11.0) |
 | Windows | x86_64 | — | MSVC 2022 (x64) |
 | Windows | x86 | — | MSVC 2022 (Win32) |
 | Android 4.0 | armeabi-v7a | 14 | NDK r17c |
@@ -38,12 +41,13 @@ cmake --build build-android-14 --target momoten_driver
 ```
 
 The build uses pinned SPIRV-Tools (C++17 required). NDK r17c's libc++ lacks
-`<charconv>`. For the legacy job only, the workflow applies the narrow
-`cmake/patches/spirv-tools-ndk-r17c.patch`, replacing the optimizer's two
+`<charconv>`. The legacy Android and Intel macOS jobs apply
+`cmake/patches/spirv-tools-charconv.patch`, replacing the optimizer's two
 `std::from_chars` calls with a decimal-only parser of identical accepted
-syntax and uint32 overflow behavior. The patch also gives three constexpr capability arrays explicit template
-parameters, avoiding C++17 array deduction guides missing from r17c's libc++.
-The upstream submodule and all other platform builds are unmodified. **Do not silently upgrade the minimum
+syntax and uint32 overflow behavior. Android r17c additionally applies
+`cmake/patches/spirv-tools-ndk-r17c.patch` to give three constexpr capability
+arrays explicit template parameters, avoiding missing C++17 array deduction
+guides. The upstream submodule revision and other platform builds are unchanged. **Do not silently upgrade the minimum
 Android API**. Desktop jobs check the Vulkan proc exports,
 while cross-compiled Android jobs inspect the ELF dynamic section.
 
@@ -92,7 +96,7 @@ these checks do not prove functionality on every old GPU or driver.
 ## CI matrix and cancellation
 
 The workflow produces distinct artifacts for Linux x86_64/x86,
-Windows x86_64/x86, and Android armeabi-v7a/x86 (API 14) plus
+macOS x86_64/arm64, Windows x86_64/x86, and Android armeabi-v7a/x86 (API 14) plus
 arm64-v8a/x86_64 (API 21). The Android and Linux shared libraries
 are checked for the expected ELF class. The Windows generator explicitly
 selects MSVC x64 or Win32.
@@ -103,7 +107,7 @@ jobs within the current run still use `fail-fast: false`.
 
 ## Runtime-only distribution
 
-Linux CI packages `libmomoten.so` and `LICENSE.txt`/
+Linux CI packages `libmomoten.so`, `momoten_icd.json`, and `LICENSE.txt`/
 `THIRD_PARTY_NOTICES.md` in one `momoten-linux-<arch>.tar.gz`.
 Windows and Android similarly ship only the runtime library and notices.
 No installed CMake SDK, version header, Windows import library, or
@@ -114,3 +118,109 @@ The build-tree targets `momoten::driver`, `momoten::translator`, and
 The generated version header remains build-tree metadata. Linux keeps
 `-static-libstdc++ -static-libgcc` for compatibility with older runtimes;
 changing that choice can be measured in a separate experiment.
+
+## Experimental macOS builds
+
+Native Intel and Apple Silicon jobs run on `macos-15-intel` and `macos-15`,
+respectively, with Xcode 16.4. Intel builds target macOS 10.13 (High Sierra);
+Apple Silicon builds target macOS 11.0.
+They produce separate `momoten-macos-x86_64.tar.gz` and
+`momoten-macos-arm64.tar.gz` archives containing:
+
+- `libmomoten.dylib`
+- `momoten_icd.json`
+- `LICENSE.txt` and `THIRD_PARTY_NOTICES.md`
+
+These are **build compatibility baselines**, not verified old-OS runtime
+support. CI executes on macOS 15, not 10.13 or 11, and cannot establish
+compatibility with old Mac GPUs or their OpenCL drivers. Apple lists 10.13 as
+the lower end of the deployment range for the pinned Xcode 16.4 in its
+[toolchain table](https://developer.apple.com/xcode/system-requirements).
+That is the conservative baseline used here, not proof that every earlier
+macOS version is technically impossible. Earlier targets require a separate
+legacy toolchain, SDK, dependency, and physical-runtime investigation.
+
+The dylib uses the system libc++ and libSystem; neither runtime is bundled.
+Apple's [C++ availability table](https://developer.apple.com/xcode/cpp/) puts
+integral `std::from_chars` at macOS 10.15. The Intel build therefore applies
+the same narrow decimal-parser patch used for Android r17c, without the
+Android-only deduction-guide changes. The optimizer flag regression covers
+zero, uint32 limits, overflow, signs, whitespace, and malformed separators.
+The pinned SPIRV-Tools still requires C++17; changing a deployment flag alone
+would not address its library API requirements.
+
+All compiled sources, including static SPIRV dependencies and both driver
+variants, receive the selected deployment target and hard availability errors.
+CI checks their compile commands, native Mach-O architecture, exact minimum-OS
+load command, `@rpath` install name, Vulkan/ICD exports, and exact link dependencies
+(`/usr/lib/libc++.1.dylib` and `/usr/lib/libSystem.B.dylib`). Build-machine or
+Homebrew libraries, OpenCL/Vulkan/MoltenVK links, embedded rpaths, and weak dylib
+loads are rejected. The full undefined-symbol inventory is printed for both
+drivers; an Intel guard rejects known newer libc++/libSystem API families.
+This guard is not an exhaustive old-OS symbol database or an old-OS execution
+test. CI also extracts the archive into a different directory and loads it.
+These archives are not Developer ID signed or notarized.
+
+To reproduce the Intel build with the pinned Xcode, initialize submodules,
+apply `cmake/patches/spirv-tools-charconv.patch` from `third_party/spirv-tools`,
+and configure with `CMAKE_OSX_ARCHITECTURES=x86_64` and
+`CMAKE_OSX_DEPLOYMENT_TARGET=10.13`, as shown in the workflow. Do not bypass
+availability diagnostics to force an older target.
+
+The backend dynamically opens Apple's
+`/System/Library/Frameworks/OpenCL.framework/OpenCL`; Apple OpenCL is
+deprecated and compatible devices/online compilers may be unavailable.
+No MoltenVK or Metal backend is involved. Applications may load the dylib
+and its Vulkan entry points directly. Applications using the Khronos Vulkan
+Loader need that loader installed separately and must opt in with an absolute
+`VK_DRIVER_FILES=/path/to/momoten_icd.json`. Keep the JSON next to the dylib.
+The manifest is not installed globally. momoten remains an experimental,
+non-conformant compute-only Vulkan implementation.
+
+Both modular and generated amalgamated drivers are compiled and tested;
+only the modular runtime is packaged, matching the other platforms.
+Homebrew `glslang` and `vulkan-loader` are test tools, not shipped dependencies.
+The optional direct-OpenCL tests link to the SDK's framework stub; the momoten
+dylib itself still loads OpenCL dynamically.
+
+Hosted macOS VMs may not expose an OpenCL device, particularly on Apple
+Silicon. Device-independent translation/ABI/load checks always run.
+Hardware-dependent CTest cases are explicitly skipped when no compatible
+device exists, and their names/counts appear in the job summary. A separate
+Apple OpenCL probe guards the system Vulkan Loader smoke test: no compatible
+device is a reported skip. The hosted ARM64 Apple framework can instead return
+`CL_INVALID_VALUE` for valid device-enumeration calls. Only on that hosted
+architecture and system framework, CI reports this as an unavailable backend
+if an independent native SDK probe reproduces the error with both count-only
+and non-null device-buffer calls. This distinct skip does not claim hardware
+is absent. Other API errors, library-loading errors, and ICD failures remain
+failures. Passing such a build is not evidence of a successful GPU dispatch.
+
+The hosted Intel Apple CPU backend executes the fp64, int16, packed-atomic,
+and virtual-workgroup direct OpenCL tests, but currently cannot execute the
+four-lane barrier kernels used by the simple-buffer and subgroup tests. A
+separate native SDK reproducer also exposes a by-value struct-argument ABI
+mismatch. CI requires a correct four-lane control dispatch and both exact
+failure signatures before excluding five affected runtime tests; their names
+and reasons appear as **not run**, separately from passing and skipped tests.
+The remaining tests and modular/amalgamated Vulkan Loader smoke tests still
+run. See [testing](testing.md) for the precise exclusion conditions. These
+artifacts are experimental build/release deliverables, not a claim of complete
+Apple OpenCL shader, push-constant, or barrier compatibility.
+
+## Tagged releases
+
+Pull requests, pushes to `main`, and manual `workflow_dispatch` runs build
+and validate all ten platform packages. The `package-release` job checks the
+complete artifact matrix and runtime-only archive contents, then creates
+`SHA256SUMS`. It preserves Linux/macOS `.tar.gz` packages and wraps the
+Windows/Android runtime trees in `.zip` files. The aggregate is also available
+as the `momoten-release` workflow artifact, so packaging is tested before a
+release is requested.
+
+Only a push of a `v*` tag enables the final publishing job, after every build
+and aggregation job succeeds. That job alone receives `contents: write`;
+`gh release create --verify-tag` attaches the ten archives and `SHA256SUMS`
+to a release for the existing tag. PRs and manual runs cannot publish releases
+or create tags. To reproduce a build without publishing, choose **Run workflow**
+for `build` and select the desired branch.

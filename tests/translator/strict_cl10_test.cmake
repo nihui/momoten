@@ -7,6 +7,20 @@ endif()
 
 file(MAKE_DIRECTORY "${OUTPUT_DIR}")
 
+set(compile_options)
+if(APPLE_TYPE_ALIASES)
+    # Apple's cl_kernel.h exposes vector types through object-like macros.
+    # Rename Clang's actual typedefs before its builtin header is parsed, so
+    # no public typedef remains to hide a translator that destroys an alias.
+    foreach(base char uchar short ushort int uint long ulong float half double)
+        foreach(width 2 3 4 8 16)
+            list(APPEND compile_options
+                "-D${base}${width}=momo_apple_${base}${width}")
+        endforeach()
+    endforeach()
+    list(APPEND compile_options -Werror=macro-redefined)
+endif()
+
 function(check_opencl_c_1_0 name input)
     set(source "${OUTPUT_DIR}/${name}.cl")
     execute_process(
@@ -18,8 +32,35 @@ function(check_opencl_c_1_0 name input)
         message(FATAL_ERROR "${name} translation failed: ${translate_log}")
     endif()
 
+    if(APPLE_TYPE_ALIASES)
+        # Cover every emitted vector width, including scalar splats and mixed
+        # vector/scalar constructors, as well as ordinary type declarations.
+        set(bases char uchar short ushort int uint long ulong float)
+        if(name MATCHES "^fp16")
+            list(APPEND bases half)
+        elseif(name MATCHES "^fp64")
+            list(APPEND bases double)
+        endif()
+        file(APPEND "${source}" "\nvoid momo_test_type_aliases(void)\n{\n")
+        foreach(base IN LISTS bases)
+            file(APPEND "${source}"
+                "    ${base} scalar_${base} = ${base}(1);\n"
+                "    ${base}2 pair_${base} = ${base}2(scalar_${base});\n"
+                "    ${base}3 triple_${base} = ${base}3(pair_${base}, scalar_${base});\n"
+                "    ${base}4 quad_${base} = ${base}4(pair_${base}, pair_${base});\n"
+                "    ${base}8 octet_${base} = ${base}8(quad_${base}, quad_${base});\n"
+                "    ${base}16 full_${base} = ${base}16(octet_${base}, octet_${base});\n"
+                "    ${base}16 splat_${base} = ${base}16(scalar_${base});\n")
+        endforeach()
+        file(APPEND "${source}" "}\n")
+    endif()
+
+    # Syntax validation must not inherit the host CPU's OpenCL capabilities.
+    # SPIR exposes optional extensions such as fp16/fp64 without requiring
+    # hardware support; the separate runtime tests check actual device support.
     execute_process(
-        COMMAND "${CLANG}" -x cl -cl-std=CL1.0 -fsyntax-only "${source}"
+        COMMAND "${CLANG}" -target spir64 -x cl -cl-std=CL1.0 -fsyntax-only
+            ${compile_options} "${source}"
         RESULT_VARIABLE compile_result
         OUTPUT_VARIABLE compile_stdout
         ERROR_VARIABLE compile_stderr)

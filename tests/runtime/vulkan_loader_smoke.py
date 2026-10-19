@@ -4,20 +4,93 @@
 
 """Validate the ICD ABI and exercise discovery using the system Vulkan Loader."""
 
+import argparse
 import ctypes
 import json
 import os
+import platform
 from pathlib import Path
 import subprocess
 import sys
 
 
-def main():
-    if len(sys.argv) != 3:
-        raise SystemExit("usage: vulkan_loader_smoke.py LIBRARY MANIFEST")
+class OpenCLEnumerationError(RuntimeError):
+    def __init__(self, result):
+        super().__init__(f"clGetDeviceIDs failed: {result}")
+        self.result = result
 
-    library = Path(sys.argv[1]).resolve()
-    manifest = Path(sys.argv[2]).resolve()
+
+def has_opencl_device(path):
+    """Probe the actual backend, so missing hardware cannot hide an ICD failure."""
+    cl = ctypes.CDLL(path)  # A missing framework/library is an error, not a skip.
+    uint = ctypes.c_uint32
+    handle = ctypes.c_void_p
+    cl.clGetPlatformIDs.argtypes = [uint, ctypes.POINTER(handle), ctypes.POINTER(uint)]
+    cl.clGetPlatformIDs.restype = ctypes.c_int32
+    cl.clGetDeviceIDs.argtypes = [handle, ctypes.c_uint64, uint,
+                                 ctypes.POINTER(handle), ctypes.POINTER(uint)]
+    cl.clGetDeviceIDs.restype = ctypes.c_int32
+    cl.clGetDeviceInfo.argtypes = [handle, uint, ctypes.c_size_t,
+                                  ctypes.c_void_p, ctypes.c_void_p]
+    cl.clGetDeviceInfo.restype = ctypes.c_int32
+    count = uint()
+    result = cl.clGetPlatformIDs(0, None, ctypes.byref(count))
+    if result == -1001:  # CL_PLATFORM_NOT_FOUND_KHR
+        return False
+    assert result == 0, f"clGetPlatformIDs failed: {result}"
+    if count.value == 0:
+        return False
+    platforms = (handle * count.value)()
+    assert cl.clGetPlatformIDs(count, platforms, None) == 0
+    compatible = 0
+    for platform in platforms:
+        count = uint()
+        result = cl.clGetDeviceIDs(platform, 0xffffffff, 0, None, ctypes.byref(count))
+        if result == -1:  # CL_DEVICE_NOT_FOUND
+            continue
+        if result != 0:
+            raise OpenCLEnumerationError(result)
+        if count.value == 0:
+            continue
+        devices = (handle * count.value)()
+        assert cl.clGetDeviceIDs(platform, 0xffffffff, count, devices, None) == 0
+        for device in devices:
+            # Match momoten's minimum backend requirements, independently of its loader.
+            values = []
+            for parameter in (0x1027, 0x1028, 0x1026, 0x100d, 0x1003):
+                value = uint()
+                result = cl.clGetDeviceInfo(device, parameter, ctypes.sizeof(value),
+                                            ctypes.byref(value), None)
+                assert result == 0, f"clGetDeviceInfo({parameter:#x}) failed: {result}"
+                values.append(value.value)
+            available, compiler, little_endian, address_bits, dimensions = values
+            compatible += bool(available and compiler and little_endian and
+                               address_bits in (32, 64) and dimensions >= 3)
+    print(f"Compatible OpenCL devices in {path}: {compatible}", flush=True)
+    return compatible > 0
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("library")
+    parser.add_argument("manifest")
+    parser.add_argument("--loader", default="libvulkan.so.1",
+                        help="system Vulkan Loader library (not the momoten ICD)")
+    parser.add_argument("--probe-opencl", metavar="LIBRARY",
+                        help="return 77 only if this backend has no compatible devices")
+    parser.add_argument("--apple-opencl-unavailable-probe", metavar="EXECUTABLE",
+                        help="on hosted macOS ARM64, confirm Apple's -30 error with a native SDK probe")
+    args = parser.parse_args()
+    if args.apple_opencl_unavailable_probe:
+        assert (sys.platform == "darwin" and platform.machine() == "arm64" and
+                os.environ.get("GITHUB_ACTIONS") == "true" and
+                os.environ.get("RUNNER_ENVIRONMENT") == "github-hosted" and
+                os.environ.get("RUNNER_OS") == "macOS" and
+                os.environ.get("RUNNER_ARCH") == "ARM64" and
+                args.probe_opencl == "/System/Library/Frameworks/OpenCL.framework/OpenCL"), \
+            "The Apple OpenCL environment exception is restricted to hosted macOS ARM64"
+    library = Path(args.library).resolve()
+    manifest = Path(args.manifest).resolve()
     info = json.loads(manifest.read_text())
     assert info["file_format_version"] == "1.0.0"
     assert info["ICD"]["api_version"] == "1.1.0"
@@ -38,14 +111,37 @@ def main():
                  "vkGetInstanceProcAddr", "vkCreateInstance"):
         assert getattr(driver, name, None) is not None, name
 
-    # Use the *system* loader, not a direct call to the ICD. A machine with
-    # no eligible OpenCL device must provide one before running this smoke test.
+    print("ICD manifest, dynamic loading and ABI exports passed:", library, flush=True)
+    # Run this probe only when explicitly requested by hardware-limited CI.
+    # The ABI checks above still run. API errors fail, apart from the narrowly
+    # verified hosted Apple ARM64 environment limitation below.
+    if args.probe_opencl:
+        try:
+            available = has_opencl_device(args.probe_opencl)
+        except OpenCLEnumerationError as error:
+            if error.result != -30 or not args.apple_opencl_unavailable_probe:
+                raise
+            # Do not infer absent hardware from CL_INVALID_VALUE. Reproduce the
+            # failure independently, without ctypes or any momoten code.
+            probe = subprocess.run([args.apple_opencl_unavailable_probe], check=False, timeout=30)
+            if probe.returncode != 78:
+                raise
+            print("SKIP: Apple OpenCL enumeration unavailable (CL_INVALID_VALUE); "
+                  "native SDK probe agrees; system Vulkan Loader runtime untested", flush=True)
+            return 78
+        if not available:
+            print("SKIP: no compatible OpenCL device; system Vulkan Loader runtime untested",
+                  flush=True)
+            return 77
+
+    # Use the *system* loader, not a direct call to the ICD.
     script = """
 import ctypes
 import faulthandler
+import sys
 faulthandler.enable()
-print('loading libvulkan.so.1',flush=True)
-v = ctypes.CDLL('libvulkan.so.1')
+print('loading',sys.argv[1],flush=True)
+v = ctypes.CDLL(sys.argv[1])
 print('loaded system Vulkan loader',flush=True)
 class App(ctypes.Structure):
     _fields_=[('sType',ctypes.c_int),('pNext',ctypes.c_void_p),
@@ -74,7 +170,7 @@ enum.argtypes=[ctypes.c_void_p,ctypes.POINTER(ctypes.c_uint32),ctypes.c_void_p]
 enum.restype=ctypes.c_int32
 assert enum(instance,ctypes.byref(count),None) == 0
 print('Physical device count:',count.value,flush=True)
-assert count.value > 0, 'PoCL device not exposed through Vulkan Loader'
+assert count.value > 0, 'OpenCL device not exposed through Vulkan Loader'
 # Exercise the system loader's vkCreateDevice chain, not just ICD discovery.
 physical=(ctypes.c_void_p*count.value)()
 assert enum(instance,ctypes.byref(count),ctypes.cast(physical,ctypes.c_void_p)) == 0
@@ -175,7 +271,7 @@ print('destroyed Vulkan instance',flush=True)
     env["VK_DRIVER_FILES"] = str(manifest)
     env["VK_ICD_FILENAMES"] = str(manifest)  # compatibility with older loaders
     env["VK_LOADER_DEBUG"] = "driver"
-    result = subprocess.run([sys.executable, "-u", "-X", "faulthandler", "-c", script], env=env,
+    result = subprocess.run([sys.executable, "-u", "-X", "faulthandler", "-c", script, args.loader], env=env,
                             stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                             text=True, timeout=30)
     print(result.stdout, flush=True)
@@ -185,4 +281,4 @@ print('destroyed Vulkan instance',flush=True)
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())
