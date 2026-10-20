@@ -236,6 +236,7 @@ jobs:
               exclusions = {
                   "momoten_opencl_simple": "Apple CPU barrier workgroup limit and by-value struct ABI",
                   "momoten_opencl_subgroup_basic": "Apple CPU barrier workgroup limit",
+                  "momoten_opencl_vector_access": "Apple CPU barrier workgroup limit (four-lane shared-vector fixture)",
                   "momoten_driver_simple": "Apple CPU barrier workgroup limit (pipeline rejected)",
                   "momoten_program_cache": "Apple CPU barrier workgroup limit (pipeline rejected)",
                   "momoten_amalgamated_driver_simple": "Apple CPU barrier workgroup limit (pipeline rejected)",
