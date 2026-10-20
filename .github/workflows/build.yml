@@ -6,20 +6,31 @@ name: build
 on:
   push:
     branches: [main]
-    tags: ['v*']
   pull_request:
   workflow_dispatch:
 
 permissions:
   contents: read
 
-# Cancel obsolete CI runs for earlier commits on the same branch / PR.
+# Cancel obsolete CI runs, but never interrupt a manually requested release.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name != 'workflow_dispatch' }}
 
 jobs:
+  setup:
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: none
+    outputs:
+      VERSION: ${{ steps.get_version.outputs.VERSION }}
+    steps:
+      - name: Get release version
+        id: get_version
+        run: echo "VERSION=$(date -u +'%Y%m%d')" >> "$GITHUB_OUTPUT"
+
   linux:
+    needs: setup
     name: linux-${{ matrix.name }}-manylinux2014
     runs-on: ubuntu-22.04
     strategy:
@@ -129,17 +140,18 @@ jobs:
       - name: Package Linux runtime
         shell: bash
         run: |
-          tar -czf "momoten-linux-${{ matrix.name }}.tar.gz" \
+          tar -czf "momoten-${{ needs.setup.outputs.VERSION }}-linux-${{ matrix.name }}.tar.gz" \
             -C stage/lib libmomoten.so momoten_icd.json \
             -C "$GITHUB_WORKSPACE/stage" LICENSE.txt THIRD_PARTY_NOTICES.md
 
       - uses: actions/upload-artifact@v7
         with:
-          name: momoten-linux-${{ matrix.name }}
-          path: momoten-linux-${{ matrix.name }}.tar.gz
+          name: momoten-${{ needs.setup.outputs.VERSION }}-linux-${{ matrix.name }}
+          path: momoten-${{ needs.setup.outputs.VERSION }}-linux-${{ matrix.name }}.tar.gz
           if-no-files-found: error
 
   macos:
+    needs: setup
     name: macos-${{ matrix.arch }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 45
@@ -400,11 +412,11 @@ jobs:
       - name: Package macOS runtime
         run: |
           cp LICENSE.txt THIRD_PARTY_NOTICES.md stage/
-          tar -czf "momoten-macos-${{ matrix.arch }}.tar.gz" \
+          tar -czf "momoten-${{ needs.setup.outputs.VERSION }}-macos-${{ matrix.arch }}.tar.gz" \
             -C stage/lib libmomoten.dylib momoten_icd.json \
             -C "$GITHUB_WORKSPACE/stage" LICENSE.txt THIRD_PARTY_NOTICES.md
           mkdir relocated
-          tar -xzf "momoten-macos-${{ matrix.arch }}.tar.gz" -C relocated
+          tar -xzf "momoten-${{ needs.setup.outputs.VERSION }}-macos-${{ matrix.arch }}.tar.gz" -C relocated
           python3 - <<'PY'
           import ctypes
           import json
@@ -419,11 +431,12 @@ jobs:
 
       - uses: actions/upload-artifact@v7
         with:
-          name: momoten-macos-${{ matrix.arch }}
-          path: momoten-macos-${{ matrix.arch }}.tar.gz
+          name: momoten-${{ needs.setup.outputs.VERSION }}-macos-${{ matrix.arch }}
+          path: momoten-${{ needs.setup.outputs.VERSION }}-macos-${{ matrix.arch }}.tar.gz
           if-no-files-found: error
 
   windows:
+    needs: setup
     name: windows-${{ matrix.name }}
     runs-on: windows-2022
     strategy:
@@ -476,11 +489,12 @@ jobs:
 
       - uses: actions/upload-artifact@v7
         with:
-          name: momoten-windows-${{ matrix.name }}
+          name: momoten-${{ needs.setup.outputs.VERSION }}-windows-${{ matrix.name }}
           path: stage/
           if-no-files-found: error
 
   android:
+    needs: setup
     name: android-${{ matrix.abi }}-api${{ matrix.api }}
     runs-on: ubuntu-22.04
     strategy:
@@ -627,25 +641,28 @@ jobs:
 
       - uses: actions/upload-artifact@v7
         with:
-          name: momoten-android-${{ matrix.abi }}-api${{ matrix.api }}
+          name: momoten-${{ needs.setup.outputs.VERSION }}-android-${{ matrix.abi }}-api${{ matrix.api }}
           path: stage/
           if-no-files-found: error
 
   package-release:
     name: package-release
-    needs: [linux, macos, windows, android]
+    needs: [setup, linux, macos, windows, android]
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/download-artifact@v8
         with:
-          pattern: momoten-*
+          pattern: momoten-${{ needs.setup.outputs.VERSION }}-*
           path: artifacts
 
       # Exercise release aggregation on PRs too, without publishing anything.
       - name: Assemble release archives and checksums
+        env:
+          VERSION: ${{ needs.setup.outputs.VERSION }}
         run: |
           python3 - <<'PY'
           import hashlib
+          import os
           from pathlib import Path
           import shutil
           import tarfile
@@ -654,10 +671,11 @@ jobs:
           targets = ["linux-x86_64", "linux-x86", "macos-x86_64", "macos-arm64",
                      "windows-x86_64", "windows-x86", "android-armeabi-v7a-api14",
                      "android-x86-api14", "android-arm64-v8a-api21", "android-x86_64-api21"]
-          expected = {"momoten-" + target for target in targets}
+          prefix = "momoten-" + os.environ["VERSION"] + "-"
+          expected = {prefix + target for target in targets}
           artifacts = Path("artifacts")
           # A rerun may also download the previous aggregate from this run.
-          actual = {path.name for path in artifacts.iterdir()} - {"momoten-release"}
+          actual = {path.name for path in artifacts.iterdir()} - {prefix + "release"}
           assert actual == expected, "Incomplete artifact matrix"
           release = Path("release")
           release.mkdir()
@@ -665,7 +683,7 @@ jobs:
           for name in sorted(expected):
               directory = artifacts / name
               files = {path.relative_to(directory).as_posix() for path in directory.rglob("*") if path.is_file()}
-              if name.startswith(("momoten-linux-", "momoten-macos-")):
+              if name.startswith((prefix + "linux-", prefix + "macos-")):
                   archive = name + ".tar.gz"
                   assert files == {archive}, (name, files)
                   runtime = "libmomoten.dylib" if "-macos-" in name else "libmomoten.so"
@@ -689,30 +707,41 @@ jobs:
 
       - uses: actions/upload-artifact@v7
         with:
-          name: momoten-release
+          name: momoten-${{ needs.setup.outputs.VERSION }}-release
           path: release/
           if-no-files-found: error
           overwrite: true
 
   release:
-    name: publish-tagged-release
-    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
-    needs: package-release
+    name: publish-release
+    if: github.event_name == 'workflow_dispatch'
+    needs: [setup, package-release]
     runs-on: ubuntu-22.04
     permissions:
       contents: write
     steps:
       - uses: actions/download-artifact@v8
         with:
-          name: momoten-release
+          name: momoten-${{ needs.setup.outputs.VERSION }}-release
           path: release
 
-      - name: Publish verified version-tag assets
+      - name: Publish verified date-version assets
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
-          RELEASE_TAG: ${{ github.ref_name }}
+          VERSION: ${{ needs.setup.outputs.VERSION }}
+          RELEASE_COMMIT: ${{ github.sha }}
         run: |
           (cd release && sha256sum --check SHA256SUMS)
-          gh release create "$RELEASE_TAG" release/* \
-            --verify-tag --title "$RELEASE_TAG" --generate-notes
+          # Never attach this run's binaries to a tag for a different commit.
+          existing_tag=$(gh api "repos/$GH_REPO/git/matching-refs/tags/$VERSION" \
+            --jq ".[] | select(.ref == \"refs/tags/$VERSION\") | .ref")
+          if [ -n "$existing_tag" ]; then
+            existing_commit=$(gh api "repos/$GH_REPO/commits/$VERSION" --jq .sha)
+            if [ "$existing_commit" != "$RELEASE_COMMIT" ]; then
+              echo "Release tag $VERSION already points to another commit" >&2
+              exit 1
+            fi
+          fi
+          gh release create "$VERSION" release/* \
+            --target "$RELEASE_COMMIT" --title "Release $VERSION" --generate-notes
