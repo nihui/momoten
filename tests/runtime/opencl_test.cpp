@@ -47,6 +47,35 @@ static bool device_has_extension(cl_device_id device, const char* extension)
     return padded.find(" " + std::string(extension) + " ") != std::string::npos;
 }
 
+static bool device_has_int64(cl_device_id device)
+{
+    char profile[32] = {};
+    if (clGetDeviceInfo(device, CL_DEVICE_PROFILE, sizeof(profile), profile, 0) == CL_SUCCESS
+        && strcmp(profile, "FULL_PROFILE") == 0)
+        return true;
+    if (device_has_extension(device, "cles_khr_int64"))
+        return true;
+
+    // Keep the test build compatible with OpenCL 1.0 headers and entry points.
+    struct NameVersion
+    {
+        cl_uint version;
+        char name[64];
+    };
+    const cl_device_info opencl_c_features = 0x106f;
+    size_t size = 0;
+    if (clGetDeviceInfo(device, opencl_c_features, 0, 0, &size) != CL_SUCCESS
+        || size == 0 || size % sizeof(NameVersion) != 0)
+        return false;
+    std::vector<NameVersion> features(size / sizeof(NameVersion));
+    if (clGetDeviceInfo(device, opencl_c_features, size, features.data(), 0) != CL_SUCCESS)
+        return false;
+    for (size_t i = 0; i < features.size(); i++)
+        if (strncmp(features[i].name, "__opencl_c_int64", sizeof(features[i].name)) == 0)
+            return true;
+    return false;
+}
+
 static cl_device_id find_compiler_device(bool require_fp16, bool require_fp64, bool require_integer_dot_product)
 {
     cl_uint platform_count = 0;
@@ -1039,6 +1068,12 @@ int main(int argc, char** argv)
     {
         fprintf(stderr, "opencl_test: translation failed: %s\n", translated.diagnostics.c_str());
         return 1;
+    }
+
+    if (translated.abi.int64 && !device_has_int64(device))
+    {
+        fprintf(stderr, "opencl_test: shader requires unsupported int64; skipping\n");
+        return 77;
     }
 
     cl_context context = clCreateContext(0, 1, &device, 0, 0, &ret);

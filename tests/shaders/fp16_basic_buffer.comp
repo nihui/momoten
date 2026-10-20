@@ -1,0 +1,39 @@
+// Copyright 2026 nihui
+// SPDX-License-Identifier: Apache-2.0
+
+#version 450
+#extension GL_EXT_shader_16bit_storage : require
+#extension GL_EXT_shader_explicit_arithmetic_types_float16 : require
+
+layout(local_size_x = 4, local_size_y = 1, local_size_z = 1) in;
+
+layout(set = 0, binding = 0, std430) readonly buffer InputBuffer
+{
+    f16vec4 values[];
+} input_buffer;
+
+layout(set = 0, binding = 1, std430) writeonly buffer OutputBuffer
+{
+    f16vec4 values[];
+} output_buffer;
+
+layout(set = 0, binding = 2, std430) readonly buffer MatrixBuffer
+{
+    f16mat4 values[];
+} matrix_buffer;
+
+// Exercise fp16 independently of the optional int64 packed-workgroup path.
+shared f16vec4 scratch[4];
+
+void main()
+{
+    uint i = gl_GlobalInvocationID.x;
+    f16vec4 value = input_buffer.values[i];
+    f16mat4 identity = matrix_buffer.values[0];
+    f16vec4 transformed = value * identity + f16vec4(float16_t(0.5));
+    bvec4 keep = lessThan(transformed, f16vec4(float16_t(100.0)));
+    transformed = mix(f16vec4(float16_t(123.0)), transformed, keep);
+    scratch[gl_LocalInvocationID.x] = transformed;
+    barrier();
+    output_buffer.values[i] = identity * scratch[gl_LocalInvocationID.x];
+}

@@ -194,6 +194,7 @@ momoten_compile_test_shader(momoten_unsupported_test_spv unsupported_image.comp 
 momoten_compile_test_shader(momoten_atomic_test_spv atomic_compare_exchange.comp vulkan1.0)
 momoten_compile_test_shader(momoten_atomic_packed_test_spv atomic_packed.comp vulkan1.0)
 momoten_compile_test_shader(momoten_fp16_test_spv fp16_buffer.comp vulkan1.1)
+momoten_compile_test_shader(momoten_fp16_basic_test_spv fp16_basic_buffer.comp vulkan1.1)
 momoten_compile_test_shader(momoten_fp16_program_constant_test_spv fp16_program_constant.comp vulkan1.1)
 momoten_compile_test_shader(momoten_fp64_test_spv fp64_buffer.comp vulkan1.1)
 momoten_compile_test_shader(momoten_int16_test_spv int16_buffer.comp vulkan1.1)
@@ -311,6 +312,8 @@ if(TARGET momoten_test_opencl)
         COMMAND momoten_opencl_test "${momoten_test_spv}")
     add_test(NAME momoten_opencl_fp16
         COMMAND momoten_opencl_test "${momoten_fp16_test_spv}" fp16)
+    add_test(NAME momoten_opencl_fp16_basic
+        COMMAND momoten_opencl_test "${momoten_fp16_basic_test_spv}" fp16)
     add_test(NAME momoten_opencl_fp64
         COMMAND momoten_opencl_test "${momoten_fp64_test_spv}" fp64)
     add_test(NAME momoten_opencl_int16
@@ -334,6 +337,7 @@ if(TARGET momoten_test_opencl)
         COMMAND momoten_opencl_test "${momoten_vector_extract_test_spv}"
             vector-access)
     set_tests_properties(momoten_opencl_simple momoten_opencl_fp16
+        momoten_opencl_fp16_basic
         momoten_opencl_fp64
         momoten_opencl_int16
         momoten_opencl_atomic_packed momoten_opencl_scalar_16bit
