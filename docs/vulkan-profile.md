@@ -8,8 +8,11 @@ buffer copies, dispatch, queue-ordering barriers, submission, fences and
 pipeline-cache stubs.
 
 `VK_KHR_driver_properties` reports conformance version `0.0.0.0`.
-`deviceName`, `driverName`, and `driverInfo` explicitly identify momoten as
-experimental and non-conformant.
+`driverName` is the concise `momoten` identifier; `driverInfo` contains the
+release date and OpenCL backend version. `deviceName` uses `momoten: <OpenCL
+device name>`, preserving the underlying GPU or CPU identity. The initialization
+warning and project documentation explicitly identify momoten as experimental
+and non-conformant.
 
 Physical-device identity is derived from the selected OpenCL device rather than
 from one implementation-wide placeholder. `vendorID` mirrors

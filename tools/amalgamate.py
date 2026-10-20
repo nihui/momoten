@@ -62,10 +62,12 @@ def is_manifest_include(relative, line, manifest_files):
     return any(candidate.resolve() in manifest_files for candidate in candidates)
 
 
-def source_lines(relative, manifest_files):
+def source_lines(relative, manifest_files, version_header):
     lines = []
     for line in (ROOT / relative).read_text(encoding="utf-8").splitlines():
-        if line == '#include "vulkan_procs.inc"':
+        if line == '#include "momoten/version.h"':
+            lines.extend(version_header.read_text(encoding="utf-8").splitlines())
+        elif line == '#include "vulkan_procs.inc"':
             lines.extend(
                 (ROOT / "src/vulkan_procs.inc")
                 .read_text(encoding="utf-8")
@@ -76,7 +78,7 @@ def source_lines(relative, manifest_files):
     return lines
 
 
-def render() -> str:
+def render(version_header: Path) -> str:
     entries, _ = read_source_manifest()
     manifest_files = {(ROOT / relative).resolve() for _, relative in entries}
     chunks = [
@@ -97,7 +99,7 @@ def render() -> str:
                 "#ifndef MOMOTEN_TRANSLATOR_ONLY\n"
             )
             driver_guard_open = True
-        lines = source_lines(relative, manifest_files)
+        lines = source_lines(relative, manifest_files, version_header)
         chunks.append(
             "\n// ---- begin {} ----\n{}\n// ---- end {} ----\n".format(
                 relative.as_posix(), "\n".join(lines), relative.as_posix()
@@ -110,13 +112,15 @@ def render() -> str:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Generate the momoten single-file distribution")
+    parser.add_argument("--version-header", type=Path, required=True,
+                        help="CMake-generated include/momoten/version.h to embed")
     group = parser.add_mutually_exclusive_group(required=True)
     group.add_argument("--output", type=Path)
     group.add_argument("--check", type=Path)
     group.add_argument("--stdout", action="store_true")
     args = parser.parse_args()
 
-    generated = render()
+    generated = render(args.version_header)
     if args.stdout:
         sys.stdout.write(generated)
         return 0

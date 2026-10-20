@@ -1,6 +1,35 @@
 # Copyright 2026 nihui
 # SPDX-License-Identifier: Apache-2.0
 
+add_test(NAME momoten_version_configuration
+    COMMAND "${CMAKE_COMMAND}" -DSOURCE_ROOT=${CMAKE_CURRENT_SOURCE_DIR}/..
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/version_test.cmake")
+set_tests_properties(momoten_version_configuration PROPERTIES
+    LABELS "momoten;cmake;version")
+
+add_executable(momoten_driver_version_test
+    api/driver_version_test.cpp
+    "${CMAKE_CURRENT_SOURCE_DIR}/../src/instance.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/../src/backend/device_profile.cpp")
+target_compile_features(momoten_driver_version_test PRIVATE cxx_std_11)
+target_compile_definitions(momoten_driver_version_test PRIVATE
+    CL_TARGET_OPENCL_VERSION=100)
+target_include_directories(momoten_driver_version_test PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}/../src")
+target_link_libraries(momoten_driver_version_test PRIVATE
+    momoten::headers momoten_opencl_headers momoten_vulkan_headers)
+add_test(NAME momoten_driver_version COMMAND momoten_driver_version_test)
+set_tests_properties(momoten_driver_version PROPERTIES LABELS "momoten;api;version")
+
+if(MOMOTEN_BUILD_AMALGAMATION)
+    add_test(NAME momoten_amalgamation_current
+        COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/../tools/amalgamate.py"
+            --version-header "${CMAKE_CURRENT_BINARY_DIR}/../include/momoten/version.h"
+            --check "${momoten_amalgamated_source}")
+    set_tests_properties(momoten_amalgamation_current PROPERTIES
+        LABELS "momoten;amalgamation;version")
+endif()
+
 add_executable(momoten_optimizer_flags_test translator/optimizer_flags_test.cpp)
 target_compile_features(momoten_optimizer_flags_test PRIVATE cxx_std_11)
 target_link_libraries(momoten_optimizer_flags_test PRIVATE SPIRV-Tools-opt)

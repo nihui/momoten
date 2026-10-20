@@ -1,8 +1,9 @@
 # Cross-platform binary build
 
 GitHub Actions builds desktop and Android libraries using the pinned Git
-submodules. The resulting packages are available as workflow artifacts. Version tags matching
-`v*` also publish the verified platform archives as GitHub Release assets.
+submodules. The resulting packages are available as workflow artifacts. Manual
+`workflow_dispatch` runs also publish the verified platform archives as GitHub
+Release assets, using a date version like `20261020`.
 
 | Target | ABI | Minimum Android API | Build toolchain |
 | --- | --- | --- | --- |
@@ -101,21 +102,23 @@ arm64-v8a/x86_64 (API 21). The Android and Linux shared libraries
 are checked for the expected ELF class. The Windows generator explicitly
 selects MSVC x64 or Win32.
 
-Workflow-level concurrency with `cancel-in-progress: true` cancels
-superseded runs for earlier commits on the same branch or pull request;
-jobs within the current run still use `fail-fast: false`.
+Workflow-level concurrency cancels superseded CI runs for earlier commits on
+the same branch or pull request. Manual release runs use a separate concurrency
+group and are not cancelled; jobs within the current run still use
+`fail-fast: false`.
 
 ## Runtime-only distribution
 
 Linux CI packages `libmomoten.so`, `momoten_icd.json`, and `LICENSE.txt`/
-`THIRD_PARTY_NOTICES.md` in one `momoten-linux-<arch>.tar.gz`.
+`THIRD_PARTY_NOTICES.md` in one `momoten-<version>-linux-<arch>.tar.gz`.
 Windows and Android similarly ship only the runtime library and notices.
 No installed CMake SDK, version header, Windows import library, or
 versioned `.so` symlinks are required.
 
 The build-tree targets `momoten::driver`, `momoten::translator`, and
 `momoten::headers` remain available to embedded/superbuild consumers.
-The generated version header remains build-tree metadata. Linux keeps
+The generated version header remains build-tree metadata and supplies the
+driver release version. Linux keeps
 `-static-libstdc++ -static-libgcc` for compatibility with older runtimes;
 changing that choice can be measured in a separate experiment.
 
@@ -124,8 +127,8 @@ changing that choice can be measured in a separate experiment.
 Native Intel and Apple Silicon jobs run on `macos-15-intel` and `macos-15`,
 respectively, with Xcode 16.4. Intel builds target macOS 10.13 (High Sierra);
 Apple Silicon builds target macOS 11.0.
-They produce separate `momoten-macos-x86_64.tar.gz` and
-`momoten-macos-arm64.tar.gz` archives containing:
+They produce separate `momoten-<version>-macos-x86_64.tar.gz` and
+`momoten-<version>-macos-arm64.tar.gz` archives containing:
 
 - `libmomoten.dylib`
 - `momoten_icd.json`
@@ -208,19 +211,43 @@ run. See [testing](testing.md) for the precise exclusion conditions. These
 artifacts are experimental build/release deliverables, not a claim of complete
 Apple OpenCL shader, push-constant, or barrier compatibility.
 
-## Tagged releases
+## Date-versioned releases
 
-Pull requests, pushes to `main`, and manual `workflow_dispatch` runs build
-and validate all ten platform packages. The `package-release` job checks the
-complete artifact matrix and runtime-only archive contents, then creates
-`SHA256SUMS`. It preserves Linux/macOS `.tar.gz` packages and wraps the
-Windows/Android runtime trees in `.zip` files. The aggregate is also available
-as the `momoten-release` workflow artifact, so packaging is tested before a
-release is requested.
+Like [pnnx](https://github.com/pnnx/pnnx/blob/main/.github/workflows/release.yml),
+releases are explicitly requested with `workflow_dispatch`, not by pushing a tag
+or on a schedule. Choose **Run workflow** for `build` and select the branch to release. A manual run publishes after all platform builds and package
+validation succeed; it is not a build-only dry run. Pushes to `main` and pull
+requests run the same build and packaging checks without publishing or creating
+tags.
 
-Only a push of a `v*` tag enables the final publishing job, after every build
-and aggregation job succeeds. That job alone receives `contents: write`;
-`gh release create --verify-tag` attaches the ten archives and `SHA256SUMS`
-to a release for the existing tag. PRs and manual runs cannot publish releases
-or create tags. To reproduce a build without publishing, choose **Run workflow**
-for `build` and select the desired branch.
+The `setup` job generates one UTC date version in `YYYYMMDD` format for the
+entire run. Every platform uses that same value, including jobs that finish
+on the following day. Packages are named `momoten-<version>-<target>.tar.gz`
+(Linux/macOS) or `momoten-<version>-<target>.zip` (Windows/Android), for example
+`momoten-20261020-linux-x86_64.tar.gz`.
+
+The `package-release` job checks all ten platform artifacts and their
+runtime-only archive contents, then creates `SHA256SUMS`. The aggregate is also
+available as the `momoten-<version>-release` workflow artifact, so packaging is
+tested on every CI run. Each platform build also receives the same date as
+`-DMOMOTEN_RELEASE_VERSION=<version>`. `VkPhysicalDeviceProperties::driverVersion`
+encodes it as `VK_MAKE_VERSION(year - 2000, month, day)`, so `20261020` displays
+as `26.10.20` with the standard Vulkan version helpers. `driverName` is `momoten`
+and `driverInfo` uses the concise format `momoten 20261020; OpenCL backend: ...`.
+`deviceName` keeps the underlying OpenCL device name with a `momoten: ` prefix.
+Both the modular and generated single-file driver use the same configured version.
+
+For local builds, `MOMOTEN_RELEASE_VERSION` defaults to the UTC configure date
+and is cached for subsequent reconfiguration. Set it explicitly to reproduce a
+release. CMake rejects malformed or impossible dates and years outside 2000-2099;
+this range keeps all packed Vulkan fields in bounds. The date is a driver release
+identifier, not the Vulkan API or ABI version: the CMake project version remains
+`0.1.0`, the ICD API version remains `1.1.0`, and runtime filenames stay unversioned.
+
+Only the final publishing job receives `contents: write`. It creates the date
+tag (without a `v` prefix) at the exact commit selected when the workflow was
+started and publishes the ten archives plus `SHA256SUMS` under
+`Release <version>`. A pre-existing date tag for a different commit is rejected.
+An existing release for that date is not overwritten: `gh release create` fails
+rather than silently replacing its assets. There is at most one release per UTC
+day. Manual release runs are not cancelled by newer CI runs.
