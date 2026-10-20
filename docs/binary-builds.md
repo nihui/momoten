@@ -52,6 +52,25 @@ guides. The upstream submodule revision and other platform builds are unchanged.
 Android API**. Desktop jobs check the Vulkan proc exports,
 while cross-compiled Android jobs inspect the ELF dynamic section.
 
+## Android 16 KB ELF alignment
+
+CMake links both `momoten_driver` and `momoten_amalgamated_driver` with
+`-z max-page-size=16384` and `-z common-page-size=16384` on Android, following
+the [Android page-size guidance](https://developer.android.com/guide/practices/page-sizes#compile-r27-or-lower).
+This applies to all four Android ABIs without changing the NDK selection,
+minimum API levels, or static C++ runtime. The common-page-size flag also
+keeps the linker's RELRO layout compatible with 16 KB pages.
+
+Every Android CI job checks the stripped installed library and the amalgamated
+library with `readelf -lW`: every `PT_LOAD` segment must have a power-of-two
+alignment of at least `0x4000`, with congruent file offsets and virtual addresses.
+These are ELF build checks, not tests on a 16 KB Android device. The release ZIPs
+are library archives, not APKs; applications must separately handle APK ZIP
+alignment, verify all other native dependencies (including the device's vendor
+OpenCL runtime), and test on a device or emulator reporting a page size of
+`16384`. Manually compiling the generated single-file source outside this CMake
+build requires the same linker flags.
+
 ## Smaller Android release binaries
 
 Android CI removes the NDK toolchain's hardcoded `-g` flag before the
