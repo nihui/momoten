@@ -112,7 +112,7 @@ static int compile_innerproduct_pack4()
                 translated.diagnostics.c_str());
         return 1;
     }
-    if (translated.source.find("__global momo_hmat4 *") == std::string::npos || translated.source.find("half4(dot(") == std::string::npos)
+    if (translated.source.find("__global momo_hmat4 *") == std::string::npos || translated.source.find("((half4)(dot(") == std::string::npos)
     {
         fprintf(stderr, "ncnn_fp16_shader_test: InnerProduct f16mat4 lowering was not exercised\n");
         return 1;

@@ -33,7 +33,8 @@ function(check_opencl_c_1_0 name input)
     endif()
 
     if(APPLE_TYPE_ALIASES)
-        # Cover every emitted vector width, including scalar splats and mixed
+        # Cover every emitted vector width using native OpenCL constructors,
+        # including scalar splats and mixed
         # vector/scalar constructors, as well as ordinary type declarations.
         set(bases char uchar short ushort int uint long ulong float)
         if(name MATCHES "^fp16")
@@ -44,13 +45,13 @@ function(check_opencl_c_1_0 name input)
         file(APPEND "${source}" "\nvoid momo_test_type_aliases(void)\n{\n")
         foreach(base IN LISTS bases)
             file(APPEND "${source}"
-                "    ${base} scalar_${base} = ${base}(1);\n"
-                "    ${base}2 pair_${base} = ${base}2(scalar_${base});\n"
-                "    ${base}3 triple_${base} = ${base}3(pair_${base}, scalar_${base});\n"
-                "    ${base}4 quad_${base} = ${base}4(pair_${base}, pair_${base});\n"
-                "    ${base}8 octet_${base} = ${base}8(quad_${base}, quad_${base});\n"
-                "    ${base}16 full_${base} = ${base}16(octet_${base}, octet_${base});\n"
-                "    ${base}16 splat_${base} = ${base}16(scalar_${base});\n")
+                "    ${base} scalar_${base} = (${base})(1);\n"
+                "    ${base}2 pair_${base} = (${base}2)(scalar_${base});\n"
+                "    ${base}3 triple_${base} = (${base}3)(pair_${base}, scalar_${base});\n"
+                "    ${base}4 quad_${base} = (${base}4)(pair_${base}, pair_${base});\n"
+                "    ${base}8 octet_${base} = (${base}8)(quad_${base}, quad_${base});\n"
+                "    ${base}16 full_${base} = (${base}16)(octet_${base}, octet_${base});\n"
+                "    ${base}16 splat_${base} = (${base}16)(scalar_${base});\n")
         endforeach()
         file(APPEND "${source}" "}\n")
     endif()
@@ -76,3 +77,6 @@ check_opencl_c_1_0(atomic_compare_exchange "${ATOMIC_SPV_FILE}")
 check_opencl_c_1_0(fp16_buffer "${FP16_SPV_FILE}")
 check_opencl_c_1_0(fp64_buffer "${FP64_SPV_FILE}")
 check_opencl_c_1_0(fp16_program_constant "${FP16_CONSTANT_SPV_FILE}")
+if(VECTOR_EXTRACT_SPV_FILE)
+    check_opencl_c_1_0(vector_extract_dynamic "${VECTOR_EXTRACT_SPV_FILE}")
+endif()

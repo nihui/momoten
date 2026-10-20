@@ -808,6 +808,107 @@ static int run_workgroup_3d_modes(cl_context context, cl_command_queue queue, cl
     return status;
 }
 
+static int run_vector_access_kernel(cl_context context, cl_command_queue queue, cl_kernel kernel,
+                                    const momoten::TranslationResult& translated, cl_uint address_bits)
+{
+    if (translated.abi.buffers.size() != 5 || !translated.abi.fp64)
+        return fail("vector access fixture ABI", CL_INVALID_ARG_VALUE);
+
+    uint32_t input[4][4];
+    float output[4][4] = {};
+    double doubles[4][4];
+    int32_t coordinates[4][4] = {};
+    int32_t booleans[4][4] = {};
+    for (uint32_t i = 0; i < 4; i++)
+    {
+        input[i][0] = 0x3f803c00u; // float bits, and half values 1.0 / 1.875
+        input[i][1] = 0x40000000u;
+        input[i][2] = 0x40400000u;
+        input[i][3] = i;
+        for (uint32_t j = 0; j < 4; j++)
+            doubles[i][j] = i * 4 + j + 0.125;
+    }
+
+    cl_int ret = CL_SUCCESS;
+    cl_mem buffers[5] = {};
+    void* data[5] = {input, output, doubles, coordinates, booleans};
+    const size_t sizes[5] = {sizeof(input), sizeof(output), sizeof(doubles), sizeof(coordinates), sizeof(booleans)};
+    for (size_t i = 0; i < 5 && ret == CL_SUCCESS; i++)
+        buffers[i] = clCreateBuffer(context, CL_MEM_READ_WRITE | CL_MEM_COPY_HOST_PTR, sizes[i], data[i], &ret);
+
+    const cl_uint offset32 = 0;
+    const cl_ulong offset64 = 0;
+    const void* offset = address_bits == 64 ? static_cast<const void*>(&offset64) : static_cast<const void*>(&offset32);
+    const size_t offset_size = address_bits == 64 ? sizeof(offset64) : sizeof(offset32);
+    for (size_t i = 0; i < translated.abi.buffers.size() && ret == CL_SUCCESS; i++)
+    {
+        const momoten::BufferArgument& argument = translated.abi.buffers[i];
+        if (argument.binding >= 5)
+        {
+            ret = CL_INVALID_ARG_INDEX;
+            break;
+        }
+        ret = clSetKernelArg(kernel, argument.buffer_arg_index, sizeof(buffers[argument.binding]), &buffers[argument.binding]);
+        if (ret == CL_SUCCESS)
+            ret = clSetKernelArg(kernel, argument.offset_arg_index, offset_size, offset);
+    }
+
+    const size_t global_size[3] = {4, 1, 1};
+    const size_t local_size[3] = {4, 1, 1};
+    if (ret == CL_SUCCESS)
+        ret = clEnqueueNDRangeKernel(queue, kernel, 3, 0, global_size, local_size, 0, 0, 0);
+    for (size_t i = 1; i < 5 && ret == CL_SUCCESS; i++)
+        ret = clEnqueueReadBuffer(queue, buffers[i], CL_TRUE, 0, sizes[i], data[i], 0, 0, 0);
+
+    int status = ret == CL_SUCCESS ? 0 : fail("vector access kernel dispatch", ret);
+    if (ret == CL_SUCCESS)
+    {
+        for (uint32_t i = 0; i < 4; i++)
+        {
+            bool mask[4];
+            for (uint32_t j = 0; j < 4; j++)
+                mask[j] = j >= i;
+            mask[(i + 1) % 4] = (i % 2) != 0;
+            const int32_t lane_bits = (mask[0] ? 1 : 0) | (mask[1] ? 2 : 0) | (mask[2] ? 4 : 0) | (mask[3] ? 8 : 0);
+            const int32_t expected_booleans[4] = {lane_bits, static_cast<int32_t>(i % 2), static_cast<int32_t>(i % 2), mask[0] == ((i % 2) != 0) ? 17 : 23};
+            float expected[4];
+            expected[0] = i % 2 ? 1.875f : 1.f;
+            expected[1] = static_cast<float>(input[i][i % 3]);
+            memcpy(&expected[2], &input[i][i], sizeof(float));
+            expected[3] = static_cast<float>(static_cast<int32_t>(input[i][i]) + 1);
+            expected[i] = static_cast<float>(input[(i + 1) % 4][i]);
+            for (uint32_t j = 0; j < 4; j++)
+            {
+                const int32_t coordinate_offsets[4] = {123, 456, 789, 1023};
+                const int32_t expected_coordinate = (input[i][j] & 255u) + coordinate_offsets[j];
+                const double expected_double = i * 4 + (j == i ? (i + 1) % 4 + 1 : j) + 0.125;
+                if (output[i][j] != expected[j] || doubles[i][j] != expected_double)
+                {
+                    fprintf(stderr, "opencl_test: vector[%u][%u]=%g / %.17g expected=%g / %.17g\n",
+                            i, j, output[i][j], doubles[i][j], expected[j], expected_double);
+                    status = 1;
+                }
+                if (coordinates[i][j] != expected_coordinate)
+                {
+                    fprintf(stderr, "opencl_test: coordinate[%u][%u]=%d expected=%d\n",
+                            i, j, coordinates[i][j], expected_coordinate);
+                    status = 1;
+                }
+                if (booleans[i][j] != expected_booleans[j])
+                {
+                    fprintf(stderr, "opencl_test: boolean[%u][%u]=%d expected=%d\n",
+                            i, j, booleans[i][j], expected_booleans[j]);
+                    status = 1;
+                }
+            }
+        }
+    }
+    for (size_t i = 0; i < 5; i++)
+        if (buffers[i])
+            clReleaseMemObject(buffers[i]);
+    return status;
+}
+
 typedef int (*OpenCLKernelTestRunner)(
     cl_context, cl_command_queue, cl_kernel,
     const momoten::TranslationResult&, cl_uint);
@@ -823,7 +924,8 @@ enum OpenCLTestFeature
     OpenCLTestSubgroupBasic,
     OpenCLTestIntegerDotProduct,
     OpenCLTestWorkgroupSplit,
-    OpenCLTestWorkgroup3D
+    OpenCLTestWorkgroup3D,
+    OpenCLTestVectorAccess
 };
 
 struct OpenCLTestCase
@@ -851,7 +953,8 @@ static const OpenCLTestCase opencl_test_cases[] = {
      run_integer_dot_product_kernel},
     {"workgroup-split", OpenCLTestWorkgroupSplit, false, false, false,
      run_workgroup_split_kernel},
-    {"workgroup-3d", OpenCLTestWorkgroup3D, false, false, false, 0}};
+    {"workgroup-3d", OpenCLTestWorkgroup3D, false, false, false, 0},
+    {"vector-access", OpenCLTestVectorAccess, false, true, false, run_vector_access_kernel}};
 
 static const OpenCLTestCase* find_opencl_test_case(int argc, char** argv)
 {
@@ -873,7 +976,7 @@ int main(int argc, char** argv)
     const OpenCLTestCase* test_case = find_opencl_test_case(argc, argv);
     if (!test_case)
     {
-        fprintf(stderr, "opencl_test: expected SPIR-V input path and optional fp16, fp64, int16, atomic-packed, scalar-16bit, subgroup-basic, integer-dot-product, workgroup-split, or workgroup-3d mode\n");
+        fprintf(stderr, "opencl_test: expected SPIR-V input path and optional fp16, fp64, int16, atomic-packed, scalar-16bit, subgroup-basic, integer-dot-product, workgroup-split, workgroup-3d, or vector-access mode\n");
         return 1;
     }
 
@@ -1007,7 +1110,9 @@ int main(int argc, char** argv)
     if (ret == CL_SUCCESS) ret = clSetKernelArg(kernel, 1, offset_size, offset);
     if (ret == CL_SUCCESS) ret = clSetKernelArg(kernel, 2, sizeof(output_buffer), &output_buffer);
     if (ret == CL_SUCCESS) ret = clSetKernelArg(kernel, 3, offset_size, offset);
-    if (ret == CL_SUCCESS) ret = clSetKernelArg(kernel, translated.abi.push_constant_arg_index, sizeof(push_constants), &push_constants);
+    for (size_t offset = 0; ret == CL_SUCCESS && offset < sizeof(push_constants); offset += 4)
+        ret = clSetKernelArg(kernel, translated.abi.push_constant_arg_index + static_cast<cl_uint>(offset / 4),
+                             4, reinterpret_cast<const unsigned char*>(&push_constants) + offset);
     if (ret != CL_SUCCESS)
         return fail("clSetKernelArg", ret);
 

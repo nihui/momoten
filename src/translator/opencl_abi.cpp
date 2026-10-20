@@ -169,7 +169,10 @@ void CompilerOpenCL::emit_function_prototype(SPIRFunction& func, const Bitset& r
     if (push_constant_variable_id != 0)
     {
         const SPIRType& push_type = get_variable_data_type(get<SPIRVariable>(push_constant_variable_id));
-        args.push_back("struct " + type_to_glsl(push_type) + " momo_push_constants");
+        // Scalar kernel arguments avoid driver-specific by-value struct ABIs.
+        for (size_t i = 0; i < push_type.member_types.size(); i++)
+            args.push_back(type_to_glsl(get<SPIRType>(push_type.member_types[i]))
+                           + " momo_push_constant_" + std::to_string(i));
     }
 
     std::ostringstream declaration;
