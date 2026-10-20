@@ -103,8 +103,8 @@ struct KernelABI
     // physical OpenCL workgroups by the driver.
     bool workgroup_splittable;
     WorkgroupMode workgroup_mode;
-    // One by-value struct argument containing tightly packed 32-bit scalars.
-    // Its complete byte size counts against CL_DEVICE_MAX_PARAMETER_SIZE.
+    // First of the consecutive 32-bit scalar arguments for push constants.
+    // Each tightly packed member occupies one argument; size is in bytes.
     int push_constant_arg_index;
     size_t push_constant_size;
 

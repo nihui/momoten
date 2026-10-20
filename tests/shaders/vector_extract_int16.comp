@@ -1,0 +1,26 @@
+// Copyright 2026 nihui
+// SPDX-License-Identifier: Apache-2.0
+
+#version 450
+#extension GL_EXT_shader_explicit_arithmetic_types_int16 : require
+
+layout(local_size_x = 1) in;
+layout(set = 0, binding = 0, std430) buffer Data
+{
+    uint values[];
+} data;
+
+void main()
+{
+    uint base = gl_GlobalInvocationID.x * 7u;
+    uint index = data.values[base];
+
+    // Keep the extraction immediately inside the same-width bitcast. A short
+    // or ushort local would hide conditional-expression integer promotion.
+    data.values[base + 1u] = uint(int(int16_t(u16vec2(65535, 32768)[index & 1u])));
+    data.values[base + 2u] = uint(int(int16_t(u16vec3(65535, 32768, 2)[index % 3u])));
+    data.values[base + 3u] = uint(int(int16_t(u16vec4(65535, 0, 32768, 2)[index & 3u])));
+    data.values[base + 4u] = uint(uint16_t(i16vec2(-1, -32768)[index & 1u]));
+    data.values[base + 5u] = uint(uint16_t(i16vec3(-1, -32768, 2)[index % 3u]));
+    data.values[base + 6u] = uint(uint16_t(i16vec4(-1, 0, -32768, 2)[index & 3u]));
+}

@@ -142,9 +142,15 @@ static VkResult build_pipeline_kernel(VkDevice device, const momoten::Translatio
     }
     if (ret != CL_SUCCESS)
     {
-        retry_virtual = can_retry && ret == CL_BUILD_PROGRAM_FAILURE;
+        // Some OpenCL compilers report register exhaustion for a required
+        // workgroup as a resource or host-memory error. A splittable shader
+        // can retry once without that requirement after releasing this program.
+        retry_virtual = can_retry && (ret == CL_BUILD_PROGRAM_FAILURE || ret == CL_OUT_OF_RESOURCES || ret == CL_OUT_OF_HOST_MEMORY);
         if (!retry_virtual || debug_enabled())
+        {
+            log_error("clBuildProgram", ret);
             print_program_build_log(candidate->program, device->physical_device->device);
+        }
         if (debug_enabled())
             fprintf(stderr, "[momoten] generated source:\n%s\n", translated.source.c_str());
         return VK_ERROR_INITIALIZATION_FAILED;
@@ -173,7 +179,9 @@ static VkResult build_pipeline_kernel(VkDevice device, const momoten::Translatio
     {
         const size_t physical_limit = std::min(std::min(kernel_workgroup_size, device->physical_device->max_compute_workgroup_invocations), device->physical_device->max_work_item_sizes[0]);
         size_t physical_workgroup_size = std::min(requested_workgroup_size, physical_limit);
-        if (requested_workgroup_size > physical_workgroup_size && translated.abi.subgroup_size > 1)
+        // Emulated subgroup IDs use logical invocation IDs, so physical chunks
+        // need alignment only when they contain native OpenCL subgroups.
+        if (requested_workgroup_size > physical_workgroup_size && translated.abi.subgroup_mode == momoten::SubgroupModeNative && translated.abi.subgroup_size > 1)
             physical_workgroup_size -= physical_workgroup_size % translated.abi.subgroup_size;
         if (physical_workgroup_size == 0)
         {

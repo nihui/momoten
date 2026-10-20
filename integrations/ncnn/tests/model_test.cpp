@@ -124,7 +124,7 @@ int main()
     for (size_t i = 0; i < expected.total(); i++)
     {
         const float difference = std::fabs(expected_values[i] - actual_values[i]);
-        if (difference > 1e-4f)
+        if (!std::isfinite(actual_values[i]) || difference > 1e-4f)
         {
             fprintf(stderr, "tiny model output mismatch at %zu: cpu=%g momoten=%g\n",
                     i, expected_values[i], actual_values[i]);

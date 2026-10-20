@@ -8,6 +8,25 @@ add_test(NAME momoten_optimizer_flags COMMAND momoten_optimizer_flags_test)
 set_tests_properties(momoten_optimizer_flags PROPERTIES
     LABELS "momoten;translator;compatibility")
 
+add_executable(momoten_opencl_source_test translator/opencl_source_test.cpp)
+target_compile_features(momoten_opencl_source_test PRIVATE cxx_std_11)
+target_include_directories(momoten_opencl_source_test PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}/../src")
+target_link_libraries(momoten_opencl_source_test PRIVATE momoten::translator)
+add_test(NAME momoten_opencl_source COMMAND momoten_opencl_source_test)
+set_tests_properties(momoten_opencl_source PROPERTIES
+    LABELS "momoten;translator;compatibility")
+
+add_executable(momoten_opencl_policy_test translator/opencl_policy_test.cpp)
+target_compile_features(momoten_opencl_policy_test PRIVATE cxx_std_11)
+target_include_directories(momoten_opencl_policy_test PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}/../src")
+target_link_libraries(momoten_opencl_policy_test PRIVATE
+    momoten::translator spirv-cross-glsl)
+add_test(NAME momoten_opencl_policy COMMAND momoten_opencl_policy_test)
+set_tests_properties(momoten_opencl_policy PROPERTIES
+    LABELS "momoten;translator;compatibility")
+
 add_executable(momoten_memory_state_test
     runtime/memory_state_test.cpp
     "${CMAKE_CURRENT_SOURCE_DIR}/../src/backend/memory_state.cpp")
@@ -194,6 +213,7 @@ momoten_compile_test_shader(momoten_unsupported_test_spv unsupported_image.comp 
 momoten_compile_test_shader(momoten_atomic_test_spv atomic_compare_exchange.comp vulkan1.0)
 momoten_compile_test_shader(momoten_atomic_packed_test_spv atomic_packed.comp vulkan1.0)
 momoten_compile_test_shader(momoten_fp16_test_spv fp16_buffer.comp vulkan1.1)
+momoten_compile_test_shader(momoten_fp16_basic_test_spv fp16_basic_buffer.comp vulkan1.1)
 momoten_compile_test_shader(momoten_fp16_program_constant_test_spv fp16_program_constant.comp vulkan1.1)
 momoten_compile_test_shader(momoten_fp64_test_spv fp64_buffer.comp vulkan1.1)
 momoten_compile_test_shader(momoten_int16_test_spv int16_buffer.comp vulkan1.1)
@@ -202,6 +222,10 @@ momoten_compile_test_shader(momoten_subgroup_basic_test_spv subgroup_basic.comp 
 momoten_compile_test_shader(momoten_integer_dot_product_test_spv integer_dot_product.comp vulkan1.1)
 momoten_compile_test_shader(momoten_workgroup_split_test_spv workgroup_split.comp vulkan1.1)
 momoten_compile_test_shader(momoten_workgroup_3d_test_spv workgroup_3d.comp vulkan1.1)
+momoten_compile_test_shader(momoten_vector_extract_test_spv vector_extract_dynamic.comp vulkan1.1)
+momoten_compile_test_shader(momoten_vector_extract_fp64_test_spv vector_extract_fp64.comp vulkan1.1)
+momoten_compile_test_shader(momoten_vector_extract_int16_test_spv vector_extract_int16.comp vulkan1.1)
+momoten_compile_test_shader(momoten_pow_constant_base_test_spv pow_constant_base.comp vulkan1.0)
 
 add_custom_target(momoten-test-spv DEPENDS ${momoten_test_spv_files})
 
@@ -221,7 +245,9 @@ add_test(NAME momoten_translator_simple
         "${momoten_workgroup_split_test_spv}"
         "${momoten_fp64_test_spv}"
         "${momoten_fp16_program_constant_test_spv}"
-        "${momoten_workgroup_3d_test_spv}")
+        "${momoten_workgroup_3d_test_spv}"
+        "${momoten_vector_extract_test_spv}"
+        "${momoten_vector_extract_fp64_test_spv}")
 set_tests_properties(momoten_translator_simple PROPERTIES
     LABELS "momoten;translator")
 
@@ -244,7 +270,9 @@ if(TARGET momoten_amalgamated_translator)
             "${momoten_workgroup_split_test_spv}"
             "${momoten_fp64_test_spv}"
             "${momoten_fp16_program_constant_test_spv}"
-            "${momoten_workgroup_3d_test_spv}")
+            "${momoten_workgroup_3d_test_spv}"
+            "${momoten_vector_extract_test_spv}"
+            "${momoten_vector_extract_fp64_test_spv}")
     set_tests_properties(momoten_amalgamated_translator_simple PROPERTIES
         LABELS "momoten;amalgamation;translator")
 endif()
@@ -274,6 +302,10 @@ if(MOMOTEN_CLANG)
             -DFP16_SPV_FILE=${momoten_fp16_test_spv}
             -DFP64_SPV_FILE=${momoten_fp64_test_spv}
             -DFP16_CONSTANT_SPV_FILE=${momoten_fp16_program_constant_test_spv}
+            -DVECTOR_EXTRACT_SPV_FILE=${momoten_vector_extract_test_spv}
+            -DVECTOR_EXTRACT_FP64_SPV_FILE=${momoten_vector_extract_fp64_test_spv}
+            -DVECTOR_EXTRACT_INT16_SPV_FILE=${momoten_vector_extract_int16_test_spv}
+            -DPOW_CONSTANT_BASE_SPV_FILE=${momoten_pow_constant_base_test_spv}
             -DOUTPUT_DIR=${CMAKE_CURRENT_BINARY_DIR}/strict-cl10
             -P "${CMAKE_CURRENT_SOURCE_DIR}/translator/strict_cl10_test.cmake")
     set_tests_properties(momoten_opencl_c_1_0_syntax PROPERTIES
@@ -288,6 +320,10 @@ if(MOMOTEN_CLANG)
             -DFP16_SPV_FILE=${momoten_fp16_test_spv}
             -DFP64_SPV_FILE=${momoten_fp64_test_spv}
             -DFP16_CONSTANT_SPV_FILE=${momoten_fp16_program_constant_test_spv}
+            -DVECTOR_EXTRACT_SPV_FILE=${momoten_vector_extract_test_spv}
+            -DVECTOR_EXTRACT_FP64_SPV_FILE=${momoten_vector_extract_fp64_test_spv}
+            -DVECTOR_EXTRACT_INT16_SPV_FILE=${momoten_vector_extract_int16_test_spv}
+            -DPOW_CONSTANT_BASE_SPV_FILE=${momoten_pow_constant_base_test_spv}
             -DAPPLE_TYPE_ALIASES=ON
             -DOUTPUT_DIR=${CMAKE_CURRENT_BINARY_DIR}/apple-type-aliases
             -P "${CMAKE_CURRENT_SOURCE_DIR}/translator/strict_cl10_test.cmake")
@@ -306,6 +342,8 @@ if(TARGET momoten_test_opencl)
         COMMAND momoten_opencl_test "${momoten_test_spv}")
     add_test(NAME momoten_opencl_fp16
         COMMAND momoten_opencl_test "${momoten_fp16_test_spv}" fp16)
+    add_test(NAME momoten_opencl_fp16_basic
+        COMMAND momoten_opencl_test "${momoten_fp16_basic_test_spv}" fp16)
     add_test(NAME momoten_opencl_fp64
         COMMAND momoten_opencl_test "${momoten_fp64_test_spv}" fp64)
     add_test(NAME momoten_opencl_int16
@@ -325,14 +363,38 @@ if(TARGET momoten_test_opencl)
     add_test(NAME momoten_opencl_workgroup_3d
         COMMAND momoten_opencl_test "${momoten_workgroup_3d_test_spv}"
             workgroup-3d)
+    add_test(NAME momoten_opencl_vector_access
+        COMMAND momoten_opencl_test "${momoten_vector_extract_test_spv}"
+            vector-access)
+    add_test(NAME momoten_opencl_vector_access_fp64
+        COMMAND momoten_opencl_test "${momoten_vector_extract_fp64_test_spv}"
+            vector-access-fp64)
+    add_test(NAME momoten_opencl_vector_extract_int16
+        COMMAND momoten_opencl_test "${momoten_vector_extract_int16_test_spv}"
+            vector-extract-int16)
+    foreach(width scalar vec2 vec3 vec4)
+        add_test(NAME momoten_opencl_pow_${width}
+            COMMAND momoten_opencl_test "${momoten_pow_constant_base_test_spv}"
+                pow-${width})
+        set_tests_properties(momoten_opencl_pow_${width} PROPERTIES
+            LABELS "momoten;runtime;direct-opencl"
+            SKIP_RETURN_CODE 77)
+    endforeach()
     set_tests_properties(momoten_opencl_simple momoten_opencl_fp16
+        momoten_opencl_fp16_basic
         momoten_opencl_fp64
         momoten_opencl_int16
         momoten_opencl_atomic_packed momoten_opencl_scalar_16bit
         momoten_opencl_subgroup_basic momoten_opencl_integer_dot_product
-        momoten_opencl_workgroup_split momoten_opencl_workgroup_3d PROPERTIES
+        momoten_opencl_workgroup_split momoten_opencl_workgroup_3d
+        momoten_opencl_vector_access momoten_opencl_vector_access_fp64
+        momoten_opencl_vector_extract_int16 PROPERTIES
         LABELS "momoten;runtime;direct-opencl"
         SKIP_RETURN_CODE 77)
+    # These fixtures synchronize more than one invocation in a workgroup.
+    set_property(TEST momoten_opencl_simple momoten_opencl_subgroup_basic
+        momoten_opencl_vector_access APPEND PROPERTY
+        LABELS "requires-opencl-multilane-barrier")
 else()
     message(STATUS
         "MOMOTEN_TEST_OPENCL_LIBRARY is unset; the optional direct-OpenCL test is disabled")
@@ -379,7 +441,7 @@ if(TARGET momoten_driver)
             "${momoten_subgroup_basic_test_spv}"
             "${momoten_integer_dot_product_test_spv}")
     set_tests_properties(momoten_driver_simple PROPERTIES
-        LABELS "momoten;runtime"
+        LABELS "momoten;runtime;requires-opencl-multilane-barrier"
         SKIP_RETURN_CODE 77)
 
     add_test(NAME momoten_program_cache
@@ -389,7 +451,7 @@ if(TARGET momoten_driver)
             -DCACHE_DIR=${CMAKE_CURRENT_BINARY_DIR}/program-cache
             -P "${CMAKE_CURRENT_SOURCE_DIR}/runtime/cache_test.cmake")
     set_tests_properties(momoten_program_cache PROPERTIES
-        LABELS "momoten;runtime;cache"
+        LABELS "momoten;runtime;cache;requires-opencl-multilane-barrier"
         SKIP_REGULAR_EXPRESSION "MOMOTEN_TEST_SKIP: no compatible OpenCL device for program cache test")
 endif()
 
@@ -433,6 +495,6 @@ if(TARGET momoten_amalgamated_driver)
             "${momoten_subgroup_basic_test_spv}"
             "${momoten_integer_dot_product_test_spv}")
     set_tests_properties(momoten_amalgamated_driver_simple PROPERTIES
-        LABELS "momoten;amalgamation;runtime"
+        LABELS "momoten;amalgamation;runtime;requires-opencl-multilane-barrier"
         SKIP_RETURN_CODE 77)
 endif()

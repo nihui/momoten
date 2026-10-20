@@ -53,6 +53,7 @@ struct TestCase
     cl_ulong local_memory_limit;
     bool barrier;
     bool native_subgroups;
+    uint32_t emulated_subgroup_size;
     size_t kernel_limits[2];
     cl_ulong kernel_local_memory[2];
     size_t subgroup_sizes[2];
@@ -72,7 +73,7 @@ struct TestCase
     size_t expected_subgroup_calls;
 
     explicit TestCase(const char* name_)
-        : name(name_), device_limit(1024), profile_limit(256), local_memory_limit(65536), barrier(false), native_subgroups(false), succeeds(true), expected_mode(momoten::WorkgroupModeDirect), expected_chunks(1), expected_program_calls(1), expected_build_calls(1), expected_kernel_calls(1), expected_subgroup_calls(0)
+        : name(name_), device_limit(1024), profile_limit(256), local_memory_limit(65536), barrier(false), native_subgroups(false), emulated_subgroup_size(0), succeeds(true), expected_mode(momoten::WorkgroupModeDirect), expected_chunks(1), expected_program_calls(1), expected_build_calls(1), expected_kernel_calls(1), expected_subgroup_calls(0)
     {
         logical_size[0] = expected_local_size[0] = 4;
         logical_size[1] = expected_local_size[1] = 3;
@@ -125,6 +126,7 @@ struct MockState
     std::vector<std::unique_ptr<_cl_mem> > memories;
     std::vector<std::unique_ptr<_cl_event> > events;
     std::vector<Shape> subgroup_shapes;
+    std::vector<bool> subgroup_virtual;
     Shape global_size;
     Shape local_size;
     size_t program_calls;
@@ -315,6 +317,7 @@ static cl_int CL_API_CALL subgroup_info(cl_kernel kernel, cl_device_id, cl_kerne
     Shape shape;
     memcpy(shape.values, input, sizeof(shape.values));
     mock->subgroup_shapes.push_back(shape);
+    mock->subgroup_virtual.push_back(kernel->program->source.find("momo_virtual_local_invocation_index") != std::string::npos);
     const size_t attempt = kernel->program->attempt;
     if (mock->test.subgroup_query_errors[attempt] != CL_SUCCESS)
         return mock->test.subgroup_query_errors[attempt];
@@ -416,11 +419,11 @@ static bool assemble(const TestCase& test, std::vector<uint32_t>& words)
 {
     std::ostringstream source;
     source << "OpCapability Shader\n";
-    if (test.native_subgroups)
+    if (test.native_subgroups || test.emulated_subgroup_size)
         source << "OpCapability GroupNonUniform\n";
     source << "OpMemoryModel Logical GLSL450\n"
               "OpEntryPoint GLCompute %main \"main\" %local_id %local_index";
-    if (test.native_subgroups)
+    if (test.native_subgroups || test.emulated_subgroup_size)
         source << " %subgroup_size";
     source << "\nOpExecutionMode %main LocalSize " << test.logical_size[0] << ' ' << test.logical_size[1] << ' ' << test.logical_size[2] << "\n"
            << "OpDecorate %local_id BuiltIn LocalInvocationId\n"
@@ -431,7 +434,7 @@ static bool assemble(const TestCase& test, std::vector<uint32_t>& words)
               "OpDecorate %data DescriptorSet 0\n"
               "OpDecorate %data Binding 0\n"
               "OpDecorate %data NonReadable\n";
-    if (test.native_subgroups)
+    if (test.native_subgroups || test.emulated_subgroup_size)
         source << "OpDecorate %subgroup_size BuiltIn SubgroupSize\n";
     source << "%void = OpTypeVoid\n"
               "%uint = OpTypeInt 32 0\n"
@@ -449,7 +452,7 @@ static bool assemble(const TestCase& test, std::vector<uint32_t>& words)
               "%local_id = OpVariable %input_uint3 Input\n"
               "%local_index = OpVariable %input_uint Input\n"
               "%data = OpVariable %storage_block StorageBuffer\n";
-    if (test.native_subgroups)
+    if (test.native_subgroups || test.emulated_subgroup_size)
         source << "%subgroup_size = OpVariable %input_uint Input\n";
     source << "%main = OpFunction %void None %function\n"
               "%entry = OpLabel\n"
@@ -460,7 +463,7 @@ static bool assemble(const TestCase& test, std::vector<uint32_t>& words)
               "%z = OpCompositeExtract %uint %local 2\n"
               "%xy = OpIAdd %uint %x %y\n"
               "%xyz = OpIAdd %uint %xy %z\n";
-    if (test.native_subgroups)
+    if (test.native_subgroups || test.emulated_subgroup_size)
         source << "%subgroup = OpLoad %uint %subgroup_size\n"
                   "%result = OpIAdd %uint %xyz %subgroup\n";
     else
@@ -573,6 +576,11 @@ static int run_case(const TestCase& test)
         physical.shader_profile.subgroup_mode = momoten::SubgroupModeNative;
         physical.shader_profile.subgroup_size = 8;
     }
+    else if (test.emulated_subgroup_size)
+    {
+        physical.shader_profile.subgroup_mode = momoten::SubgroupModeEmulatedBasic;
+        physical.shader_profile.subgroup_size = test.emulated_subgroup_size;
+    }
     VkDevice_T device = {};
     device.physical_device = &physical;
 
@@ -610,7 +618,7 @@ static int run_case(const TestCase& test)
     {
         for (size_t d = 0; d < 3; d++)
         {
-            const size_t expected = i == 0 ? test.logical_size[d] : test.expected_local_size[d];
+            const size_t expected = state.subgroup_virtual[i] ? test.expected_local_size[d] : test.logical_size[d];
             status |= require(test, state.subgroup_shapes[i].values[d] == expected, "subgroup query did not use the original 3D shape or virtual 1D shape");
         }
     }
@@ -723,6 +731,22 @@ int main()
     test.kernel_local_memory[0] = test.local_memory_limit + 1;
     test.expect_virtual(24, 1, 72, 2);
     status |= run_case(test);
+    test = TestCase("emulated subgroup may span physical OpenCL workgroups");
+    test.emulated_subgroup_size = 128;
+    test.kernel_limits[0] = test.kernel_limits[1] = 8;
+    test.expect_virtual(8, 3, 72, 2);
+    status |= run_case(test);
+    test = TestCase("emulated subgroup does not round down a physical chunk");
+    test.emulated_subgroup_size = 8;
+    test.kernel_limits[0] = test.kernel_limits[1] = 10;
+    test.expect_virtual(10, 3, 90, 2);
+    status |= run_case(test);
+    test = TestCase("native subgroup still aligns physical chunks");
+    test.native_subgroups = true;
+    test.kernel_limits[0] = test.kernel_limits[1] = 10;
+    test.expected_subgroup_calls = 1;
+    test.expect_virtual(8, 3, 72, 2);
+    status |= run_case(test);
     test = TestCase("matching native subgroup uses original 3D query");
     test.native_subgroups = true;
     test.expected_subgroup_calls = 1;
@@ -750,9 +774,19 @@ int main()
     test.build_errors[0] = test.build_errors[1] = CL_BUILD_PROGRAM_FAILURE;
     test.expect_failure(2, 2, 0);
     status |= run_case(test);
-    test = TestCase("compiler OOM does not retry");
+    test = TestCase("compiler register exhaustion reported as host OOM retries virtual source");
     test.build_errors[0] = CL_OUT_OF_HOST_MEMORY;
-    test.expect_failure(1, 1, 0);
+    test.expect_virtual(24, 1, 72, 2);
+    test.expected_kernel_calls = 1;
+    status |= run_case(test);
+    test = TestCase("compiler resource exhaustion retries virtual source");
+    test.build_errors[0] = CL_OUT_OF_RESOURCES;
+    test.expect_virtual(24, 1, 72, 2);
+    test.expected_kernel_calls = 1;
+    status |= run_case(test);
+    test = TestCase("compiler OOM in both modes stops after one retry");
+    test.build_errors[0] = test.build_errors[1] = CL_OUT_OF_HOST_MEMORY;
+    test.expect_failure(2, 2, 0);
     status |= run_case(test);
     test = TestCase("unrelated compiler error does not retry");
     test.build_errors[0] = CL_INVALID_BUILD_OPTIONS;

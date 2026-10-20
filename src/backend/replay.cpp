@@ -155,11 +155,14 @@ cl_int replay_dispatch(ReplayState& state, const RecordedCommand& command)
     {
         if (command.push_constants.size() < pipeline->abi.push_constant_size)
             return CL_INVALID_ARG_SIZE;
-        const cl_int ret = momoten_detail::g_opencl.p_clSetKernelArg(
-            pipeline->kernel, pipeline->abi.push_constant_arg_index,
-            pipeline->abi.push_constant_size, command.push_constants.data());
-        if (ret != CL_SUCCESS)
-            return ret;
+        for (size_t offset = 0; offset < pipeline->abi.push_constant_size; offset += 4)
+        {
+            const cl_int ret = momoten_detail::g_opencl.p_clSetKernelArg(
+                pipeline->kernel, pipeline->abi.push_constant_arg_index + static_cast<cl_uint>(offset / 4),
+                4, command.push_constants.data() + offset);
+            if (ret != CL_SUCCESS)
+                return ret;
+        }
     }
 
     size_t global_size[3] = {0, 0, 0};

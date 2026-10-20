@@ -228,21 +228,15 @@ jobs:
           assert os.environ["GITHUB_ACTIONS"] == "true"
           assert os.environ["RUNNER_ENVIRONMENT"] == "github-hosted"
           assert os.environ["RUNNER_ARCH"] == "X64"
-          Path("build/ci-runtime-exclusions.json").unlink(missing_ok=True)
+          capabilities_file = Path("build/ci-runtime-unavailable-capabilities.json")
+          capabilities_file.unlink(missing_ok=True)
           result = subprocess.run([os.environ["RUNNER_TEMP"] + "/apple-cpu-probe"], timeout=60)
           if result.returncode == 77:
-              # Every excluded shader needs a four-lane barrier. The direct
-              # simple-buffer test additionally exposes the struct argument ABI.
-              exclusions = {
-                  "momoten_opencl_simple": "Apple CPU barrier workgroup limit and by-value struct ABI",
-                  "momoten_opencl_subgroup_basic": "Apple CPU barrier workgroup limit",
-                  "momoten_driver_simple": "Apple CPU barrier workgroup limit (pipeline rejected)",
-                  "momoten_program_cache": "Apple CPU barrier workgroup limit (pipeline rejected)",
-                  "momoten_amalgamated_driver_simple": "Apple CPU barrier workgroup limit (pipeline rejected)",
-              }
-              Path("build/ci-runtime-exclusions.json").write_text(json.dumps(exclusions))
-              for name, reason in exclusions.items():
-                  print(f"::notice::NOT RUN: {name}: {reason}; independently reproduced with native SDK kernels")
+              # Test dependencies live in CTest labels. Only a successful
+              # native reproduction enables this capability exclusion.
+              capabilities_file.write_text(json.dumps({
+                  "requires-opencl-multilane-barrier": "Apple CPU barrier workgroup limit",
+              }))
           elif result.returncode != 0:
               raise SystemExit(result.returncode)
           PYPROBE
@@ -257,13 +251,25 @@ jobs:
 
           args = ["ctest", "--test-dir", "build", "--output-on-failure", "--timeout", "180",
                   "--output-junit", "ctest.xml"]
-          report = Path("build/ci-runtime-exclusions.json")
-          if report.exists():
-              exclusions = json.loads(report.read_text())
+          capabilities_file = Path("build/ci-runtime-unavailable-capabilities.json")
+          exclusions = {}
+          if capabilities_file.exists():
+              capabilities = json.loads(capabilities_file.read_text())
               inventory = json.loads(subprocess.check_output(
                   ["ctest", "--test-dir", "build", "--show-only=json-v1"], text=True))
-              assert set(exclusions) <= {test["name"] for test in inventory["tests"]}
-              args += ["--exclude-regex", "^(" + "|".join(re.escape(name) for name in exclusions) + ")$"]
+              matched_capabilities = set()
+              for test in inventory["tests"]:
+                  properties = {item["name"]: item["value"] for item in test.get("properties", [])}
+                  missing = set(properties.get("LABELS", [])) & capabilities.keys()
+                  if missing:
+                      matched_capabilities.update(missing)
+                      reason = "; ".join(capabilities[label] for label in sorted(missing))
+                      exclusions[test["name"]] = reason
+                      print(f"::notice::NOT RUN: {test['name']}: {reason}; independently reproduced with native SDK kernels")
+              assert matched_capabilities == set(capabilities), "unrecognized CTest capability label"
+              if capabilities:
+                  args += ["--label-exclude", "^(" + "|".join(re.escape(label) for label in capabilities) + ")$"]
+          Path("build/ci-runtime-exclusions.json").write_text(json.dumps(exclusions))
           raise SystemExit(subprocess.run(args).returncode)
           PYTEST
 

@@ -334,6 +334,15 @@ static bool try_opencl_driver(const std::string& path)
 
     OpenCLApi functions = {};
     std::vector<cl_platform_id> platforms;
+    clGetPlatformIDs_fn get_platform_ids = reinterpret_cast<clGetPlatformIDs_fn>(
+        opencl_library_symbol(library, "clGetPlatformIDs"));
+#define MOMOTEN_ASSIGN_DIRECT_FUNCTION(name) \
+    functions.p_##name = reinterpret_cast<name##_fn>(opencl_library_symbol(library, #name));
+    MOMOTEN_OPENCL_FUNCTIONS(MOMOTEN_ASSIGN_DIRECT_FUNCTION)
+#undef MOMOTEN_ASSIGN_DIRECT_FUNCTION
+    // Prefer complete public entry points because some vendor ICD exports
+    // require initialization performed by clGetPlatformIDs.
+    const bool use_direct_functions = get_platform_ids && validate_opencl_functions(functions);
     clIcdGetPlatformIDsKHR_fn get_icd_platform_ids = reinterpret_cast<clIcdGetPlatformIDsKHR_fn>(
         opencl_library_symbol(library, "clIcdGetPlatformIDsKHR"));
     // PoCL intentionally prefixes its public vendor entry point; the system
@@ -342,7 +351,7 @@ static bool try_opencl_driver(const std::string& path)
     if (!get_icd_platform_ids)
         get_icd_platform_ids = reinterpret_cast<clIcdGetPlatformIDsKHR_fn>(
             opencl_library_symbol(library, "POclIcdGetPlatformIDsKHR"));
-    if (get_icd_platform_ids)
+    if (!use_direct_functions && get_icd_platform_ids)
     {
         if (!enumerate_opencl_platforms(get_icd_platform_ids, platforms))
         {
@@ -365,12 +374,6 @@ static bool try_opencl_driver(const std::string& path)
     }
     else
     {
-        clGetPlatformIDs_fn get_platform_ids = reinterpret_cast<clGetPlatformIDs_fn>(
-            opencl_library_symbol(library, "clGetPlatformIDs"));
-#define MOMOTEN_ASSIGN_DIRECT_FUNCTION(name) \
-    functions.p_##name = reinterpret_cast<name##_fn>(opencl_library_symbol(library, #name));
-        MOMOTEN_OPENCL_FUNCTIONS(MOMOTEN_ASSIGN_DIRECT_FUNCTION)
-#undef MOMOTEN_ASSIGN_DIRECT_FUNCTION
         if (!enumerate_opencl_platforms(get_platform_ids, platforms))
         {
             close_opencl_library(library);

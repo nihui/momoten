@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 #include "translator_internal.h"
+#include "opencl_source.h"
 
 #include <algorithm>
 #include <cstring>
@@ -52,7 +53,7 @@ TranslationOptions::TranslationOptions()
 
 CompilerOpenCL::CompilerOpenCL(const uint32_t* words, size_t word_count, const TranslationOptions& options_,
                                bool requires_global_int32_atomics_, bool contains_synchronization_barrier)
-    : CompilerGLSL(words, word_count), translation_options(options_), requires_global_int32_atomics(requires_global_int32_atomics_), requires_fp16(false), requires_int64(false), requires_fp64(false), requires_integer_dot_product(false), uses_workgroup_storage(false), workgroup_splittable(!contains_synchronization_barrier), push_constant_variable_id(0)
+    : CompilerGLSL(words, word_count), translation_options(options_), requires_global_int32_atomics(requires_global_int32_atomics_), requires_fp16(false), requires_int64(false), requires_fp64(false), requires_integer_dot_product(false), requires_scalar_pow(false), uses_workgroup_storage(false), workgroup_splittable(!contains_synchronization_barrier), push_constant_variable_id(0)
 {
 }
 
@@ -309,6 +310,7 @@ bool translate_spirv_to_opencl_c(const uint32_t* words, size_t word_count,
         compiler.set_common_options(common_options);
 
         result.source = compiler.compile();
+        lower_opencl_constructors(result.source);
         // OpenCL C requires every program-scope object to reside in the
         // constant address space. SPIRV-Cross emits non-forwardable SPIR-V
         // constants as file-scope `const` declarations, which some compilers

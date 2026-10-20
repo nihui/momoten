@@ -54,8 +54,8 @@ static bool has_momoten_inline_helper(const std::string& source)
 
 int main(int argc, char** argv)
 {
-    if (argc != 12)
-        return require(false, "expected positive, unsupported, atomic, fp16, int16, subgroup, integer-dot, workgroup-split, fp64, fp16 program-constant and workgroup-3D SPIR-V input paths");
+    if (argc != 14)
+        return require(false, "expected positive, unsupported, atomic, fp16, int16, subgroup, integer-dot, workgroup-split, fp64, fp16 program-constant, workgroup-3D, dynamic vector extraction and fp64 vector extraction SPIR-V input paths");
 
     std::vector<uint32_t> words;
     if (!read_spirv(argv[1], words))
@@ -84,15 +84,18 @@ int main(int argc, char** argv)
         || require(!result.abi.workgroup_splittable, "workgroup-storage kernel was marked splittable")
         || require(result.abi.workgroup_mode == momoten::WorkgroupModeDirect,
                    "workgroup-storage kernel did not retain the direct ABI")
-        || require(result.abi.buffers.size() == 2, "expected two storage buffers") || require(result.abi.buffers[0].binding == 0 && result.abi.buffers[1].binding == 1, "storage buffers are not ordered by binding") || require(result.abi.buffers[0].buffer_arg_index == 0 && result.abi.buffers[0].offset_arg_index == 1 && result.abi.buffers[1].buffer_arg_index == 2 && result.abi.buffers[1].offset_arg_index == 3, "storage-buffer pointer/offset ABI is incorrect") || require(result.abi.push_constant_arg_index == 4 && result.abi.push_constant_size == 12, "push-constant ABI is incorrect") || require(result.abi.entry_point == "momo_main", "translated kernel name is incorrect") || require(result.source.find("#define round(x) rint(x)") != std::string::npos, "GLSL nearest-even round compatibility macro was not emitted") || require(result.source.find("#define SPIRV_CROSS_UNROLL\n") != std::string::npos && result.source.find("#define SPIRV_CROSS_LOOP\n") != std::string::npos, "portable SPIR-V loop-control hint macros were not emitted") || require(result.source.find("SPIRV_CROSS_UNROLL\n        for") != std::string::npos && result.source.find("SPIRV_CROSS_LOOP\n        for") != std::string::npos, "SPIR-V loop-control hints were not preserved in the fixture") || require(result.source.find("__local float scratch[4]") != std::string::npos, "workgroup storage was not localized into the OpenCL kernel") || require(result.source.find("barrier(CLK_LOCAL_MEM_FENCE)") != std::string::npos, "workgroup barrier was not lowered to OpenCL C 1.0") || require(result.source.find("any((valid) != int4(0))") != std::string::npos && result.source.find("all((valid) != int4(0))") != std::string::npos, "boolean-vector any/all was not canonicalized for OpenCL sign-bit semantics") || require(result.source.find("__kernel __attribute__((reqd_work_group_size(4, 1, 1))) void momo_main") != std::string::npos, "OpenCL kernel declaration is missing") || require(result.source.find("momo_buffer_offset_0") != std::string::npos, "buffer offset argument is missing") || require(result.source.find("momo_buffer_size_") == std::string::npos, "unused buffer byte-size argument was emitted") || require(result.source.find("(__global uchar *)&(") == std::string::npos, "scalar storage load was wrapped in an unsupported robust-access guard") || require(result.source.find("volatile int momo_active = 1") != std::string::npos && result.source.find("if (momo_active != 0)") != std::string::npos, "workgroup return convergence and storage-store predication are missing") || require(result.source.find("apply_scale") == std::string::npos, "SPIR-V helper function was not inlined into kernel scope") || require(result.source.find("inout ") == std::string::npos, "GLSL inout qualifier leaked into OpenCL source") || require(result.source.find("layout(") == std::string::npos, "Vulkan GLSL layout syntax leaked into OpenCL source"))
+        || require(result.abi.buffers.size() == 2, "expected two storage buffers") || require(result.abi.buffers[0].binding == 0 && result.abi.buffers[1].binding == 1, "storage buffers are not ordered by binding") || require(result.abi.buffers[0].buffer_arg_index == 0 && result.abi.buffers[0].offset_arg_index == 1 && result.abi.buffers[1].buffer_arg_index == 2 && result.abi.buffers[1].offset_arg_index == 3, "storage-buffer pointer/offset ABI is incorrect") || require(result.abi.push_constant_arg_index == 4 && result.abi.push_constant_size == 12, "push-constant ABI is incorrect") || require(result.abi.entry_point == "momo_main", "translated kernel name is incorrect") || require(result.source.find("#define round(x) rint(x)") != std::string::npos, "GLSL nearest-even round compatibility macro was not emitted") || require(result.source.find("#define SPIRV_CROSS_UNROLL\n") != std::string::npos && result.source.find("#define SPIRV_CROSS_LOOP\n") != std::string::npos, "portable SPIR-V loop-control hint macros were not emitted") || require(result.source.find("SPIRV_CROSS_UNROLL\n        for") != std::string::npos && result.source.find("SPIRV_CROSS_LOOP\n        for") != std::string::npos, "SPIR-V loop-control hints were not preserved in the fixture") || require(result.source.find("__local float scratch[4]") != std::string::npos, "workgroup storage was not localized into the OpenCL kernel") || require(result.source.find("barrier(CLK_LOCAL_MEM_FENCE)") != std::string::npos, "workgroup barrier was not lowered to OpenCL C 1.0") || require(result.source.find("any((valid) != ((int4)(0)))") != std::string::npos && result.source.find("all((valid) != ((int4)(0)))") != std::string::npos, "boolean-vector any/all was not canonicalized for OpenCL sign-bit semantics") || require(result.source.find("__kernel __attribute__((reqd_work_group_size(4, 1, 1))) void momo_main") != std::string::npos, "OpenCL kernel declaration is missing") || require(result.source.find("momo_buffer_offset_0") != std::string::npos, "buffer offset argument is missing") || require(result.source.find("momo_buffer_size_") == std::string::npos, "unused buffer byte-size argument was emitted") || require(result.source.find("(__global uchar *)&(") == std::string::npos, "scalar storage load was wrapped in an unsupported robust-access guard") || require(result.source.find("volatile int momo_active = 1") != std::string::npos && result.source.find("if (momo_active != 0)") != std::string::npos, "workgroup return convergence and storage-store predication are missing") || require(result.source.find("apply_scale") == std::string::npos, "SPIR-V helper function was not inlined into kernel scope") || require(result.source.find("inout ") == std::string::npos, "GLSL inout qualifier leaked into OpenCL source") || require(result.source.find("layout(") == std::string::npos, "Vulkan GLSL layout syntax leaked into OpenCL source"))
         return 1;
 
     const size_t kernel_begin = result.source.find("void momo_main(");
     const size_t helper_begin = result.source.find("float load_scale(");
     const std::string push_argument = "struct Parameters momo_push_constants)";
+    const std::string scalar_arguments = "float momo_push_constant_0, int momo_push_constant_1, uint momo_push_constant_2)";
     if (require(kernel_begin != std::string::npos
-                    && result.source.find(push_argument, kernel_begin) < result.source.find('\n', kernel_begin),
-                "push constants were not lowered to a by-value kernel argument")
+                    && result.source.find(scalar_arguments, kernel_begin) < result.source.find('\n', kernel_begin),
+                "push constants were not lowered to individual scalar kernel arguments")
+        || require(result.source.find("struct Parameters momo_push_constants = {momo_push_constant_0, momo_push_constant_1, momo_push_constant_2};") != std::string::npos,
+                   "push-constant scalars were not assembled into a private structure")
         || require(helper_begin != std::string::npos
                        && result.source.find(push_argument, helper_begin) < result.source.find('\n', helper_begin),
                    "retained early-return helper did not receive the by-value push-constant ABI")
@@ -119,6 +122,9 @@ int main(int argc, char** argv)
     if (!momoten::translate_spirv_to_opencl_c(words.data(), words.size(), options, repeated) || require(repeated.source == result.source, "translation is not deterministic"))
         return 1;
 
+    if (require(result.source.find("__VA_ARGS__") == std::string::npos,
+                "variadic constructor macros remain in OpenCL C source"))
+        return 1;
     momoten::TranslationOptions virtual_options = options;
     virtual_options.workgroup_mode = momoten::WorkgroupModeVirtual;
     momoten::TranslationResult virtual_rejected;
@@ -210,7 +216,7 @@ int main(int argc, char** argv)
                    "packHalf2x16 helper definition is missing")
         || require(!has_momoten_inline_helper(fp16_result.source),
                    "generated momoten helper uses incompatible inline linkage")
-        || require(fp16_result.source.find("half(0.5f)") != std::string::npos && fp16_result.source.find("half(0.5)") == std::string::npos,
+        || require(fp16_result.source.find("((half)(0.5f))") != std::string::npos && fp16_result.source.find("((half)(0.5))") == std::string::npos,
                    "float16 constants retained an accidental fp64 dependency"))
         return 1;
 
@@ -227,9 +233,9 @@ int main(int argc, char** argv)
                    "uint16 storage buffer was not lowered to ushort4")
         || require(int16_result.source.find("as_uint(") != std::string::npos && int16_result.source.find("as_ushort2(") != std::string::npos,
                    "equal-size scalar/vector bitcasts were not lowered with OpenCL as_type builtins")
-        || require(int16_result.source.find("short(0)") != std::string::npos && int16_result.source.find("short(-3)") != std::string::npos,
+        || require(int16_result.source.find("((short)(0))") != std::string::npos && int16_result.source.find("((short)(-3))") != std::string::npos,
                    "signed 16-bit constants were not emitted with OpenCL conversions")
-        || require(int16_result.source.find("ushort(2)") != std::string::npos && int16_result.source.find("ushort(7)") != std::string::npos,
+        || require(int16_result.source.find("((ushort)(2))") != std::string::npos && int16_result.source.find("((ushort)(7))") != std::string::npos,
                    "unsigned 16-bit constants were not emitted with OpenCL conversions")
         || require(int16_result.source.find("0s") == std::string::npos && int16_result.source.find("2us") == std::string::npos,
                    "GLSL-only 16-bit integer literal suffix leaked into OpenCL source"))
@@ -435,8 +441,9 @@ int main(int argc, char** argv)
                    "fp64 feature-macro guard was not emitted")
         || require(fp64_result.source.find("#pragma OPENCL EXTENSION cl_khr_fp64 : enable") != std::string::npos,
                    "fp64 extension pragma was not emitted")
-        || require(fp64_result.source.find("#define double4(...)") != std::string::npos,
-                   "fp64 vector constructors were not emitted")
+        || require(fp64_result.source.find("double4 momo_make_double4(") != std::string::npos
+                       && fp64_result.source.find("__VA_ARGS__") == std::string::npos,
+                   "fp64 vector constructors require variadic macros")
         || require(fp64_result.source.find("__global ulong *") != std::string::npos,
                    "fp64 storage buffer was not lowered to its ulong bit representation")
         || require(fp64_result.source.find("as_double(") != std::string::npos,
@@ -465,6 +472,56 @@ int main(int argc, char** argv)
                    "program-scope half constant is missing the OpenCL constant address space")
         || require(fp16_program_constant_result.source.find("\nconst half ") == std::string::npos,
                    "unqualified program-scope half constant leaked into OpenCL source"))
+        return 1;
+
+    std::vector<uint32_t> vector_extract_dynamic;
+    if (!read_spirv(argv[12], vector_extract_dynamic))
+        return require(false, "failed to read dynamic vector extraction test SPIR-V");
+    momoten::TranslationResult vector_extract_result;
+    if (require(momoten::translate_spirv_to_opencl_c(
+                    vector_extract_dynamic.data(), vector_extract_dynamic.size(),
+                    options, vector_extract_result),
+                "dynamic vector extraction SPIR-V was rejected")
+        || require(!vector_extract_result.abi.fp64 && !vector_extract_result.abi.int64
+                       && vector_extract_result.abi.required_extensions.empty(),
+                   "ordinary vector access acquired an optional device requirement")
+        || require(vector_extract_result.abi.buffers.size() == 4,
+                   "ordinary vector access did not retain its four storage buffers")
+        || require(vector_extract_result.abi.local_size[0] == 4
+                       && vector_extract_result.abi.local_size[1] == 1
+                       && vector_extract_result.abi.local_size[2] == 1
+                       && !vector_extract_result.abi.workgroup_splittable,
+                   "shared vector access lost its synchronized four-invocation workgroup"))
+        return 1;
+    for (size_t i = 0; i < vector_extract_result.abi.buffers.size(); i++)
+    {
+        const momoten::BufferArgument& argument = vector_extract_result.abi.buffers[i];
+        if (require(argument.descriptor_set == 0 && argument.binding == i,
+                    "ordinary vector access bindings are not contiguous"))
+            return 1;
+    }
+
+    // Syntax tests validate the generated pointer expressions; runtime tests
+    // check scalar widths, boolean masks, private arrays and fp64 bitcasts.
+    std::vector<uint32_t> vector_extract_fp64;
+    if (!read_spirv(argv[13], vector_extract_fp64))
+        return require(false, "failed to read fp64 vector extraction test SPIR-V");
+    momoten::TranslationResult vector_extract_fp64_result;
+    if (require(momoten::translate_spirv_to_opencl_c(
+                    vector_extract_fp64.data(), vector_extract_fp64.size(),
+                    options, vector_extract_fp64_result),
+                "fp64 vector extraction SPIR-V was rejected")
+        || require(vector_extract_fp64_result.abi.fp64,
+                   "fp64 vector access lost its device requirement")
+        || require(vector_extract_fp64_result.abi.buffers.size() == 1
+                       && vector_extract_fp64_result.abi.buffers[0].descriptor_set == 0
+                       && vector_extract_fp64_result.abi.buffers[0].binding == 0,
+                   "fp64 vector access did not retain its single storage buffer")
+        || require(vector_extract_fp64_result.abi.local_size[0] == 1
+                       && vector_extract_fp64_result.abi.local_size[1] == 1
+                       && vector_extract_fp64_result.abi.local_size[2] == 1
+                       && vector_extract_fp64_result.abi.workgroup_splittable,
+                   "fp64 vector access acquired a multi-invocation workgroup requirement"))
         return 1;
 
     return 0;

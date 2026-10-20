@@ -9,9 +9,66 @@
 
 namespace momoten {
 
+OpenCLAddressSpace opencl_address_space(StorageClass storage)
+{
+    switch (storage)
+    {
+    case StorageClassFunction:
+    case StorageClassPrivate:
+    case StorageClassPushConstant:
+        return OpenCLAddressSpace::Private;
+    case StorageClassWorkgroup:
+        return OpenCLAddressSpace::Local;
+    case StorageClassUniform:
+    case StorageClassStorageBuffer:
+    case StorageClassCrossWorkgroup:
+        return OpenCLAddressSpace::Global;
+    default:
+        return OpenCLAddressSpace::Unsupported;
+    }
+}
+
+const char* opencl_address_space_qualifier(OpenCLAddressSpace address_space)
+{
+    switch (address_space)
+    {
+    case OpenCLAddressSpace::Private:
+        return "__private";
+    case OpenCLAddressSpace::Local:
+        return "__local";
+    case OpenCLAddressSpace::Global:
+        return "__global";
+    default:
+        return 0;
+    }
+}
+
+bool needs_volatile_private_vector_array(const SPIRType& type, StorageClass storage)
+{
+    // Adreno OpenCL optimizers can lose lane updates or crash when function
+    // arrays of 32-bit integer vectors are accessed through dynamic indices.
+    // Keep every such array volatile: translation is device independent and
+    // does not prove which accesses will remain static after optimization.
+    return storage == StorageClassFunction && !type.array.empty()
+           && type.columns == 1 && type.vecsize > 1 && type.width == 32
+           && (type.basetype == SPIRType::Int || type.basetype == SPIRType::UInt);
+}
+
 void CompilerOpenCL::emit_entry_point_declarations()
 {
     CompilerGLSL::emit_entry_point_declarations();
+    if (push_constant_variable_id != 0)
+    {
+        const SPIRType& push_type = get_variable_data_type(get<SPIRVariable>(push_constant_variable_id));
+        std::string values;
+        for (size_t i = 0; i < push_type.member_types.size(); i++)
+        {
+            if (i != 0)
+                values += ", ";
+            values += "momo_push_constant_" + std::to_string(i);
+        }
+        statement("struct ", type_to_glsl(push_type), " momo_push_constants = {", values, "};");
+    }
     if (translation_options.workgroup_mode == WorkgroupModeVirtual)
     {
         const uint64_t invocation_count = static_cast<uint64_t>(local_size[0]) * local_size[1] * local_size[2];
@@ -32,11 +89,16 @@ void CompilerOpenCL::emit_entry_point_declarations()
 
 void CompilerOpenCL::emit_header()
 {
+    if (requires_scalar_pow)
+        resource_names.insert("momo_pow");
     // Reserve the shared push-constant argument name before resource and local
     // names are assigned.
     if (push_constant_variable_id != 0)
     {
         resource_names.insert("momo_push_constants");
+        const SPIRType& push_type = get_variable_data_type(get<SPIRVariable>(push_constant_variable_id));
+        for (size_t i = 0; i < push_type.member_types.size(); i++)
+            resource_names.insert("momo_push_constant_" + std::to_string(i));
     }
     // CompilerGLSL supplies the structured control-flow and expression
     // emitter. These switches make its output C-like before the virtual
@@ -59,7 +121,7 @@ void CompilerOpenCL::emit_header()
     // GLSL accepts the 16-bit integer literal suffixes "s" and "us", but
     // OpenCL C does not. Leaving the suffixes empty makes the generic
     // constant emitter use explicit short(...) and ushort(...) conversions,
-    // which are valid in the OpenCL C 1.0 baseline.
+    // which are lowered to OpenCL C casts after emission.
     backend.int16_t_literal_suffix = "";
     backend.uint16_t_literal_suffix = "";
     backend.boolean_mix_function = "select";
@@ -87,28 +149,21 @@ void CompilerOpenCL::emit_header()
     }
     statement("");
 
-    emit_constructor_macros("char");
-    emit_constructor_macros("uchar");
-    emit_constructor_macros("short");
-    emit_constructor_macros("ushort");
-    emit_constructor_macros("int");
-    emit_constructor_macros("uint");
-    emit_constructor_macros("long");
-    emit_constructor_macros("ulong");
-    emit_constructor_macros("float");
     if (requires_fp64)
-    {
-        emit_constructor_macros("double");
         emit_fp64_vector_helpers();
+    if (requires_scalar_pow)
+    {
+        statement("float momo_pow(float base, float exponent)");
+        begin_scope();
+        statement("volatile float runtime_base = base;");
+        statement("return pow(runtime_base, exponent);");
+        end_scope();
     }
-    if (requires_fp16)
-        emit_constructor_macros("half");
     // Vulkan std430 mat4 has 16-byte alignment and 64-byte stride. An
     // OpenCL float16 would impose 64-byte alignment, so preserve layout
     // with a value-copyable struct containing four float4 columns.
     statement("typedef struct { float4 c[4]; } momo_mat4;");
     statement("typedef char momo_mat4_size_must_be_64[(sizeof(momo_mat4) == 64) ? 1 : -1];");
-    statement("#define momo_mat4(...) ((momo_mat4){{__VA_ARGS__}})");
     if (requires_fp16)
     {
         // A Vulkan f16mat4 is four tightly packed half4 columns (32 bytes).
@@ -116,7 +171,6 @@ void CompilerOpenCL::emit_header()
         // cl_khr_fp16 is present.
         statement("typedef struct { half4 c[4]; } momo_hmat4;");
         statement("typedef char momo_hmat4_size_must_be_32[(sizeof(momo_hmat4) == 32) ? 1 : -1];");
-        statement("#define momo_hmat4(...) ((momo_hmat4){{__VA_ARGS__}})");
     }
     if (requires_integer_dot_product)
         emit_integer_dot_product_helpers();
@@ -359,6 +413,8 @@ std::string CompilerOpenCL::to_qualifiers_glsl(uint32_t id)
     const SPIRVariable* variable = maybe_get<SPIRVariable>(id);
     if (variable && variable->storage == StorageClassWorkgroup)
         return "__local ";
+    if (variable && needs_volatile_private_vector_array(get_variable_data_type(*variable), variable->storage))
+        return "volatile ";
     return std::string();
 }
 
@@ -573,6 +629,42 @@ bool CompilerOpenCL::emit_fp64_vector_instruction(
     return false;
 }
 
+bool CompilerOpenCL::prepare_access_chain_for_scalar_access(std::string& expression, const SPIRType& scalar_type,
+                                                            StorageClass storage, bool& packed)
+{
+    // Older OpenCL compilers reject vector subscripting. Index the contiguous
+    // scalar components through a pointer in the original address space.
+    const OpenCLAddressSpace address_space = opencl_address_space(storage);
+    const char* qualifier = opencl_address_space_qualifier(address_space);
+    if (!qualifier)
+        return false;
+    const bool global_storage = address_space == OpenCLAddressSpace::Global;
+    // OpenCL has no bool vectors: bvecN is represented by intN, so its
+    // component stride is sizeof(int), not sizeof(bool).
+    const std::string scalar_name = scalar_type.basetype == SPIRType::Boolean
+                                        ? "int"
+                                    : global_storage && scalar_type.basetype == SPIRType::Double && scalar_type.width == 64
+                                        ? "ulong"
+                                        : type_to_glsl(scalar_type);
+    // Preserve scalar accesses at descriptor tails instead of allowing a
+    // compiler to speculate a wider vector load/store.
+    const std::string qualifiers = (global_storage ? "volatile " : "") + std::string(qualifier);
+    expression = "((" + qualifiers + " " + scalar_name + " *)&(" + expression + "))";
+    packed = true;
+    return true;
+}
+
+void CompilerOpenCL::cast_from_variable_load(uint32_t source_id, std::string& expression, const SPIRType& type)
+{
+    CompilerGLSL::cast_from_variable_load(source_id, expression, type);
+    if (type.basetype == SPIRType::Boolean && type.array.empty() && type.columns == 1 && type.vecsize == 1)
+    {
+        // Vector comparisons use 0/-1 masks, while scalar bool uses 0/1.
+        // Normalize even forwarded loads before scalar logical comparisons.
+        expression = "(" + expression + " != 0)";
+    }
+}
+
 void CompilerOpenCL::emit_instruction(const Instruction& instruction)
 {
     const Op opcode = static_cast<Op>(instruction.op);
@@ -617,6 +709,45 @@ void CompilerOpenCL::emit_instruction(const Instruction& instruction)
 
     if (emit_barrier_instruction(instruction, ops))
         return;
+
+    if (opcode == OpVectorExtractDynamic)
+    {
+        const SPIRType& vector_type = expression_type(ops[2]);
+        if (vector_type.columns != 1 || vector_type.vecsize < 2 || vector_type.vecsize > 4)
+            throw std::runtime_error("dynamic vector extraction requires a vec2, vec3 or vec4");
+
+        // Older OpenCL compilers also reject subscripts on vector rvalues,
+        // which cannot use the private-pointer access-chain lowering.
+        static const char components[] = "xyzw";
+        const std::string vector = "(" + to_expression(ops[2]) + ")";
+        const std::string index = "(" + to_expression(ops[3]) + ")";
+        std::string expression = vector + "." + components[vector_type.vecsize - 1];
+        for (uint32_t i = vector_type.vecsize - 1; i > 0; i--)
+            expression = "(" + index + " == " + std::to_string(i - 1) + "u ? " + vector + "." + components[i - 1] + " : " + expression + ")";
+        if (vector_type.basetype == SPIRType::Boolean)
+            expression = "(" + expression + " != 0)";
+        // Scalar conditional operands undergo integer promotion in OpenCL C.
+        // Restore the SPIR-V result type before forwarding into a bitcast.
+        expression = "((" + type_to_glsl(get<SPIRType>(ops[0])) + ")(" + expression + "))";
+        emit_op(ops[0], ops[1], expression, should_forward(ops[2]) && should_forward(ops[3]));
+        inherit_expression_dependencies(ops[1], ops[2]);
+        inherit_expression_dependencies(ops[1], ops[3]);
+        return;
+    }
+
+    if (opcode == OpCompositeExtract && instruction.length == 4)
+    {
+        const SPIRType& type = expression_type(ops[2]);
+        if (type.basetype == SPIRType::Boolean && type.array.empty() && type.columns == 1
+            && type.vecsize > 1 && type.vecsize <= 4 && ops[3] < type.vecsize)
+        {
+            static const char components[] = "xyzw";
+            const std::string expression = "((" + to_expression(ops[2]) + ")." + components[ops[3]] + " != 0)";
+            emit_op(ops[0], ops[1], expression, should_forward(ops[2]));
+            inherit_expression_dependencies(ops[1], ops[2]);
+            return;
+        }
+    }
 
     if (opcode == OpAny || opcode == OpAll)
     {
@@ -922,6 +1053,21 @@ void CompilerOpenCL::emit_store_statement(uint32_t lhs_expression, uint32_t rhs_
 void CompilerOpenCL::emit_glsl_op(uint32_t result_type, uint32_t result_id, uint32_t op,
                                   const uint32_t* args, uint32_t count)
 {
+    const SPIRType& result = get<SPIRType>(result_type);
+    if (op == GLSLstd450Pow && count == 2
+        && result.basetype == SPIRType::Float && result.width == 32 && result.vecsize == 1)
+    {
+        // Adreno folds constant-base scalar pow with insufficient accuracy.
+        // A local load can become constant only in the OpenCL compiler, so
+        // materialize every scalar float base before calling the builtin.
+        if (!requires_scalar_pow)
+        {
+            requires_scalar_pow = true;
+            force_recompile();
+        }
+        emit_binary_func_op(result_type, result_id, args[0], args[1], "momo_pow");
+        return;
+    }
     if (op == GLSLstd450SAbs && count == 1)
     {
         const SPIRType& type = get<SPIRType>(result_type);
@@ -1089,7 +1235,8 @@ bool CompilerOpenCL::emit_storage_buffer_load(const Instruction& instruction, co
                 inherit_expression_dependencies(result_id, pointer_id);
                 return true;
             }
-            return false;
+            // Pointer-based scalar access chains already retain their address
+            // space. Fall through so fp64 storage still gets its bitcast.
         }
     }
 
@@ -1143,21 +1290,10 @@ bool CompilerOpenCL::emit_storage_buffer_load(const Instruction& instruction, co
 
 const char* CompilerOpenCL::function_pointer_address_space(StorageClass storage)
 {
-    switch (storage)
-    {
-    case StorageClassFunction:
-    case StorageClassPrivate:
-    case StorageClassPushConstant:
-        return "__private";
-    case StorageClassWorkgroup:
-        return "__local";
-    case StorageClassUniform:
-    case StorageClassStorageBuffer:
-    case StorageClassCrossWorkgroup:
-        return "__global";
-    default:
+    const char* qualifier = opencl_address_space_qualifier(opencl_address_space(storage));
+    if (!qualifier)
         throw std::runtime_error("unsupported function-pointer storage class in the OpenCL C profile");
-    }
+    return qualifier;
 }
 
 void CompilerOpenCL::emit_struct_typedef(const SPIRType& type)

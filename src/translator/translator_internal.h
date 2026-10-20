@@ -36,6 +36,18 @@ bool spirv_contains_opcode(const std::vector<uint32_t>& words, Op opcode);
 
 const char* capability_name(Capability capability);
 
+enum class OpenCLAddressSpace
+{
+    Unsupported,
+    Private,
+    Local,
+    Global
+};
+
+OpenCLAddressSpace opencl_address_space(StorageClass storage);
+const char* opencl_address_space_qualifier(OpenCLAddressSpace address_space);
+bool needs_volatile_private_vector_array(const SPIRType& type, StorageClass storage);
+
 class CompilerOpenCL : public CompilerGLSL
 {
 public:
@@ -64,6 +76,9 @@ protected:
     std::string to_member_reference(uint32_t base, const SPIRType& type, uint32_t index,
                                     bool ptr_chain_is_resolved) override;
     void emit_instruction(const Instruction& instruction) override;
+    bool prepare_access_chain_for_scalar_access(std::string& expression, const SPIRType& scalar_type,
+                                                StorageClass storage, bool& packed) override;
+    void cast_from_variable_load(uint32_t source_id, std::string& expression, const SPIRType& type) override;
     void emit_store_statement(uint32_t lhs_expression, uint32_t rhs_expression) override;
     void emit_glsl_op(uint32_t result_type, uint32_t result_id, uint32_t op,
                       const uint32_t* args, uint32_t count) override;
@@ -81,7 +96,6 @@ private:
     bool access_chain_contains_matrix(uint32_t base, const uint32_t* indices, uint32_t count);
     bool emit_matrix_access_chain(const Instruction& instruction, const uint32_t* ops);
     static const char* function_pointer_address_space(StorageClass storage);
-    void emit_constructor_macros(const char* base);
     void emit_struct_typedef(const SPIRType& type);
 
     void validate_capabilities();
@@ -103,6 +117,7 @@ private:
     bool requires_int64;
     bool requires_fp64;
     bool requires_integer_dot_product;
+    bool requires_scalar_pow;
     bool uses_workgroup_storage;
     bool workgroup_splittable;
     std::vector<ResourceInfo> resources;
