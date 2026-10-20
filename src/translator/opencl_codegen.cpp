@@ -9,6 +9,51 @@
 
 namespace momoten {
 
+OpenCLAddressSpace opencl_address_space(StorageClass storage)
+{
+    switch (storage)
+    {
+    case StorageClassFunction:
+    case StorageClassPrivate:
+    case StorageClassPushConstant:
+        return OpenCLAddressSpace::Private;
+    case StorageClassWorkgroup:
+        return OpenCLAddressSpace::Local;
+    case StorageClassUniform:
+    case StorageClassStorageBuffer:
+    case StorageClassCrossWorkgroup:
+        return OpenCLAddressSpace::Global;
+    default:
+        return OpenCLAddressSpace::Unsupported;
+    }
+}
+
+const char* opencl_address_space_qualifier(OpenCLAddressSpace address_space)
+{
+    switch (address_space)
+    {
+    case OpenCLAddressSpace::Private:
+        return "__private";
+    case OpenCLAddressSpace::Local:
+        return "__local";
+    case OpenCLAddressSpace::Global:
+        return "__global";
+    default:
+        return 0;
+    }
+}
+
+bool needs_volatile_private_vector_array(const SPIRType& type, StorageClass storage)
+{
+    // Adreno OpenCL optimizers can lose lane updates or crash when function
+    // arrays of 32-bit integer vectors are accessed through dynamic indices.
+    // Keep every such array volatile: translation is device independent and
+    // does not prove which accesses will remain static after optimization.
+    return storage == StorageClassFunction && !type.array.empty()
+           && type.columns == 1 && type.vecsize > 1 && type.width == 32
+           && (type.basetype == SPIRType::Int || type.basetype == SPIRType::UInt);
+}
+
 void CompilerOpenCL::emit_entry_point_declarations()
 {
     CompilerGLSL::emit_entry_point_declarations();
@@ -358,17 +403,8 @@ std::string CompilerOpenCL::to_qualifiers_glsl(uint32_t id)
     const SPIRVariable* variable = maybe_get<SPIRVariable>(id);
     if (variable && variable->storage == StorageClassWorkgroup)
         return "__local ";
-    if (variable && variable->storage == StorageClassFunction)
-    {
-        const SPIRType& type = get_variable_data_type(*variable);
-        if (!type.array.empty() && type.columns == 1 && type.vecsize > 1
-            && type.width == 32 && (type.basetype == SPIRType::Int || type.basetype == SPIRType::UInt))
-        {
-            // Legacy OpenCL optimizers can lose lane updates, or crash, when
-            // integer-vector arrays are written and read through dynamic indices.
-            return "volatile ";
-        }
-    }
+    if (variable && needs_volatile_private_vector_array(get_variable_data_type(*variable), variable->storage))
+        return "volatile ";
     return std::string();
 }
 
@@ -588,28 +624,11 @@ bool CompilerOpenCL::prepare_access_chain_for_scalar_access(std::string& express
 {
     // Older OpenCL compilers reject vector subscripting. Index the contiguous
     // scalar components through a pointer in the original address space.
-    const char* address_space = 0;
-    switch (storage)
-    {
-    case StorageClassFunction:
-    case StorageClassPrivate:
-    case StorageClassPushConstant:
-        address_space = "__private";
-        break;
-    case StorageClassWorkgroup:
-        address_space = "__local";
-        break;
-    case StorageClassUniform:
-    case StorageClassStorageBuffer:
-    case StorageClassCrossWorkgroup:
-        // Preserve scalar accesses at descriptor tails instead of allowing
-        // a compiler to speculate a wider vector load/store.
-        address_space = "volatile __global";
-        break;
-    default:
+    const OpenCLAddressSpace address_space = opencl_address_space(storage);
+    const char* qualifier = opencl_address_space_qualifier(address_space);
+    if (!qualifier)
         return false;
-    }
-    const bool global_storage = storage == StorageClassUniform || storage == StorageClassStorageBuffer || storage == StorageClassCrossWorkgroup;
+    const bool global_storage = address_space == OpenCLAddressSpace::Global;
     // OpenCL has no bool vectors: bvecN is represented by intN, so its
     // component stride is sizeof(int), not sizeof(bool).
     const std::string scalar_name = scalar_type.basetype == SPIRType::Boolean
@@ -617,7 +636,10 @@ bool CompilerOpenCL::prepare_access_chain_for_scalar_access(std::string& express
                                     : global_storage && scalar_type.basetype == SPIRType::Double && scalar_type.width == 64
                                         ? "ulong"
                                         : type_to_glsl(scalar_type);
-    expression = "((" + std::string(address_space) + " " + scalar_name + " *)&(" + expression + "))";
+    // Preserve scalar accesses at descriptor tails instead of allowing a
+    // compiler to speculate a wider vector load/store.
+    const std::string qualifiers = (global_storage ? "volatile " : "") + std::string(qualifier);
+    expression = "((" + qualifiers + " " + scalar_name + " *)&(" + expression + "))";
     packed = true;
     return true;
 }
@@ -1243,21 +1265,10 @@ bool CompilerOpenCL::emit_storage_buffer_load(const Instruction& instruction, co
 
 const char* CompilerOpenCL::function_pointer_address_space(StorageClass storage)
 {
-    switch (storage)
-    {
-    case StorageClassFunction:
-    case StorageClassPrivate:
-    case StorageClassPushConstant:
-        return "__private";
-    case StorageClassWorkgroup:
-        return "__local";
-    case StorageClassUniform:
-    case StorageClassStorageBuffer:
-    case StorageClassCrossWorkgroup:
-        return "__global";
-    default:
+    const char* qualifier = opencl_address_space_qualifier(opencl_address_space(storage));
+    if (!qualifier)
         throw std::runtime_error("unsupported function-pointer storage class in the OpenCL C profile");
-    }
+    return qualifier;
 }
 
 void CompilerOpenCL::emit_struct_typedef(const SPIRType& type)

@@ -36,6 +36,18 @@ bool spirv_contains_opcode(const std::vector<uint32_t>& words, Op opcode);
 
 const char* capability_name(Capability capability);
 
+enum class OpenCLAddressSpace
+{
+    Unsupported,
+    Private,
+    Local,
+    Global
+};
+
+OpenCLAddressSpace opencl_address_space(StorageClass storage);
+const char* opencl_address_space_qualifier(OpenCLAddressSpace address_space);
+bool needs_volatile_private_vector_array(const SPIRType& type, StorageClass storage);
+
 class CompilerOpenCL : public CompilerGLSL
 {
 public:

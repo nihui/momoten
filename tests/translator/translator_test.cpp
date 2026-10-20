@@ -54,8 +54,8 @@ static bool has_momoten_inline_helper(const std::string& source)
 
 int main(int argc, char** argv)
 {
-    if (argc != 13)
-        return require(false, "expected positive, unsupported, atomic, fp16, int16, subgroup, integer-dot, workgroup-split, fp64, fp16 program-constant, workgroup-3D and dynamic vector extraction SPIR-V input paths");
+    if (argc != 14)
+        return require(false, "expected positive, unsupported, atomic, fp16, int16, subgroup, integer-dot, workgroup-split, fp64, fp16 program-constant, workgroup-3D, dynamic vector extraction and fp64 vector extraction SPIR-V input paths");
 
     std::vector<uint32_t> words;
     if (!read_spirv(argv[1], words))
@@ -482,20 +482,46 @@ int main(int argc, char** argv)
                     vector_extract_dynamic.data(), vector_extract_dynamic.size(),
                     options, vector_extract_result),
                 "dynamic vector extraction SPIR-V was rejected")
-        || require(vector_extract_result.source.find(" == 0u ? ") != std::string::npos
-                       && vector_extract_result.source.find(" == 2u ? ") != std::string::npos,
-                   "dynamic extraction did not select individual vector components")
-        || require(vector_extract_result.source.find("((volatile __global uint *)&(") != std::string::npos
-                       && vector_extract_result.source.find("((volatile __global float *)&(") != std::string::npos,
-                   "storage vector access lost its global scalar pointer")
-        || require(vector_extract_result.source.find("((__local uint *)&(") != std::string::npos,
-                   "workgroup vector access lost its local scalar pointer")
-        || require(vector_extract_result.source.find("as_double(((volatile __global ulong *)&(") != std::string::npos,
-                   "dynamic fp64 vector load lost its storage bitcast")
-        || require(vector_extract_result.source.find("volatile int4 coordinates[5]") != std::string::npos,
-                   "private integer vector array lost its volatile qualifier")
-        || require(vector_extract_result.source.find("bool *)&(") == std::string::npos,
-                   "boolean vector component used byte-sized scalar bool storage"))
+        || require(!vector_extract_result.abi.fp64 && !vector_extract_result.abi.int64
+                       && vector_extract_result.abi.required_extensions.empty(),
+                   "ordinary vector access acquired an optional device requirement")
+        || require(vector_extract_result.abi.buffers.size() == 4,
+                   "ordinary vector access did not retain its four storage buffers")
+        || require(vector_extract_result.abi.local_size[0] == 4
+                       && vector_extract_result.abi.local_size[1] == 1
+                       && vector_extract_result.abi.local_size[2] == 1
+                       && !vector_extract_result.abi.workgroup_splittable,
+                   "shared vector access lost its synchronized four-invocation workgroup"))
+        return 1;
+    for (size_t i = 0; i < vector_extract_result.abi.buffers.size(); i++)
+    {
+        const momoten::BufferArgument& argument = vector_extract_result.abi.buffers[i];
+        if (require(argument.descriptor_set == 0 && argument.binding == i,
+                    "ordinary vector access bindings are not contiguous"))
+            return 1;
+    }
+
+    // Syntax tests validate the generated pointer expressions; runtime tests
+    // check scalar widths, boolean masks, private arrays and fp64 bitcasts.
+    std::vector<uint32_t> vector_extract_fp64;
+    if (!read_spirv(argv[13], vector_extract_fp64))
+        return require(false, "failed to read fp64 vector extraction test SPIR-V");
+    momoten::TranslationResult vector_extract_fp64_result;
+    if (require(momoten::translate_spirv_to_opencl_c(
+                    vector_extract_fp64.data(), vector_extract_fp64.size(),
+                    options, vector_extract_fp64_result),
+                "fp64 vector extraction SPIR-V was rejected")
+        || require(vector_extract_fp64_result.abi.fp64,
+                   "fp64 vector access lost its device requirement")
+        || require(vector_extract_fp64_result.abi.buffers.size() == 1
+                       && vector_extract_fp64_result.abi.buffers[0].descriptor_set == 0
+                       && vector_extract_fp64_result.abi.buffers[0].binding == 0,
+                   "fp64 vector access did not retain its single storage buffer")
+        || require(vector_extract_fp64_result.abi.local_size[0] == 1
+                       && vector_extract_fp64_result.abi.local_size[1] == 1
+                       && vector_extract_fp64_result.abi.local_size[2] == 1
+                       && vector_extract_fp64_result.abi.workgroup_splittable,
+                   "fp64 vector access acquired a multi-invocation workgroup requirement"))
         return 1;
 
     return 0;

@@ -894,13 +894,11 @@ static int run_vector_extract_int16_kernel(cl_context context, cl_command_queue 
 static int run_vector_access_kernel(cl_context context, cl_command_queue queue, cl_kernel kernel,
                                     const momoten::TranslationResult& translated, cl_uint address_bits)
 {
-    const bool fp64 = translated.abi.fp64;
-    if (translated.abi.buffers.size() != (fp64 ? 5u : 4u))
+    if (translated.abi.fp64 || translated.abi.buffers.size() != 4)
         return fail("vector access fixture ABI", CL_INVALID_ARG_VALUE);
 
     uint32_t input[4][4];
     float output[4][4] = {};
-    double doubles[4][4];
     int32_t coordinates[4][4] = {};
     int32_t booleans[4][4] = {};
     for (uint32_t i = 0; i < 4; i++)
@@ -909,17 +907,14 @@ static int run_vector_access_kernel(cl_context context, cl_command_queue queue, 
         input[i][1] = 0x40000000u;
         input[i][2] = 0x40400000u;
         input[i][3] = i;
-        for (uint32_t j = 0; j < 4; j++)
-            doubles[i][j] = i * 4 + j + 0.125;
     }
 
     cl_int ret = CL_SUCCESS;
-    cl_mem buffers[5] = {};
-    void* data[5] = {input, output, doubles, coordinates, booleans};
-    const size_t sizes[5] = {sizeof(input), sizeof(output), sizeof(doubles), sizeof(coordinates), sizeof(booleans)};
-    for (size_t i = 0; i < 5 && ret == CL_SUCCESS; i++)
-        if (i != 2 || fp64)
-            buffers[i] = clCreateBuffer(context, CL_MEM_READ_WRITE | CL_MEM_COPY_HOST_PTR, sizes[i], data[i], &ret);
+    cl_mem buffers[4] = {};
+    void* data[4] = {input, output, coordinates, booleans};
+    const size_t sizes[4] = {sizeof(input), sizeof(output), sizeof(coordinates), sizeof(booleans)};
+    for (size_t i = 0; i < 4 && ret == CL_SUCCESS; i++)
+        buffers[i] = clCreateBuffer(context, CL_MEM_READ_WRITE | CL_MEM_COPY_HOST_PTR, sizes[i], data[i], &ret);
 
     const cl_uint offset32 = 0;
     const cl_ulong offset64 = 0;
@@ -928,7 +923,7 @@ static int run_vector_access_kernel(cl_context context, cl_command_queue queue, 
     for (size_t i = 0; i < translated.abi.buffers.size() && ret == CL_SUCCESS; i++)
     {
         const momoten::BufferArgument& argument = translated.abi.buffers[i];
-        if (argument.binding >= 5 || !buffers[argument.binding])
+        if (argument.descriptor_set != 0 || argument.binding != i)
         {
             ret = CL_INVALID_ARG_INDEX;
             break;
@@ -942,9 +937,8 @@ static int run_vector_access_kernel(cl_context context, cl_command_queue queue, 
     const size_t local_size[3] = {4, 1, 1};
     if (ret == CL_SUCCESS)
         ret = clEnqueueNDRangeKernel(queue, kernel, 3, 0, global_size, local_size, 0, 0, 0);
-    for (size_t i = 1; i < 5 && ret == CL_SUCCESS; i++)
-        if (buffers[i])
-            ret = clEnqueueReadBuffer(queue, buffers[i], CL_TRUE, 0, sizes[i], data[i], 0, 0, 0);
+    for (size_t i = 1; i < 4 && ret == CL_SUCCESS; i++)
+        ret = clEnqueueReadBuffer(queue, buffers[i], CL_TRUE, 0, sizes[i], data[i], 0, 0, 0);
 
     int status = ret == CL_SUCCESS ? 0 : fail("vector access kernel dispatch", ret);
     if (ret == CL_SUCCESS)
@@ -967,17 +961,10 @@ static int run_vector_access_kernel(cl_context context, cl_command_queue queue, 
             {
                 const int32_t coordinate_offsets[4] = {123, 456, 789, 1023};
                 const int32_t expected_coordinate = (input[i][j] & 255u) + coordinate_offsets[j];
-                const double expected_double = i * 4 + (j == i ? (i + 1) % 4 + 1 : j) + 0.125;
                 if (output[i][j] != expected[j])
                 {
                     fprintf(stderr, "opencl_test: vector[%u][%u]=%g expected=%g\n",
                             i, j, output[i][j], expected[j]);
-                    status = 1;
-                }
-                if (fp64 && doubles[i][j] != expected_double)
-                {
-                    fprintf(stderr, "opencl_test: fp64 vector[%u][%u]=%.17g expected=%.17g\n",
-                            i, j, doubles[i][j], expected_double);
                     status = 1;
                 }
                 if (coordinates[i][j] != expected_coordinate)
@@ -995,10 +982,60 @@ static int run_vector_access_kernel(cl_context context, cl_command_queue queue, 
             }
         }
     }
-    for (size_t i = 0; i < 5; i++)
+    for (size_t i = 0; i < 4; i++)
         if (buffers[i])
             clReleaseMemObject(buffers[i]);
     return status;
+}
+
+static int run_vector_access_fp64_kernel(cl_context context, cl_command_queue queue, cl_kernel kernel,
+                                         const momoten::TranslationResult& translated, cl_uint address_bits)
+{
+    if (!translated.abi.fp64 || translated.abi.buffers.size() != 1
+        || translated.abi.buffers[0].descriptor_set != 0 || translated.abi.buffers[0].binding != 0)
+        return fail("fp64 vector access fixture ABI", CL_INVALID_ARG_VALUE);
+
+    double values[4][4];
+    for (uint32_t i = 0; i < 4; i++)
+        for (uint32_t j = 0; j < 4; j++)
+            values[i][j] = i * 4 + j + 0.125;
+
+    cl_int ret = CL_SUCCESS;
+    cl_mem buffer = clCreateBuffer(context, CL_MEM_READ_WRITE | CL_MEM_COPY_HOST_PTR,
+                                   sizeof(values), values, &ret);
+    if (!buffer)
+        return fail("fp64 vector access buffer", ret);
+
+    const momoten::BufferArgument& argument = translated.abi.buffers[0];
+    ret = clSetKernelArg(kernel, argument.buffer_arg_index, sizeof(buffer), &buffer);
+    const cl_uint offset32 = 0;
+    const cl_ulong offset64 = 0;
+    const void* offset = address_bits == 64 ? static_cast<const void*>(&offset64) : static_cast<const void*>(&offset32);
+    const size_t offset_size = address_bits == 64 ? sizeof(offset64) : sizeof(offset32);
+    if (ret == CL_SUCCESS)
+        ret = clSetKernelArg(kernel, argument.offset_arg_index, offset_size, offset);
+    const size_t global_size = 4;
+    const size_t local_size = 1;
+    if (ret == CL_SUCCESS)
+        ret = clEnqueueNDRangeKernel(queue, kernel, 1, 0, &global_size, &local_size, 0, 0, 0);
+    if (ret == CL_SUCCESS)
+        ret = clEnqueueReadBuffer(queue, buffer, CL_TRUE, 0, sizeof(values), values, 0, 0, 0);
+    clReleaseMemObject(buffer);
+    if (ret != CL_SUCCESS)
+        return fail("fp64 vector access dispatch", ret);
+
+    for (uint32_t i = 0; i < 4; i++)
+        for (uint32_t j = 0; j < 4; j++)
+        {
+            const double expected = i * 4 + (j == i ? (i + 1) % 4 + 1 : j) + 0.125;
+            if (values[i][j] != expected)
+            {
+                fprintf(stderr, "opencl_test: fp64 vector[%u][%u]=%.17g expected=%.17g\n",
+                        i, j, values[i][j], expected);
+                return 1;
+            }
+        }
+    return 0;
 }
 
 typedef int (*OpenCLKernelTestRunner)(
@@ -1047,8 +1084,8 @@ static const OpenCLTestCase opencl_test_cases[] = {
     {"workgroup-split", OpenCLTestWorkgroupSplit, false, false, false,
      run_workgroup_split_kernel},
     {"workgroup-3d", OpenCLTestWorkgroup3D, false, false, false, 0},
-    {"vector-access", OpenCLTestVectorAccess, false, true, false, run_vector_access_kernel},
-    {"vector-access-basic", OpenCLTestVectorAccess, false, false, false, run_vector_access_kernel},
+    {"vector-access", OpenCLTestVectorAccess, false, false, false, run_vector_access_kernel},
+    {"vector-access-fp64", OpenCLTestVectorAccess, false, true, false, run_vector_access_fp64_kernel},
     {"vector-extract-int16", OpenCLTestVectorExtractInt16, false, false, false, run_vector_extract_int16_kernel}};
 
 static const OpenCLTestCase* find_opencl_test_case(int argc, char** argv)
@@ -1071,7 +1108,7 @@ int main(int argc, char** argv)
     const OpenCLTestCase* test_case = find_opencl_test_case(argc, argv);
     if (!test_case)
     {
-        fprintf(stderr, "opencl_test: expected SPIR-V input path and optional fp16, fp64, int16, atomic-packed, scalar-16bit, subgroup-basic, integer-dot-product, workgroup-split, workgroup-3d, vector-access, vector-access-basic, or vector-extract-int16 mode\n");
+        fprintf(stderr, "opencl_test: expected SPIR-V input path and optional fp16, fp64, int16, atomic-packed, scalar-16bit, subgroup-basic, integer-dot-product, workgroup-split, workgroup-3d, vector-access, vector-access-fp64, or vector-extract-int16 mode\n");
         return 1;
     }
 

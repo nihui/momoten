@@ -2,101 +2,14 @@
 // SPDX-License-Identifier: Apache-2.0
 
 #include "translator_internal.h"
+#include "opencl_source.h"
 
 #include <algorithm>
-#include <cctype>
 #include <cstring>
 #include <sstream>
 #include <stdexcept>
 
 namespace momoten {
-
-static int opencl_constructor_kind(const std::string& name)
-{
-    if (name == "momo_mat4" || name == "momo_hmat4")
-        return 2;
-    if (name == "bool")
-        return 1;
-    static const char* bases[] = {"char", "uchar", "short", "ushort", "int", "uint", "long", "ulong", "half", "float", "double"};
-    for (size_t i = 0; i < sizeof(bases) / sizeof(bases[0]); i++)
-    {
-        const size_t length = strlen(bases[i]);
-        if (name.compare(0, length, bases[i]) != 0)
-            continue;
-        const std::string width = name.substr(length);
-        if (width.empty() || width == "2" || width == "3" || width == "4" || width == "8" || width == "16")
-            return 1;
-    }
-    return 0;
-}
-
-static void lower_opencl_constructors(std::string& source)
-{
-    // Lower GLSL constructors without variadic macros, which OpenCL C forbids.
-    // Wrap the complete expression so following swizzles retain precedence.
-    std::string result;
-    result.reserve(source.size());
-    std::vector<int> parentheses;
-    for (size_t i = 0; i < source.size();)
-    {
-        const size_t begin = i;
-        if (source.compare(i, 2, "//") == 0 || source.compare(i, 2, "/*") == 0)
-        {
-            const bool block = source[i + 1] == '*';
-            const size_t end = source.find(block ? "*/" : "\n", i + 2);
-            i = end == std::string::npos ? source.size() : end + (block ? 2 : 1);
-            result.append(source, begin, i - begin);
-            continue;
-        }
-        if (source[i] == '\"' || source[i] == '\'')
-        {
-            const char quote = source[i++];
-            while (i < source.size())
-            {
-                const char c = source[i++];
-                if (c == '\\' && i < source.size())
-                    i++;
-                else if (c == quote)
-                    break;
-            }
-            result.append(source, begin, i - begin);
-            continue;
-        }
-        if (std::isalpha(static_cast<unsigned char>(source[i])) || source[i] == '_')
-        {
-            do { i++; } while (i < source.size() && (std::isalnum(static_cast<unsigned char>(source[i])) || source[i] == '_'));
-            const std::string name = source.substr(begin, i - begin);
-            const int kind = opencl_constructor_kind(name);
-            size_t next = i;
-            while (next < source.size() && std::isspace(static_cast<unsigned char>(source[next])))
-                next++;
-            if (kind && next < source.size() && source[next] == '(')
-            {
-                result += "((" + name + (kind == 2 ? "){{" : ")(");
-                parentheses.push_back(kind);
-                i = next + 1;
-            }
-            else
-                result += name;
-            continue;
-        }
-        if (source[i] == '(')
-            parentheses.push_back(0);
-        else if (source[i] == ')' && !parentheses.empty())
-        {
-            const int kind = parentheses.back();
-            parentheses.pop_back();
-            if (kind)
-            {
-                result += kind == 2 ? "}})" : "))";
-                i++;
-                continue;
-            }
-        }
-        result += source[i++];
-    }
-    source.swap(result);
-}
 
 static void qualify_file_scope_constants(std::string& source)
 {
