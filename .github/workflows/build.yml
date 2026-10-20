@@ -639,6 +639,29 @@ jobs:
           fi
           stat -c 'libmomoten.so size: %s bytes' stage/lib/libmomoten.so
 
+      - name: Verify Android 16 KB ELF alignment
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import subprocess
+
+          for library in ("stage/lib/libmomoten.so", "build/libmomoten-amalgamated.so"):
+              headers = subprocess.check_output(["readelf", "-lW", library], text=True)
+              print(library + "\n" + headers)
+              loads = [line.split() for line in headers.splitlines()
+                       if line.split() and line.split()[0] == "LOAD"]
+              if not loads:
+                  raise SystemExit(library + ": no PT_LOAD segments found")
+              for segment in loads:
+                  offset, address = int(segment[1], 16), int(segment[2], 16)
+                  alignment = int(segment[-1], 16)
+                  if (alignment < 16384 or alignment & (alignment - 1)
+                          or (address - offset) % alignment):
+                      raise SystemExit(library + ": invalid 16 KB PT_LOAD alignment: " +
+                                       " ".join(segment))
+              print(library + ": all PT_LOAD segments are 16 KB aligned")
+          PY
+
       - name: Bundle license notices
         shell: bash
         run: cp LICENSE.txt THIRD_PARTY_NOTICES.md stage/

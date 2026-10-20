@@ -235,6 +235,18 @@ if(MOMOTEN_BUILD_AMALGAMATION)
     endif()
 endif()
 
+if(ANDROID)
+    # Keep both driver forms loadable on 16 KB page-size devices, including
+    # builds with older NDKs. These flags do not change the minimum Android API.
+    foreach(momoten_android_driver momoten_driver momoten_amalgamated_driver)
+        if(TARGET ${momoten_android_driver})
+            target_link_options(${momoten_android_driver} PRIVATE
+                "LINKER:-z,max-page-size=16384"
+                "LINKER:-z,common-page-size=16384")
+        endif()
+    endforeach()
+endif()
+
 if(MOMOTEN_BUILD_TOOLS)
     if(NOT TARGET momoten_translator)
         message(FATAL_ERROR "MOMOTEN_BUILD_TOOLS requires the translator")
