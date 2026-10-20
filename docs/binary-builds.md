@@ -232,9 +232,10 @@ available as the `momoten-<version>-release` workflow artifact, so packaging is
 tested on every CI run. Each platform build also receives the same date as
 `-DMOMOTEN_RELEASE_VERSION=<version>`. `VkPhysicalDeviceProperties::driverVersion`
 encodes it as `VK_MAKE_VERSION(year - 2000, month, day)`, so `20261020` displays
-as `26.10.20` with the standard Vulkan version helpers. `driverInfo` includes
-the full `20261020` string before the OpenCL backend version. Both the modular
-and generated single-file driver use the same configured version.
+as `26.10.20` with the standard Vulkan version helpers. `driverName` is `momoten`
+and `driverInfo` uses the concise format `momoten 20261020; OpenCL backend: ...`.
+`deviceName` keeps the underlying OpenCL device name with a `momoten: ` prefix.
+Both the modular and generated single-file driver use the same configured version.
 
 For local builds, `MOMOTEN_RELEASE_VERSION` defaults to the UTC configure date
 and is cached for subsequent reconfiguration. Set it explicitly to reproduce a

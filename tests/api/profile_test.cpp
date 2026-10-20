@@ -254,10 +254,10 @@ int main()
         fprintf(stderr, "profile_test: physical device is not Vulkan 1.1\n");
         return 1;
     }
-    if (!strstr(properties.deviceName, "experimental")
-        || !strstr(properties.deviceName, "non-conformant"))
+    if (strncmp(properties.deviceName, "momoten: ", 9) != 0
+        || properties.deviceName[9] == '\0')
     {
-        fprintf(stderr, "profile_test: physical device name does not disclose non-conformant status\n");
+        fprintf(stderr, "profile_test: physical device name is missing its driver or device identity\n");
         return 1;
     }
     if (properties.deviceID == 0
@@ -283,16 +283,15 @@ int main()
     properties2.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2;
     properties2.pNext = &driver_properties;
     vkGetPhysicalDeviceProperties2(physical_device, &properties2);
-    if (!strstr(driver_properties.driverName, "experimental")
-        || !strstr(driver_properties.driverName, "non-conformant")
-        || !strstr(driver_properties.driverInfo, "experimental")
-        || !strstr(driver_properties.driverInfo, "non-conformant")
+    if (strcmp(driver_properties.driverName, "momoten") != 0
+        || strncmp(driver_properties.driverInfo, "momoten ", 8) != 0
+        || !strstr(driver_properties.driverInfo, "; OpenCL backend: ")
         || driver_properties.conformanceVersion.major != 0
         || driver_properties.conformanceVersion.minor != 0
         || driver_properties.conformanceVersion.subminor != 0
         || driver_properties.conformanceVersion.patch != 0)
     {
-        fprintf(stderr, "profile_test: driver properties do not disclose zero-conformance status\n");
+        fprintf(stderr, "profile_test: concise driver identity or zero-conformance status is inconsistent\n");
         return 1;
     }
     if (subgroup.subgroupSize == 0 || subgroup.subgroupSize > 128 || (subgroup.subgroupSize & (subgroup.subgroupSize - 1)) != 0 || subgroup.supportedStages != VK_SHADER_STAGE_COMPUTE_BIT || subgroup.supportedOperations != VK_SUBGROUP_FEATURE_BASIC_BIT || subgroup.quadOperationsInAllStages != VK_FALSE)

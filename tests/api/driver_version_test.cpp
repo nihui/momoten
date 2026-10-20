@@ -49,6 +49,12 @@ int main()
         release / 10000u - 2000u, release / 100u % 100u, release % 100u);
     VkPhysicalDeviceProperties properties = {};
     momoten_detail::impl_get_physical_device_properties(&physical, &properties);
+    const std::string expected_device_name = "momoten: " + physical.name;
+    if (strcmp(properties.deviceName, expected_device_name.c_str()) != 0)
+    {
+        fprintf(stderr, "driver_version_test: deviceName does not preserve the OpenCL device name\n");
+        return 1;
+    }
     if (properties.driverVersion != expected_version)
     {
         fprintf(stderr, "driver_version_test: driverVersion does not encode the release date\n");
@@ -63,28 +69,38 @@ int main()
     memset(driver.driverInfo, '!', sizeof(driver.driverInfo));
     momoten_detail::impl_get_physical_device_properties2(&physical, &properties2);
     if (properties2.properties.driverVersion != expected_version
-        || properties2.properties.driverVersion != properties.driverVersion)
+        || properties2.properties.driverVersion != properties.driverVersion
+        || strcmp(properties2.properties.deviceName, properties.deviceName) != 0)
     {
-        fprintf(stderr, "driver_version_test: Properties2 reports a different driverVersion\n");
+        fprintf(stderr, "driver_version_test: Properties2 reports a different driver or device identity\n");
         return 1;
     }
-    if (driver.driverInfo[VK_MAX_DRIVER_INFO_SIZE - 1] != '\0'
-        || !strstr(driver.driverInfo, MOMOTEN_RELEASE_VERSION_STRING)
-        || !strstr(driver.driverInfo, physical.driver.c_str()))
+    const std::string expected_info = "momoten " MOMOTEN_RELEASE_VERSION_STRING "; OpenCL backend: " + physical.driver;
+    if (strcmp(driver.driverName, "momoten") != 0
+        || driver.driverInfo[VK_MAX_DRIVER_INFO_SIZE - 1] != '\0'
+        || strcmp(driver.driverInfo, expected_info.c_str()) != 0
+        || driver.conformanceVersion.major != 0
+        || driver.conformanceVersion.minor != 0
+        || driver.conformanceVersion.subminor != 0
+        || driver.conformanceVersion.patch != 0)
     {
-        fprintf(stderr, "driver_version_test: driverInfo is missing the release date or backend\n");
+        fprintf(stderr, "driver_version_test: concise driver identity or zero-conformance status is inconsistent\n");
         return 1;
     }
 
+    physical.name.assign(VK_MAX_PHYSICAL_DEVICE_NAME_SIZE * 2, 'x');
     physical.driver.assign(VK_MAX_DRIVER_INFO_SIZE * 2, 'x');
     memset(driver.driverInfo, '!', sizeof(driver.driverInfo));
     momoten_detail::impl_get_physical_device_properties2(&physical, &properties2);
-    if (driver.driverInfo[VK_MAX_DRIVER_INFO_SIZE - 1] != '\0'
+    if (properties2.properties.deviceName[VK_MAX_PHYSICAL_DEVICE_NAME_SIZE - 1] != '\0'
+        || strlen(properties2.properties.deviceName) != VK_MAX_PHYSICAL_DEVICE_NAME_SIZE - 1
+        || strncmp(properties2.properties.deviceName, "momoten: ", 9) != 0
+        || driver.driverInfo[VK_MAX_DRIVER_INFO_SIZE - 1] != '\0'
         || strlen(driver.driverInfo) != VK_MAX_DRIVER_INFO_SIZE - 1
         || !strstr(driver.driverInfo, MOMOTEN_RELEASE_VERSION_STRING)
         || !strstr(driver.driverInfo, "OpenCL backend: "))
     {
-        fprintf(stderr, "driver_version_test: truncated driverInfo loses its date or terminator\n");
+        fprintf(stderr, "driver_version_test: truncated deviceName or driverInfo loses its identity or terminator\n");
         return 1;
     }
 

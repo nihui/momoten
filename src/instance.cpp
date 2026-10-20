@@ -184,7 +184,7 @@ void impl_get_physical_device_properties(
     properties->vendorID = physical->vendor_id;
     properties->deviceID = physical->device_id;
     properties->deviceType = physical->vulkan_device_type;
-    const std::string device_name = "momoten experimental non-conformant: " + physical->name;
+    const std::string device_name = "momoten: " + physical->name;
     strncpy(properties->deviceName, device_name.c_str(), VK_MAX_PHYSICAL_DEVICE_NAME_SIZE - 1);
     properties->deviceName[VK_MAX_PHYSICAL_DEVICE_NAME_SIZE - 1] = '\0';
 
@@ -236,10 +236,10 @@ void impl_get_physical_device_properties2(
         {
             VkPhysicalDeviceDriverProperties* driver = reinterpret_cast<VkPhysicalDeviceDriverProperties*>(extension);
             driver->driverID = static_cast<VkDriverId>(0);
-            strncpy(driver->driverName, "momoten experimental non-conformant",
+            strncpy(driver->driverName, "momoten",
                     VK_MAX_DRIVER_NAME_SIZE - 1);
             driver->driverName[VK_MAX_DRIVER_NAME_SIZE - 1] = '\0';
-            const std::string driver_info = "momoten " MOMOTEN_RELEASE_VERSION_STRING " experimental non-conformant; OpenCL backend: " + physical->driver;
+            const std::string driver_info = "momoten " MOMOTEN_RELEASE_VERSION_STRING "; OpenCL backend: " + physical->driver;
             strncpy(driver->driverInfo, driver_info.c_str(), VK_MAX_DRIVER_INFO_SIZE - 1);
             driver->driverInfo[VK_MAX_DRIVER_INFO_SIZE - 1] = '\0';
             driver->conformanceVersion.major = 0;
