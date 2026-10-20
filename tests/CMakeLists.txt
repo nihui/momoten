@@ -225,6 +225,7 @@ momoten_compile_test_shader(momoten_workgroup_3d_test_spv workgroup_3d.comp vulk
 momoten_compile_test_shader(momoten_vector_extract_test_spv vector_extract_dynamic.comp vulkan1.1)
 momoten_compile_test_shader(momoten_vector_extract_fp64_test_spv vector_extract_fp64.comp vulkan1.1)
 momoten_compile_test_shader(momoten_vector_extract_int16_test_spv vector_extract_int16.comp vulkan1.1)
+momoten_compile_test_shader(momoten_pow_constant_base_test_spv pow_constant_base.comp vulkan1.0)
 
 add_custom_target(momoten-test-spv DEPENDS ${momoten_test_spv_files})
 
@@ -304,6 +305,7 @@ if(MOMOTEN_CLANG)
             -DVECTOR_EXTRACT_SPV_FILE=${momoten_vector_extract_test_spv}
             -DVECTOR_EXTRACT_FP64_SPV_FILE=${momoten_vector_extract_fp64_test_spv}
             -DVECTOR_EXTRACT_INT16_SPV_FILE=${momoten_vector_extract_int16_test_spv}
+            -DPOW_CONSTANT_BASE_SPV_FILE=${momoten_pow_constant_base_test_spv}
             -DOUTPUT_DIR=${CMAKE_CURRENT_BINARY_DIR}/strict-cl10
             -P "${CMAKE_CURRENT_SOURCE_DIR}/translator/strict_cl10_test.cmake")
     set_tests_properties(momoten_opencl_c_1_0_syntax PROPERTIES
@@ -321,6 +323,7 @@ if(MOMOTEN_CLANG)
             -DVECTOR_EXTRACT_SPV_FILE=${momoten_vector_extract_test_spv}
             -DVECTOR_EXTRACT_FP64_SPV_FILE=${momoten_vector_extract_fp64_test_spv}
             -DVECTOR_EXTRACT_INT16_SPV_FILE=${momoten_vector_extract_int16_test_spv}
+            -DPOW_CONSTANT_BASE_SPV_FILE=${momoten_pow_constant_base_test_spv}
             -DAPPLE_TYPE_ALIASES=ON
             -DOUTPUT_DIR=${CMAKE_CURRENT_BINARY_DIR}/apple-type-aliases
             -P "${CMAKE_CURRENT_SOURCE_DIR}/translator/strict_cl10_test.cmake")
@@ -369,6 +372,14 @@ if(TARGET momoten_test_opencl)
     add_test(NAME momoten_opencl_vector_extract_int16
         COMMAND momoten_opencl_test "${momoten_vector_extract_int16_test_spv}"
             vector-extract-int16)
+    foreach(width scalar vec2 vec3 vec4)
+        add_test(NAME momoten_opencl_pow_${width}
+            COMMAND momoten_opencl_test "${momoten_pow_constant_base_test_spv}"
+                pow-${width})
+        set_tests_properties(momoten_opencl_pow_${width} PROPERTIES
+            LABELS "momoten;runtime;direct-opencl"
+            SKIP_RETURN_CODE 77)
+    endforeach()
     set_tests_properties(momoten_opencl_simple momoten_opencl_fp16
         momoten_opencl_fp16_basic
         momoten_opencl_fp64

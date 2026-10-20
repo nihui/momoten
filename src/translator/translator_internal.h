@@ -117,6 +117,7 @@ private:
     bool requires_int64;
     bool requires_fp64;
     bool requires_integer_dot_product;
+    bool requires_scalar_pow;
     bool uses_workgroup_storage;
     bool workgroup_splittable;
     std::vector<ResourceInfo> resources;

@@ -1,0 +1,28 @@
+// Copyright 2026 nihui
+// SPDX-License-Identifier: Apache-2.0
+
+#version 450
+
+layout(local_size_x = 1) in;
+layout(constant_id = 0) const uint vector_width = 1;
+layout(set = 0, binding = 0, std430) buffer Values
+{
+    vec4 values[];
+} data;
+
+void main()
+{
+    uint i = gl_GlobalInvocationID.x;
+    vec4 exponent = data.values[i];
+    float base = 0.06331908702850341796875;
+    // Specialize each width separately so common subexpression elimination
+    // cannot hide a broken constant-base pow implementation.
+    if (vector_width == 1)
+        data.values[i] = vec4(pow(base, exponent.x), 0.0, 0.0, 0.0);
+    else if (vector_width == 2)
+        data.values[i] = vec4(pow(vec2(base), exponent.xy), 0.0, 0.0);
+    else if (vector_width == 3)
+        data.values[i] = vec4(pow(vec3(base), exponent.xyz), 0.0);
+    else
+        data.values[i] = pow(vec4(base), exponent);
+}

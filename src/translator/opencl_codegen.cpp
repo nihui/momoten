@@ -89,6 +89,8 @@ void CompilerOpenCL::emit_entry_point_declarations()
 
 void CompilerOpenCL::emit_header()
 {
+    if (requires_scalar_pow)
+        resource_names.insert("momo_pow");
     // Reserve the shared push-constant argument name before resource and local
     // names are assigned.
     if (push_constant_variable_id != 0)
@@ -149,6 +151,14 @@ void CompilerOpenCL::emit_header()
 
     if (requires_fp64)
         emit_fp64_vector_helpers();
+    if (requires_scalar_pow)
+    {
+        statement("float momo_pow(float base, float exponent)");
+        begin_scope();
+        statement("volatile float runtime_base = base;");
+        statement("return pow(runtime_base, exponent);");
+        end_scope();
+    }
     // Vulkan std430 mat4 has 16-byte alignment and 64-byte stride. An
     // OpenCL float16 would impose 64-byte alignment, so preserve layout
     // with a value-copyable struct containing four float4 columns.
@@ -1043,6 +1053,21 @@ void CompilerOpenCL::emit_store_statement(uint32_t lhs_expression, uint32_t rhs_
 void CompilerOpenCL::emit_glsl_op(uint32_t result_type, uint32_t result_id, uint32_t op,
                                   const uint32_t* args, uint32_t count)
 {
+    const SPIRType& result = get<SPIRType>(result_type);
+    if (op == GLSLstd450Pow && count == 2
+        && result.basetype == SPIRType::Float && result.width == 32 && result.vecsize == 1)
+    {
+        // Adreno folds constant-base scalar pow with insufficient accuracy.
+        // A local load can become constant only in the OpenCL compiler, so
+        // materialize every scalar float base before calling the builtin.
+        if (!requires_scalar_pow)
+        {
+            requires_scalar_pow = true;
+            force_recompile();
+        }
+        emit_binary_func_op(result_type, result_id, args[0], args[1], "momo_pow");
+        return;
+    }
     if (op == GLSLstd450SAbs && count == 1)
     {
         const SPIRType& type = get<SPIRType>(result_type);

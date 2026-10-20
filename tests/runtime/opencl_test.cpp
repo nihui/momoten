@@ -1038,6 +1038,62 @@ static int run_vector_access_fp64_kernel(cl_context context, cl_command_queue qu
     return 0;
 }
 
+template <uint32_t Width>
+static int run_pow_constant_base_kernel(cl_context context, cl_command_queue queue, cl_kernel kernel,
+                                         const momoten::TranslationResult& translated, cl_uint address_bits)
+{
+    if (translated.abi.buffers.size() != 1 || translated.abi.buffers[0].binding != 0)
+        return fail("constant-base pow fixture ABI", CL_INVALID_ARG_VALUE);
+
+    const float exponents[] = {
+        0.3231670856475830078125f, -3.f, -1.f, -0.5f,
+        0.f, 0.25f, 0.5f, 1.f, 2.f, 3.f, 0.001f, 0.999f};
+    const uint32_t count = 12;
+    float values[count][4];
+    for (uint32_t i = 0; i < count; i++)
+        for (uint32_t j = 0; j < 4; j++)
+            values[i][j] = exponents[(i + j) % count];
+
+    cl_int ret = CL_SUCCESS;
+    cl_mem buffer = clCreateBuffer(context, CL_MEM_READ_WRITE | CL_MEM_COPY_HOST_PTR,
+                                   sizeof(values), values, &ret);
+    if (!buffer)
+        return fail("constant-base pow buffer", ret);
+    const momoten::BufferArgument& argument = translated.abi.buffers[0];
+    ret = clSetKernelArg(kernel, argument.buffer_arg_index, sizeof(buffer), &buffer);
+    const cl_uint offset32 = 0;
+    const cl_ulong offset64 = 0;
+    const void* offset = address_bits == 64 ? static_cast<const void*>(&offset64) : static_cast<const void*>(&offset32);
+    const size_t offset_size = address_bits == 64 ? sizeof(offset64) : sizeof(offset32);
+    if (ret == CL_SUCCESS)
+        ret = clSetKernelArg(kernel, argument.offset_arg_index, offset_size, offset);
+    const size_t global_size = count;
+    const size_t local_size = 1;
+    if (ret == CL_SUCCESS)
+        ret = clEnqueueNDRangeKernel(queue, kernel, 1, 0, &global_size, &local_size, 0, 0, 0);
+    if (ret == CL_SUCCESS)
+        ret = clEnqueueReadBuffer(queue, buffer, CL_TRUE, 0, sizeof(values), values, 0, 0, 0);
+    clReleaseMemObject(buffer);
+    if (ret != CL_SUCCESS)
+        return fail("constant-base pow dispatch", ret);
+
+    for (uint32_t i = 0; i < count; i++)
+        for (uint32_t j = 0; j < 4; j++)
+        {
+            const double expected = j < Width
+                                        ? pow(0.06331908702850341796875, static_cast<double>(exponents[(i + j) % count]))
+                                        : 0.0;
+            const double actual = values[i][j];
+            if (!isfinite(actual) || fabs(actual - expected) > fabs(expected) * 1e-5)
+            {
+                fprintf(stderr, "opencl_test: constant-base pow width=%u [%u][%u]=%.9g expected=%.9g\n",
+                        Width, i, j, actual, expected);
+                return 1;
+            }
+        }
+    return 0;
+}
+
 typedef int (*OpenCLKernelTestRunner)(
     cl_context, cl_command_queue, cl_kernel,
     const momoten::TranslationResult&, cl_uint);
@@ -1055,7 +1111,11 @@ enum OpenCLTestFeature
     OpenCLTestWorkgroupSplit,
     OpenCLTestWorkgroup3D,
     OpenCLTestVectorAccess,
-    OpenCLTestVectorExtractInt16
+    OpenCLTestVectorExtractInt16,
+    OpenCLTestPowScalar,
+    OpenCLTestPowVec2,
+    OpenCLTestPowVec3,
+    OpenCLTestPowVec4
 };
 
 struct OpenCLTestCase
@@ -1086,7 +1146,11 @@ static const OpenCLTestCase opencl_test_cases[] = {
     {"workgroup-3d", OpenCLTestWorkgroup3D, false, false, false, 0},
     {"vector-access", OpenCLTestVectorAccess, false, false, false, run_vector_access_kernel},
     {"vector-access-fp64", OpenCLTestVectorAccess, false, true, false, run_vector_access_fp64_kernel},
-    {"vector-extract-int16", OpenCLTestVectorExtractInt16, false, false, false, run_vector_extract_int16_kernel}};
+    {"vector-extract-int16", OpenCLTestVectorExtractInt16, false, false, false, run_vector_extract_int16_kernel},
+    {"pow-scalar", OpenCLTestPowScalar, false, false, false, run_pow_constant_base_kernel<1>},
+    {"pow-vec2", OpenCLTestPowVec2, false, false, false, run_pow_constant_base_kernel<2>},
+    {"pow-vec3", OpenCLTestPowVec3, false, false, false, run_pow_constant_base_kernel<3>},
+    {"pow-vec4", OpenCLTestPowVec4, false, false, false, run_pow_constant_base_kernel<4>}};
 
 static const OpenCLTestCase* find_opencl_test_case(int argc, char** argv)
 {
@@ -1108,7 +1172,7 @@ int main(int argc, char** argv)
     const OpenCLTestCase* test_case = find_opencl_test_case(argc, argv);
     if (!test_case)
     {
-        fprintf(stderr, "opencl_test: expected SPIR-V input path and optional fp16, fp64, int16, atomic-packed, scalar-16bit, subgroup-basic, integer-dot-product, workgroup-split, workgroup-3d, vector-access, vector-access-fp64, or vector-extract-int16 mode\n");
+        fprintf(stderr, "opencl_test: expected SPIR-V input path and optional fp16, fp64, int16, atomic-packed, scalar-16bit, subgroup-basic, integer-dot-product, workgroup-split, workgroup-3d, vector-access, vector-access-fp64, vector-extract-int16, pow-scalar, pow-vec2, pow-vec3, or pow-vec4 mode\n");
         return 1;
     }
 
@@ -1134,6 +1198,15 @@ int main(int argc, char** argv)
 
     momoten::TranslationOptions options;
     options.address_bits = address_bits;
+    if (test_case->feature >= OpenCLTestPowScalar && test_case->feature <= OpenCLTestPowVec4)
+    {
+        const uint32_t width = test_case->feature - OpenCLTestPowScalar + 1;
+        momoten::SpecializationValue specialization;
+        specialization.constant_id = 0;
+        specialization.data.resize(sizeof(width));
+        memcpy(specialization.data.data(), &width, sizeof(width));
+        options.specializations.push_back(specialization);
+    }
     if (test_case->feature == OpenCLTestSubgroupBasic || test_case->feature == OpenCLTestWorkgroupSplit || test_case->feature == OpenCLTestWorkgroup3D)
     {
         options.subgroup_mode = momoten::SubgroupModeEmulatedBasic;
