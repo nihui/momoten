@@ -1,6 +1,8 @@
 // Copyright 2026 nihui
 // SPDX-License-Identifier: Apache-2.0
 
+#include "momoten/version.h"
+
 #include "backend/device.h"
 #include "backend/objects.h"
 #include "vulkan_internal.h"
@@ -178,7 +180,7 @@ void impl_get_physical_device_properties(
         return;
     memset(properties, 0, sizeof(*properties));
     properties->apiVersion = VK_API_VERSION_1_1;
-    properties->driverVersion = VK_MAKE_VERSION(0, 1, 0);
+    properties->driverVersion = VK_MAKE_VERSION(MOMOTEN_DRIVER_VERSION_MAJOR, MOMOTEN_DRIVER_VERSION_MINOR, MOMOTEN_DRIVER_VERSION_PATCH);
     properties->vendorID = physical->vendor_id;
     properties->deviceID = physical->device_id;
     properties->deviceType = physical->vulkan_device_type;
@@ -237,7 +239,7 @@ void impl_get_physical_device_properties2(
             strncpy(driver->driverName, "momoten experimental non-conformant",
                     VK_MAX_DRIVER_NAME_SIZE - 1);
             driver->driverName[VK_MAX_DRIVER_NAME_SIZE - 1] = '\0';
-            const std::string driver_info = "momoten experimental non-conformant; OpenCL backend: " + physical->driver;
+            const std::string driver_info = "momoten " MOMOTEN_RELEASE_VERSION_STRING " experimental non-conformant; OpenCL backend: " + physical->driver;
             strncpy(driver->driverInfo, driver_info.c_str(), VK_MAX_DRIVER_INFO_SIZE - 1);
             driver->driverInfo[VK_MAX_DRIVER_INFO_SIZE - 1] = '\0';
             driver->conformanceVersion.major = 0;

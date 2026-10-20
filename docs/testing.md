@@ -1,5 +1,12 @@
 # Testing
 
+The device-independent `momoten_version_configuration` test checks release-date
+validation, UTC defaults and cached reconfiguration. `momoten_driver_version`
+queries the core and extended physical-device properties using a synthetic
+OpenCL device, so driver-version/date checks run even without an OpenCL runtime.
+With amalgamation enabled, `momoten_amalgamation_current` checks that the
+single-file source embeds the current generated version header.
+
 Tests are separated by ownership and runtime requirements:
 
 - `tests/translator` validates translation, deterministic output, rejected

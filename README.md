@@ -61,7 +61,11 @@ cmake -S momoten -B build-momoten -DMOMOTEN_BUILD_AMALGAMATION=ON
 cmake --build build-momoten --target momoten_amalgamation
 ```
 
-The generated file is `build-momoten/dist/momoten.cpp`. It is not tracked by Git; release automation can publish it as a GitHub Release asset. The amalgamation step requests Python3 only when enabled; the vendored SPIRV-Tools build may independently require Python3 for generated tables.
+The generated file is `build-momoten/dist/momoten.cpp`. It embeds the configured
+release version, so copying it does not require a separate generated version
+header. When invoking `tools/amalgamate.py` directly, pass
+`--version-header build-momoten/include/momoten/version.h` from a configured
+build tree. It is not tracked by Git; release automation can publish it as a GitHub Release asset. The amalgamation step requests Python3 only when enabled; the vendored SPIRV-Tools build may independently require Python3 for generated tables.
 
 SPIRV-Cross, SPIRV-Tools, SPIRV-Headers, OpenCL-Headers and Vulkan-Headers are pinned Git submodules under `third_party/`. CMake never downloads dependencies and does not use a system OpenCL or Vulkan SDK for their headers. Once the submodules are initialized, configuration and compilation work offline. A missing submodule produces an error with the initialization command.
 

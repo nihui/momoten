@@ -7,6 +7,7 @@ set(MOMOTEN_VERSION 0.1.0)
 set(MOMOTEN_VERSION_MAJOR 0)
 set(MOMOTEN_VERSION_MINOR 1)
 set(MOMOTEN_VERSION_PATCH 0)
+include("${CMAKE_CURRENT_SOURCE_DIR}/cmake/momoten_version.cmake")
 set(MOMOTEN_IS_TOP_LEVEL OFF)
 if(CMAKE_CURRENT_SOURCE_DIR STREQUAL CMAKE_SOURCE_DIR)
     set(MOMOTEN_IS_TOP_LEVEL ON)
@@ -176,10 +177,12 @@ if(MOMOTEN_BUILD_AMALGAMATION)
             "${CMAKE_CURRENT_BINARY_DIR}/dist"
         COMMAND "${Python3_EXECUTABLE}"
             "${CMAKE_CURRENT_SOURCE_DIR}/tools/amalgamate.py"
+            --version-header "${CMAKE_CURRENT_BINARY_DIR}/include/momoten/version.h"
             --output "${momoten_amalgamated_source}"
         DEPENDS
             "${CMAKE_CURRENT_SOURCE_DIR}/tools/amalgamate.py"
             "${momoten_source_manifest}"
+            "${CMAKE_CURRENT_BINARY_DIR}/include/momoten/version.h"
             ${momoten_amalgamation_inputs}
         WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
         COMMENT "Generating ${momoten_amalgamated_source}"

@@ -117,7 +117,8 @@ versioned `.so` symlinks are required.
 
 The build-tree targets `momoten::driver`, `momoten::translator`, and
 `momoten::headers` remain available to embedded/superbuild consumers.
-The generated version header remains build-tree metadata. Linux keeps
+The generated version header remains build-tree metadata and supplies the
+driver release version. Linux keeps
 `-static-libstdc++ -static-libgcc` for compatibility with older runtimes;
 changing that choice can be measured in a separate experiment.
 
@@ -228,9 +229,19 @@ on the following day. Packages are named `momoten-<version>-<target>.tar.gz`
 The `package-release` job checks all ten platform artifacts and their
 runtime-only archive contents, then creates `SHA256SUMS`. The aggregate is also
 available as the `momoten-<version>-release` workflow artifact, so packaging is
-tested on every CI run. The date identifies the distribution, not the Vulkan
-API or driver ABI: the CMake project version remains `0.1.0`, the ICD API version
-remains `1.1.0`, and runtime library filenames stay unversioned.
+tested on every CI run. Each platform build also receives the same date as
+`-DMOMOTEN_RELEASE_VERSION=<version>`. `VkPhysicalDeviceProperties::driverVersion`
+encodes it as `VK_MAKE_VERSION(year - 2000, month, day)`, so `20261020` displays
+as `26.10.20` with the standard Vulkan version helpers. `driverInfo` includes
+the full `20261020` string before the OpenCL backend version. Both the modular
+and generated single-file driver use the same configured version.
+
+For local builds, `MOMOTEN_RELEASE_VERSION` defaults to the UTC configure date
+and is cached for subsequent reconfiguration. Set it explicitly to reproduce a
+release. CMake rejects malformed or impossible dates and years outside 2000-2099;
+this range keeps all packed Vulkan fields in bounds. The date is a driver release
+identifier, not the Vulkan API or ABI version: the CMake project version remains
+`0.1.0`, the ICD API version remains `1.1.0`, and runtime filenames stay unversioned.
 
 Only the final publishing job receives `contents: write`. It creates the date
 tag (without a `v` prefix) at the exact commit selected when the workflow was
