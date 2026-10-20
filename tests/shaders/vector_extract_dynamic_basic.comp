@@ -1,0 +1,63 @@
+// Copyright 2026 nihui
+// SPDX-License-Identifier: Apache-2.0
+
+#version 450
+
+layout(local_size_x = 4) in;
+layout(set = 0, binding = 0, std430) readonly buffer InputBuffer
+{
+    uvec4 values[];
+} input_buffer;
+layout(set = 0, binding = 1, std430) writeonly buffer OutputBuffer
+{
+    vec4 values[];
+} output_buffer;
+layout(set = 0, binding = 3, std430) writeonly buffer CoordinateBuffer
+{
+    ivec4 values[];
+} coordinate_buffer;
+layout(set = 0, binding = 4, std430) writeonly buffer BooleanBuffer
+{
+    ivec4 values[];
+} boolean_buffer;
+shared uvec4 shared_values[4];
+
+void main()
+{
+    uint i = gl_GlobalInvocationID.x;
+    uvec4 bits = input_buffer.values[i];
+    uint index = bits.w;
+    uint local_index = gl_LocalInvocationID.x;
+    shared_values[local_index] = bits;
+    shared_values[local_index][index & 3u] = input_buffer.values[i][index & 3u];
+    barrier();
+    output_buffer.values[i] = vec4(
+        unpackHalf2x16(bits.x)[index & 1u],
+        vec3(bits.xyz)[index % 3u],
+        uintBitsToFloat(bits)[index & 3u],
+        float((ivec4(bits) + ivec4(1))[index & 3u]));
+    output_buffer.values[i][index & 3u] = float(shared_values[(local_index + 1u) & 3u][index & 3u]);
+
+    // Match batch reshape's reverse coordinate decoding and forward packing.
+    ivec4 value = ivec4(bits & uvec4(255u)) + ivec4(123, 456, 789, 1023);
+    ivec4 coordinates[5];
+    int rank = int(index % 4u) + 2;
+    for (int j = rank - 1; j >= 0; j--)
+    {
+        coordinates[j] = value % (j + 2);
+        value /= j + 2;
+    }
+    for (int j = 0; j < rank; j++)
+        value = value * (j + 2) + coordinates[j];
+    coordinate_buffer.values[i] = value;
+
+    bvec4 mask = greaterThanEqual(ivec4(0, 1, 2, 3), ivec4(int(index & 3u)));
+    mask[(index + 1u) & 3u] = (index & 1u) != 0u;
+    int lane_bits = (mask.x ? 1 : 0) | (mask.y ? 2 : 0) | (mask.z ? 4 : 0) | (mask.w ? 8 : 0);
+    bool reference = (index & 1u) != 0u;
+    boolean_buffer.values[i] = ivec4(
+        lane_bits,
+        mask[index & 3u] == reference ? 1 : 0,
+        greaterThanEqual(ivec4(0, 1, 2, 3), ivec4(int(index & 3u)))[index & 3u] == reference ? 1 : 0,
+        mask.x == reference ? 17 : 23);
+}

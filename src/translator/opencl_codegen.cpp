@@ -694,6 +694,9 @@ void CompilerOpenCL::emit_instruction(const Instruction& instruction)
             expression = "(" + index + " == " + std::to_string(i - 1) + "u ? " + vector + "." + components[i - 1] + " : " + expression + ")";
         if (vector_type.basetype == SPIRType::Boolean)
             expression = "(" + expression + " != 0)";
+        // Scalar conditional operands undergo integer promotion in OpenCL C.
+        // Restore the SPIR-V result type before forwarding into a bitcast.
+        expression = "((" + type_to_glsl(get<SPIRType>(ops[0])) + ")(" + expression + "))";
         emit_op(ops[0], ops[1], expression, should_forward(ops[2]) && should_forward(ops[3]));
         inherit_expression_dependencies(ops[1], ops[2]);
         inherit_expression_dependencies(ops[1], ops[3]);

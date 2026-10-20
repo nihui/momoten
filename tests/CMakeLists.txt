@@ -204,6 +204,8 @@ momoten_compile_test_shader(momoten_integer_dot_product_test_spv integer_dot_pro
 momoten_compile_test_shader(momoten_workgroup_split_test_spv workgroup_split.comp vulkan1.1)
 momoten_compile_test_shader(momoten_workgroup_3d_test_spv workgroup_3d.comp vulkan1.1)
 momoten_compile_test_shader(momoten_vector_extract_test_spv vector_extract_dynamic.comp vulkan1.1)
+momoten_compile_test_shader(momoten_vector_extract_basic_test_spv vector_extract_dynamic_basic.comp vulkan1.1)
+momoten_compile_test_shader(momoten_vector_extract_int16_test_spv vector_extract_int16.comp vulkan1.1)
 
 add_custom_target(momoten-test-spv DEPENDS ${momoten_test_spv_files})
 
@@ -279,6 +281,8 @@ if(MOMOTEN_CLANG)
             -DFP64_SPV_FILE=${momoten_fp64_test_spv}
             -DFP16_CONSTANT_SPV_FILE=${momoten_fp16_program_constant_test_spv}
             -DVECTOR_EXTRACT_SPV_FILE=${momoten_vector_extract_test_spv}
+            -DVECTOR_EXTRACT_BASIC_SPV_FILE=${momoten_vector_extract_basic_test_spv}
+            -DVECTOR_EXTRACT_INT16_SPV_FILE=${momoten_vector_extract_int16_test_spv}
             -DOUTPUT_DIR=${CMAKE_CURRENT_BINARY_DIR}/strict-cl10
             -P "${CMAKE_CURRENT_SOURCE_DIR}/translator/strict_cl10_test.cmake")
     set_tests_properties(momoten_opencl_c_1_0_syntax PROPERTIES
@@ -294,6 +298,8 @@ if(MOMOTEN_CLANG)
             -DFP64_SPV_FILE=${momoten_fp64_test_spv}
             -DFP16_CONSTANT_SPV_FILE=${momoten_fp16_program_constant_test_spv}
             -DVECTOR_EXTRACT_SPV_FILE=${momoten_vector_extract_test_spv}
+            -DVECTOR_EXTRACT_BASIC_SPV_FILE=${momoten_vector_extract_basic_test_spv}
+            -DVECTOR_EXTRACT_INT16_SPV_FILE=${momoten_vector_extract_int16_test_spv}
             -DAPPLE_TYPE_ALIASES=ON
             -DOUTPUT_DIR=${CMAKE_CURRENT_BINARY_DIR}/apple-type-aliases
             -P "${CMAKE_CURRENT_SOURCE_DIR}/translator/strict_cl10_test.cmake")
@@ -336,6 +342,12 @@ if(TARGET momoten_test_opencl)
     add_test(NAME momoten_opencl_vector_access
         COMMAND momoten_opencl_test "${momoten_vector_extract_test_spv}"
             vector-access)
+    add_test(NAME momoten_opencl_vector_access_basic
+        COMMAND momoten_opencl_test "${momoten_vector_extract_basic_test_spv}"
+            vector-access-basic)
+    add_test(NAME momoten_opencl_vector_extract_int16
+        COMMAND momoten_opencl_test "${momoten_vector_extract_int16_test_spv}"
+            vector-extract-int16)
     set_tests_properties(momoten_opencl_simple momoten_opencl_fp16
         momoten_opencl_fp16_basic
         momoten_opencl_fp64
@@ -343,7 +355,8 @@ if(TARGET momoten_test_opencl)
         momoten_opencl_atomic_packed momoten_opencl_scalar_16bit
         momoten_opencl_subgroup_basic momoten_opencl_integer_dot_product
         momoten_opencl_workgroup_split momoten_opencl_workgroup_3d
-        momoten_opencl_vector_access PROPERTIES
+        momoten_opencl_vector_access momoten_opencl_vector_access_basic
+        momoten_opencl_vector_extract_int16 PROPERTIES
         LABELS "momoten;runtime;direct-opencl"
         SKIP_RETURN_CODE 77)
 else()
