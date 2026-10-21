@@ -552,10 +552,11 @@ static int run_integer_dot_product_kernel(
         0x7f80ff01u, 0x0203feffu, 0x04030201u, 0x08070605u,
         0x80000000u, 0x7fffffffu, 2u, 3u,
         0xffffffffu, 0xfffffffeu, 0x80000001u, 0xfffffffdu};
-    const uint32_t expected[14] = {
+    const uint32_t expected[16] = {
         0xffffff7fu, 70u, 119u, 12u, 0x80000000u, 0xffffffffu, 0x7fffffffu,
-        0x7ffffffdu, 0xffffffffu, 0u, 123u, 0x80000000u, 0xffffffffu, 321u};
-    uint32_t output[14] = {};
+        0x7ffffffdu, 0xffffffffu, 0u, 123u, 0x80000000u, 0xffffffffu, 321u,
+        0x7f80ff78u, 0x80000000u};
+    uint32_t output[16] = {};
     cl_int ret = CL_SUCCESS;
     cl_mem buffers[2] = {};
     buffers[0] = clCreateBuffer(context, CL_MEM_READ_ONLY | CL_MEM_COPY_HOST_PTR,
@@ -602,7 +603,7 @@ static int run_integer_dot_product_kernel(
         status = fail("integer dot-product kernel dispatch", ret);
     else
     {
-        for (uint32_t i = 0; i < 14; i++)
+        for (uint32_t i = 0; i < 16; i++)
         {
             if (output[i] != expected[i])
             {

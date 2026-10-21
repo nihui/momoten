@@ -324,6 +324,9 @@ int main(int argc, char** argv)
         return 1;
 
     momoten::TranslationOptions integer_dot_options;
+    if (require(!integer_dot_options.integer_dot_product_split_packed_acc_sat && !integer_dot_options.integer_dot_product_swap_mixed_acc_sat,
+                "integer dot-product workarounds must be opt-in"))
+        return 1;
     integer_dot_options.integer_dot_product = true;
     integer_dot_options.integer_dot_product_input_4x8bit = true;
     integer_dot_options.integer_dot_product_input_4x8bit_packed = true;
@@ -344,7 +347,7 @@ int main(int argc, char** argv)
                        "#pragma OPENCL EXTENSION cl_khr_integer_dot_product : enable")
                        != std::string::npos,
                    "integer dot-product extension pragma was not emitted")
-        || require(integer_dot_result.source.find("dot_4x8packed_ss_int(") != std::string::npos && integer_dot_result.source.find("dot_4x8packed_uu_uint(") != std::string::npos && integer_dot_result.source.find("dot_4x8packed_su_int(") != std::string::npos && integer_dot_result.source.find("dot_acc_sat_4x8packed_ss_int(") != std::string::npos && integer_dot_result.source.find("dot_acc_sat_4x8packed_uu_uint(") != std::string::npos && integer_dot_result.source.find("dot_acc_sat_4x8packed_su_int(") != std::string::npos,
+        || require(integer_dot_result.source.find("dot_4x8packed_ss_int(") != std::string::npos && integer_dot_result.source.find("dot_4x8packed_uu_uint(") != std::string::npos && integer_dot_result.source.find("dot_4x8packed_su_int(") != std::string::npos && integer_dot_result.source.find("dot_acc_sat_4x8packed_ss_int(") != std::string::npos && integer_dot_result.source.find("dot_acc_sat_4x8packed_uu_uint(") != std::string::npos && integer_dot_result.source.find("dot_acc_sat_4x8packed_su_int(") != std::string::npos && integer_dot_result.source.find("add_sat(dot_4x8packed_") == std::string::npos,
                    "integer dot-product instructions were not lowered to OpenCL builtins")
         || require(integer_dot_result.source.find("void momo_u96_add_u32(") != std::string::npos,
                    "integer dot-product helper definition is missing")
@@ -352,6 +355,37 @@ int main(int argc, char** argv)
                    "generated integer dot-product helper uses incompatible inline linkage")
         || require(integer_dot_result.source.find("spirv_instruction") == std::string::npos,
                    "SPIRV-Cross GLSL integer-dot polyfill leaked into OpenCL source"))
+        return 1;
+
+    momoten::TranslationOptions integer_dot_workaround_options = integer_dot_options;
+    integer_dot_workaround_options.integer_dot_product_split_packed_acc_sat = true;
+    // The workaround must also work when vector 4x8 dot is unavailable.
+    integer_dot_workaround_options.integer_dot_product_input_4x8bit = false;
+    momoten::TranslationResult integer_dot_workaround_result;
+    if (require(momoten::translate_spirv_to_opencl_c(
+                    integer_dot.data(), integer_dot.size(), integer_dot_workaround_options,
+                    integer_dot_workaround_result),
+                "packed integer dot-product workaround translation failed")
+        || require(integer_dot_workaround_result.abi.integer_dot_product,
+                   "packed dot workaround lost the integer dot-product ABI requirement")
+        || require(integer_dot_workaround_result.source.find("add_sat(dot_4x8packed_ss_int(") != std::string::npos && integer_dot_workaround_result.source.find("add_sat(dot_4x8packed_uu_uint(") != std::string::npos && integer_dot_workaround_result.source.find("add_sat(dot_4x8packed_su_int(") != std::string::npos && integer_dot_workaround_result.source.find("dot_acc_sat_4x8packed_") == std::string::npos,
+                   "packed saturation workaround did not avoid the broken builtins"))
+        return 1;
+
+    momoten::TranslationOptions integer_dot_swap_options = integer_dot_options;
+    integer_dot_swap_options.integer_dot_product_swap_mixed_acc_sat = true;
+    momoten::TranslationResult integer_dot_swap_result;
+    if (require(momoten::translate_spirv_to_opencl_c(
+                    integer_dot.data(), integer_dot.size(), integer_dot_swap_options,
+                    integer_dot_swap_result),
+                "mixed integer dot-product swap translation failed")
+        || require(integer_dot_swap_result.source.find("dot_acc_sat_4x8packed_us_int(") != std::string::npos
+                       && integer_dot_swap_result.source.find("dot_acc_sat_4x8packed_su_int(") == std::string::npos
+                       && integer_dot_swap_result.source.find("dot_acc_sat_4x8packed_ss_int(") != std::string::npos
+                       && integer_dot_swap_result.source.find("dot_acc_sat_4x8packed_uu_uint(") != std::string::npos
+                       && integer_dot_swap_result.source.find("dot_4x8packed_su_int(") != std::string::npos
+                       && integer_dot_swap_result.source.find("add_sat(dot_4x8packed_") == std::string::npos,
+                   "mixed saturation swap did not preserve native dot instructions"))
         return 1;
 
     std::vector<uint32_t> workgroup_split;

@@ -197,6 +197,7 @@ std::vector<VkPhysicalDevice> discover_opencl_devices(VkInstance instance)
             physical->name = opencl_device_string(devices[d], CL_DEVICE_NAME);
             physical->vendor = opencl_device_string(devices[d], CL_DEVICE_VENDOR);
             physical->driver = opencl_device_string(devices[d], CL_DRIVER_VERSION);
+            physical->driver_policy = momoten_detail::opencl_driver_policy(physical->vendor, physical->driver);
             physical->extensions = opencl_device_string(devices[d], CL_DEVICE_EXTENSIONS);
             physical->opencl_device_type = device_type;
             physical->vendor_id = vendor_id;
@@ -233,7 +234,7 @@ std::vector<VkPhysicalDevice> discover_opencl_devices(VkInstance instance)
             physical->shader_profile = momoten_detail::probe_shader_device_profile(
                 devices[d], physical->extensions,
                 physical->max_workgroup_size,
-                physical->max_work_item_sizes[0]);
+                physical->max_work_item_sizes[0], physical->driver_policy);
             if (momoten_detail::debug_enabled())
             {
                 const char* mode = physical->shader_profile.subgroup_mode
