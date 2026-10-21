@@ -2,8 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 #include "opencl_loader.h"
+#include "android7_loader.h"
 
 #include <algorithm>
+#include <cstdarg>
 #include <cstdlib>
 #include <cstdio>
 #include <cstring>
@@ -20,6 +22,9 @@
 #include <dlfcn.h>
 #endif
 #include <sys/stat.h>
+#if defined(__ANDROID__)
+#include <android/log.h>
+#endif
 
 namespace momoten_detail {
 
@@ -29,6 +34,22 @@ bool debug_enabled()
     if (!value || !value[0])
         value = getenv("NCNN_MOMOTEN_DEBUG");
     return value && value[0] != '\0' && strcmp(value, "0") != 0;
+}
+
+static void log_opencl_loader(bool always, const char* format, ...)
+{
+    if (!always && !debug_enabled())
+        return;
+    va_list args;
+    va_start(args, format);
+#if defined(__ANDROID__)
+    __android_log_vprint(always ? ANDROID_LOG_ERROR : ANDROID_LOG_DEBUG, "momoten", format, args);
+#else
+    fputs("[momoten] ", stderr);
+    vfprintf(stderr, format, args);
+    fputc('\n', stderr);
+#endif
+    va_end(args);
 }
 
 #if defined(_WIN32)
@@ -218,10 +239,70 @@ static std::vector<std::string> opencl_driver_candidates()
     return candidates;
 }
 
+#if defined(__ANDROID__)
+void log_android_opencl_load(const char* path, const char* operation, const char* error)
+{
+    log_opencl_loader(false, "%s for %s %s%s", operation, path,
+                      error ? "failed: " : "loaded", error ? error : "");
+}
+
+static void log_opencl_load_error(const char* path, const char* operation)
+{
+    const char* error = dlerror();
+    log_android_opencl_load(path, operation, error ? error : "no dlerror; check the Android linker log");
+}
+#endif
+
 static OpenCLLibrary open_opencl_library(const char* path)
 {
 #if defined(_WIN32)
     return LoadLibraryA(path);
+#elif defined(__ANDROID__)
+    dlerror();
+    OpenCLLibrary library = dlopen(path, RTLD_LOCAL | RTLD_NOW);
+    if (library)
+        return library;
+    log_opencl_load_error(path, "dlopen");
+
+    // Android 8+ may expose the vendor namespace through this optional system
+    // helper. Resolve it at runtime so older Android/NDK builds remain usable.
+    typedef void* (*LoadSphalLibrary)(const char*, int);
+    dlerror();
+    LoadSphalLibrary load_sphal = reinterpret_cast<LoadSphalLibrary>(
+        dlsym(RTLD_NEXT, "android_load_sphal_library"));
+    void* vndksupport = 0;
+    if (!load_sphal)
+    {
+        log_opencl_load_error(path, "SP-HAL lookup via RTLD_NEXT");
+        dlerror();
+        vndksupport = dlopen("libvndksupport.so", RTLD_LOCAL | RTLD_NOW);
+        if (vndksupport)
+        {
+            dlerror();
+            load_sphal = reinterpret_cast<LoadSphalLibrary>(
+                dlsym(vndksupport, "android_load_sphal_library"));
+            if (!load_sphal)
+                log_opencl_load_error(path, "SP-HAL lookup in libvndksupport.so");
+        }
+        else
+        {
+            log_opencl_load_error(path, "dlopen libvndksupport.so");
+        }
+    }
+    if (load_sphal)
+    {
+        dlerror();
+        library = load_sphal(path, RTLD_LOCAL | RTLD_NOW);
+        if (!library)
+            log_opencl_load_error(path, "android_load_sphal_library");
+    }
+    // The returned driver has its own dlopen reference. Do not cache a helper
+    // function pointer after releasing the library that supplied it.
+    if (vndksupport)
+        dlclose(vndksupport);
+    if (!library)
+        library = open_android7_library(path, RTLD_LOCAL | RTLD_NOW);
+    return library;
 #else
     return dlopen(path, RTLD_LOCAL | RTLD_NOW);
 #endif
@@ -412,15 +493,13 @@ static void load_opencl_driver_once()
         if (try_opencl_driver(candidates[i]))
         {
             g_opencl_loaded = true;
-            if (debug_enabled())
-                fprintf(stderr, "[momoten] loaded OpenCL vendor driver %s without the system ICD loader\n",
-                        g_opencl_driver_path.c_str());
+            log_opencl_loader(false, "loaded OpenCL vendor driver %s without the system ICD loader",
+                              g_opencl_driver_path.c_str());
             return;
         }
-        if (debug_enabled())
-            fprintf(stderr, "[momoten] rejected OpenCL driver candidate %s\n", candidates[i].c_str());
+        log_opencl_loader(false, "rejected OpenCL driver candidate %s", candidates[i].c_str());
     }
-    fprintf(stderr, "[momoten] no usable OpenCL vendor driver; set MOMOTEN_OPENCL_DRIVER to a vendor library or .icd file\n");
+    log_opencl_loader(true, "no usable OpenCL vendor driver; set MOMOTEN_OPENCL_DRIVER to a vendor library or .icd file");
 }
 
 cl_int momo_clGetPlatformIDs(cl_uint num_entries, cl_platform_id* platforms,

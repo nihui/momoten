@@ -21,6 +21,26 @@ with an online compiler is selected. The vendor runtime remains an external
 platform component; all source-level translation dependencies are linked into
 `libmomoten`.
 
+On Android, each candidate is opened with ordinary `dlopen` first, followed
+by the optional Android 8+ `android_load_sphal_library` helper, resolved from
+the process or `libvndksupport.so`. There is no link-time dependency on
+`libvndksupport` and no increase to the minimum Android API.
+
+On Android 7.0/7.1 (API 24/25) only, a final fallback resolves the resident
+linker's `do_dlopen` and recursive mutex from readable ELF symbol tables,
+using the already-mapped system `libart` as the caller. It is skipped when
+these prerequisites are unavailable. Both fallbacks let the system load the
+driver and dependencies and return a normal `dlopen` handle. They use private
+Android interfaces, so ROM, namespace and SELinux restrictions still apply;
+no root access or copied vendor libraries are required. `MOMOTEN_DEBUG=1`
+(or `NCNN_MOMOTEN_DEBUG=1`) reports all Android load stages through logcat.
+Some SP-HAL helpers leave error details only in the Android linker log.
+
+APKs targeting API 31+ may also need a
+[`uses-native-library`](https://developer.android.com/guide/topics/manifest/uses-native-library-element)
+declaration for an exposed vendor library; use `android:required="false"`
+when OpenCL support is optional. This does not make private libraries public.
+
 ## Mesa Rusticl
 
 `RUSTICL_ENABLE` enables Mesa devices, but it does not select Rusticl when

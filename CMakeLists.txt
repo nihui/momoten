@@ -240,6 +240,7 @@ if(ANDROID)
     # builds with older NDKs. These flags do not change the minimum Android API.
     foreach(momoten_android_driver momoten_driver momoten_amalgamated_driver)
         if(TARGET ${momoten_android_driver})
+            target_link_libraries(${momoten_android_driver} PRIVATE log)
             target_link_options(${momoten_android_driver} PRIVATE
                 "LINKER:-z,max-page-size=16384"
                 "LINKER:-z,common-page-size=16384")
