@@ -14,6 +14,15 @@
 
 namespace momoten_detail {
 
+struct OpenCLCompilerProfile
+{
+    // OpenCL C version, using 100, 110, 120, 200 and 300.
+    uint32_t version;
+    bool full_profile;
+
+    OpenCLCompilerProfile();
+};
+
 struct IntegerDotProductAccelerationProfile
 {
     bool unsigned_accelerated;
@@ -39,6 +48,7 @@ struct IntegerDotProductProfile
 
 struct ShaderDeviceProfile
 {
+    OpenCLCompilerProfile compiler;
     bool fp16;
     bool int64;
     bool fp64;
@@ -46,9 +56,6 @@ struct ShaderDeviceProfile
     uint32_t denorm_preserve_widths;
     uint32_t round_to_nearest_widths;
     uint32_t signed_zero_inf_nan_preserve_widths;
-    // Modern FULL_PROFILE math guarantees are required for OpenCL mad and
-    // unsafe math. Empty on older compilers and embedded profiles.
-    std::string relaxed_math_standard;
     momoten::SubgroupMode subgroup_mode;
     uint32_t subgroup_size;
     uint32_t subgroup_operations;
@@ -80,6 +87,7 @@ bool validate_workgroup_limits(
     VkDevice device, const momoten::KernelABI& abi, size_t invocations, std::string& diagnostic);
 bool validate_pipeline_abi(
     VkDevice device, const momoten::KernelABI& abi, std::string& diagnostic);
+std::string opencl_language_options(const OpenCLCompilerProfile& profile);
 std::string opencl_build_options(const momoten::KernelABI& abi, const ShaderDeviceProfile& profile);
 
 } // namespace momoten_detail

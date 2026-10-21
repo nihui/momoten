@@ -584,6 +584,83 @@ int main(int argc, char** argv)
         }
     }
 
+    if (subgroup_pipeline)
+    {
+        VkPhysicalDeviceSubgroupProperties subgroup_properties = {};
+        subgroup_properties.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SUBGROUP_PROPERTIES;
+        VkPhysicalDeviceProperties2 properties = {};
+        properties.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2;
+        properties.pNext = &subgroup_properties;
+        vkGetPhysicalDeviceProperties2KHR(physical_device, &properties);
+        const uint32_t subgroup_size = subgroup_properties.subgroupSize;
+        if (!subgroup_size)
+            return fail("subgroupSize", VK_ERROR_UNKNOWN);
+
+        const uint32_t local_sizes[] = {4, subgroup_size, subgroup_size * 2, subgroup_size + 4};
+        for (size_t c = 0; c < sizeof(local_sizes) / sizeof(local_sizes[0]); c++)
+        {
+            const uint32_t local_size = local_sizes[c];
+            if (local_size < 4 || local_size > properties.properties.limits.maxComputeWorkGroupInvocations || local_size > properties.properties.limits.maxComputeWorkGroupSize[0])
+                continue;
+            if (c != 0 && local_size == 4)
+                continue;
+
+            VkPipeline test_pipeline = subgroup_pipeline;
+            if (c != 0)
+            {
+                VkSpecializationInfo subgroup_specialization = specialization_info;
+                subgroup_specialization.pData = &local_size;
+                VkComputePipelineCreateInfo subgroup_pipeline_info = pipeline_info;
+                subgroup_pipeline_info.stage.module = subgroup_module;
+                subgroup_pipeline_info.stage.pSpecializationInfo = &subgroup_specialization;
+                result = vkCreateComputePipelines(device, VK_NULL_HANDLE, 1, &subgroup_pipeline_info, 0, &test_pipeline);
+                // BASIC emulation explicitly rejects barriers spanning more
+                // than one logical subgroup. Native devices exercise them.
+                if (result == VK_ERROR_FEATURE_NOT_PRESENT && local_size > subgroup_size)
+                {
+                    fprintf(stderr, "driver_test: subgroup barrier local_size=%u unavailable\n", local_size);
+                    continue;
+                }
+                if (result != VK_SUCCESS) return fail("vkCreateComputePipelines(subgroup size)", result);
+            }
+
+            uint32_t* subgroup_output = reinterpret_cast<uint32_t*>(input);
+            memset(subgroup_output, 0, 8 * sizeof(uint32_t));
+            result = vkResetFences(device, 1, &fence);
+            if (result != VK_SUCCESS) return fail("vkResetFences(subgroup)", result);
+            result = vkResetCommandBuffer(command_buffer, 0);
+            if (result != VK_SUCCESS) return fail("vkResetCommandBuffer(subgroup)", result);
+            result = vkBeginCommandBuffer(command_buffer, &begin_info);
+            if (result != VK_SUCCESS) return fail("vkBeginCommandBuffer(subgroup)", result);
+            descriptor_infos[0].buffer = input_buffer;
+            descriptor_infos[1].buffer = output_buffer;
+            vkCmdBindPipeline(command_buffer, VK_PIPELINE_BIND_POINT_COMPUTE, test_pipeline);
+            vkCmdPushDescriptorSetKHR(command_buffer, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline_layout, 0, 2, writes);
+            vkCmdDispatch(command_buffer, 2, 1, 1);
+            result = vkEndCommandBuffer(command_buffer);
+            if (result != VK_SUCCESS) return fail("vkEndCommandBuffer(subgroup)", result);
+            result = vkQueueSubmit(queue, 1, &submit_info, fence);
+            if (result != VK_SUCCESS) return fail("vkQueueSubmit(subgroup)", result);
+            result = vkWaitForFences(device, 1, &fence, VK_TRUE, UINT64_MAX);
+            if (result != VK_SUCCESS) return fail("vkWaitForFences(subgroup)", result);
+            const uint32_t sampled_ids[] = {0, local_size / 2 - 1, local_size / 2, local_size - 1};
+            for (uint32_t i = 0; i < 8; i++)
+            {
+                const uint32_t local_id = sampled_ids[i % 4];
+                const uint32_t lane = local_id % subgroup_size;
+                const uint32_t expected = subgroup_size + lane * 10u + local_id / subgroup_size * 100u + (local_size + subgroup_size - 1u) / subgroup_size * 1000u + (lane == 0 ? 10000u : 0u);
+                if (subgroup_output[i] != expected)
+                {
+                    fprintf(stderr, "driver_test: subgroup local_size=%u output[%u]=%u expected=%u\n", local_size, i, subgroup_output[i], expected);
+                    status = 1;
+                }
+            }
+            fprintf(stderr, "driver_test: checked subgroup outputs for local_size=%u\n", local_size);
+            if (c != 0)
+                vkDestroyPipeline(device, test_pipeline, 0);
+        }
+    }
+
     // OpenCL 1.0 clEnqueueMarker provides a completion event for an empty
     // Vulkan submission as well.
     result = vkResetFences(device, 1, &fence);
