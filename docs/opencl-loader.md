@@ -21,6 +21,20 @@ with an online compiler is selected. The vendor runtime remains an external
 platform component; all source-level translation dependencies are linked into
 `libmomoten`.
 
+On Android, each candidate is opened with ordinary `dlopen` first. If that
+fails, momoten tries the optional Android 8+ `android_load_sphal_library`
+helper, resolved from the process or `libvndksupport.so`, so the system can
+resolve the driver and its dependencies in the vendor namespace. This adds
+no link-time dependency or minimum API requirement. The helper is not a
+public NDK API and may be absent or inaccessible to an APK; namespace and
+SELinux restrictions still apply. No root access or copied vendor libraries
+are required. `MOMOTEN_DEBUG=1` reports each failed Android load path (some
+helpers consume `dlerror`, leaving details only in the Android linker log).
+APKs targeting API 31+ may also need a
+[`uses-native-library`](https://developer.android.com/guide/topics/manifest/uses-native-library-element)
+declaration for an exposed vendor library; use `android:required="false"`
+when OpenCL support is optional. This does not make private libraries public.
+
 ## Mesa Rusticl
 
 `RUSTICL_ENABLE` enables Mesa devices, but it does not select Rusticl when

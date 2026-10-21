@@ -218,10 +218,64 @@ static std::vector<std::string> opencl_driver_candidates()
     return candidates;
 }
 
+#if defined(__ANDROID__)
+static void log_opencl_load_error(const char* path, const char* operation)
+{
+    const char* error = dlerror();
+    if (debug_enabled())
+        fprintf(stderr, "[momoten] %s for %s failed: %s\n", operation, path,
+                error ? error : "no dlerror; check the Android linker log");
+}
+#endif
+
 static OpenCLLibrary open_opencl_library(const char* path)
 {
 #if defined(_WIN32)
     return LoadLibraryA(path);
+#elif defined(__ANDROID__)
+    dlerror();
+    OpenCLLibrary library = dlopen(path, RTLD_LOCAL | RTLD_NOW);
+    if (library)
+        return library;
+    log_opencl_load_error(path, "dlopen");
+
+    // Android 8+ may expose the vendor namespace through this optional system
+    // helper. Resolve it at runtime so older Android/NDK builds remain usable.
+    typedef void* (*LoadSphalLibrary)(const char*, int);
+    dlerror();
+    LoadSphalLibrary load_sphal = reinterpret_cast<LoadSphalLibrary>(
+        dlsym(RTLD_NEXT, "android_load_sphal_library"));
+    void* vndksupport = 0;
+    if (!load_sphal)
+    {
+        log_opencl_load_error(path, "SP-HAL lookup via RTLD_NEXT");
+        dlerror();
+        vndksupport = dlopen("libvndksupport.so", RTLD_LOCAL | RTLD_NOW);
+        if (vndksupport)
+        {
+            dlerror();
+            load_sphal = reinterpret_cast<LoadSphalLibrary>(
+                dlsym(vndksupport, "android_load_sphal_library"));
+            if (!load_sphal)
+                log_opencl_load_error(path, "SP-HAL lookup in libvndksupport.so");
+        }
+        else
+        {
+            log_opencl_load_error(path, "dlopen libvndksupport.so");
+        }
+    }
+    if (load_sphal)
+    {
+        dlerror();
+        library = load_sphal(path, RTLD_LOCAL | RTLD_NOW);
+        if (!library)
+            log_opencl_load_error(path, "android_load_sphal_library");
+    }
+    // The returned driver has its own dlopen reference. Do not cache a helper
+    // function pointer after releasing the library that supplied it.
+    if (vndksupport)
+        dlclose(vndksupport);
+    return library;
 #else
     return dlopen(path, RTLD_LOCAL | RTLD_NOW);
 #endif

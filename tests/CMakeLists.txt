@@ -210,6 +210,22 @@ if(TARGET momoten_amalgamated_driver)
     endif()
 endif()
 
+# Mock the Android loader on POSIX hosts without Android, OpenCL, or a GPU.
+if(UNIX AND NOT ANDROID)
+    find_package(Threads REQUIRED)
+    add_executable(momoten_android_opencl_loader_test
+        runtime/android_opencl_loader_test.cpp)
+    target_compile_features(momoten_android_opencl_loader_test PRIVATE cxx_std_11)
+    target_compile_definitions(momoten_android_opencl_loader_test PRIVATE
+        CL_TARGET_OPENCL_VERSION=100)
+    target_link_libraries(momoten_android_opencl_loader_test PRIVATE
+        momoten_opencl_headers Threads::Threads)
+    add_test(NAME momoten_android_opencl_loader
+        COMMAND momoten_android_opencl_loader_test)
+    set_tests_properties(momoten_android_opencl_loader PROPERTIES
+        LABELS "momoten;runtime;android;loader")
+endif()
+
 if(DEFINED NCNN_MOMOTEN_GLSLANG_VALIDATOR AND
    NOT DEFINED MOMOTEN_GLSLANG_VALIDATOR)
     set(MOMOTEN_GLSLANG_VALIDATOR "${NCNN_MOMOTEN_GLSLANG_VALIDATOR}" CACHE FILEPATH
