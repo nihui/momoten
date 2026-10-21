@@ -4,7 +4,7 @@
 #version 450
 #extension GL_KHR_shader_subgroup_basic : require
 
-layout(local_size_x = 4, local_size_y = 1, local_size_z = 1) in;
+layout(local_size_x = 4, local_size_x_id = 0, local_size_y = 1, local_size_z = 1) in;
 
 layout(set = 0, binding = 0, std430) writeonly buffer Output
 {
@@ -13,13 +13,15 @@ layout(set = 0, binding = 0, std430) writeonly buffer Output
 
 void main()
 {
-    uint value = gl_SubgroupSize;
-    value += gl_SubgroupInvocationID * 10u;
-    value += gl_SubgroupID * 100u;
-    value += gl_NumSubgroups * 1000u;
-    if (subgroupElect())
-        value += 10000u;
+    uint elected = subgroupElect() ? 1u : 0u;
     subgroupMemoryBarrierBuffer();
     subgroupBarrier();
-    output_data.values[gl_GlobalInvocationID.x] = value;
+    // Store every invocation separately so the host can validate any legal
+    // native mapping, including multiple and partially occupied subgroups.
+    uint offset = (gl_WorkGroupID.x * gl_WorkGroupSize.x + gl_LocalInvocationID.x) * 5u;
+    output_data.values[offset] = gl_SubgroupSize;
+    output_data.values[offset + 1u] = gl_SubgroupInvocationID;
+    output_data.values[offset + 2u] = gl_SubgroupID;
+    output_data.values[offset + 3u] = gl_NumSubgroups;
+    output_data.values[offset + 4u] = elected;
 }

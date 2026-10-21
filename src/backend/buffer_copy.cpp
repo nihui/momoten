@@ -29,7 +29,8 @@ __kernel void momo_copy_buffer(__global const uchar* source, __global uchar* des
 )";
 
     cl_int result = CL_SUCCESS;
-    cl_program program = create_and_build_program(device, source, "", result);
+    const std::string build_options = opencl_language_options(device->physical_device->shader_profile.compiler);
+    cl_program program = create_and_build_program(device, source, build_options, result);
     if (!program)
         return result == CL_SUCCESS ? CL_INVALID_PROGRAM : result;
     cl_kernel kernel = 0;

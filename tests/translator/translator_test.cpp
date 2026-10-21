@@ -8,6 +8,7 @@
 #include <string.h>
 
 #include <fstream>
+#include <regex>
 #include <string>
 #include <vector>
 
@@ -32,6 +33,17 @@ static int require(bool condition, const char* message)
         return 1;
     }
     return 0;
+}
+
+static bool source_matches(const std::string& source, const char* pattern)
+{
+    return std::regex_search(source, std::regex(pattern));
+}
+
+static std::string source_capture(const std::string& source, const char* pattern)
+{
+    std::smatch match;
+    return std::regex_search(source, match, std::regex(pattern)) ? match[1].str() : std::string();
 }
 
 static bool has_momoten_inline_helper(const std::string& source)
@@ -82,32 +94,42 @@ int main(int argc, char** argv)
     if (require(result.abi.local_size[0] == 4 && result.abi.local_size[1] == 1 && result.abi.local_size[2] == 1,
                 "local size reflection failed")
         || require(!result.abi.workgroup_splittable, "workgroup-storage kernel was marked splittable")
+        || require(result.abi.buffers.size() == 2
+                       && result.abi.buffers[0].name == "input_buffer" && result.abi.buffers[1].name == "output_buffer",
+                   "buffer reflection did not retain the original shader names")
         || require(result.abi.workgroup_mode == momoten::WorkgroupModeDirect,
                    "workgroup-storage kernel did not retain the direct ABI")
-        || require(result.abi.buffers.size() == 2, "expected two storage buffers") || require(result.abi.buffers[0].binding == 0 && result.abi.buffers[1].binding == 1, "storage buffers are not ordered by binding") || require(result.abi.buffers[0].buffer_arg_index == 0 && result.abi.buffers[0].offset_arg_index == 1 && result.abi.buffers[1].buffer_arg_index == 2 && result.abi.buffers[1].offset_arg_index == 3, "storage-buffer pointer/offset ABI is incorrect") || require(result.abi.push_constant_arg_index == 4 && result.abi.push_constant_size == 12, "push-constant ABI is incorrect") || require(result.abi.entry_point == "momo_main", "translated kernel name is incorrect") || require(result.source.find("#define round(x) rint(x)") != std::string::npos, "GLSL nearest-even round compatibility macro was not emitted") || require(result.source.find("#define SPIRV_CROSS_UNROLL\n") != std::string::npos && result.source.find("#define SPIRV_CROSS_LOOP\n") != std::string::npos, "portable SPIR-V loop-control hint macros were not emitted") || require(result.source.find("SPIRV_CROSS_UNROLL\n        for") != std::string::npos && result.source.find("SPIRV_CROSS_LOOP\n        for") != std::string::npos, "SPIR-V loop-control hints were not preserved in the fixture") || require(result.source.find("__local float scratch[4]") != std::string::npos, "workgroup storage was not localized into the OpenCL kernel") || require(result.source.find("barrier(CLK_LOCAL_MEM_FENCE)") != std::string::npos, "workgroup barrier was not lowered to OpenCL C 1.0") || require(result.source.find("any((valid) != ((int4)(0)))") != std::string::npos && result.source.find("all((valid) != ((int4)(0)))") != std::string::npos, "boolean-vector any/all was not canonicalized for OpenCL sign-bit semantics") || require(result.source.find("__kernel __attribute__((reqd_work_group_size(4, 1, 1))) void momo_main") != std::string::npos, "OpenCL kernel declaration is missing") || require(result.source.find("momo_buffer_offset_0") != std::string::npos, "buffer offset argument is missing") || require(result.source.find("momo_buffer_size_") == std::string::npos, "unused buffer byte-size argument was emitted") || require(result.source.find("(__global uchar *)&(") == std::string::npos, "scalar storage load was wrapped in an unsupported robust-access guard") || require(result.source.find("volatile int momo_active = 1") != std::string::npos && result.source.find("if (momo_active != 0)") != std::string::npos, "workgroup return convergence and storage-store predication are missing") || require(result.source.find("apply_scale") == std::string::npos, "SPIR-V helper function was not inlined into kernel scope") || require(result.source.find("inout ") == std::string::npos, "GLSL inout qualifier leaked into OpenCL source") || require(result.source.find("layout(") == std::string::npos, "Vulkan GLSL layout syntax leaked into OpenCL source"))
+        || require(result.abi.buffers.size() == 2, "expected two storage buffers") || require(result.abi.buffers[0].binding == 0 && result.abi.buffers[1].binding == 1, "storage buffers are not ordered by binding") || require(result.abi.buffers[0].buffer_arg_index == 0 && result.abi.buffers[0].offset_arg_index == 1 && result.abi.buffers[1].buffer_arg_index == 2 && result.abi.buffers[1].offset_arg_index == 3, "storage-buffer pointer/offset ABI is incorrect") || require(result.abi.push_constant_arg_index == 4 && result.abi.push_constant_size == 12, "push-constant ABI is incorrect") || require(result.abi.entry_point == "momo_main", "translated kernel name is incorrect") || require(result.source.find("#define round(x) rint(x)") != std::string::npos, "GLSL nearest-even round compatibility macro was not emitted") || require(result.source.find("#define SPIRV_CROSS_UNROLL\n") != std::string::npos && result.source.find("#define SPIRV_CROSS_LOOP\n") != std::string::npos, "portable SPIR-V loop-control hint macros were not emitted") || require(result.source.find("SPIRV_CROSS_UNROLL\n        for") != std::string::npos && result.source.find("SPIRV_CROSS_LOOP\n        for") != std::string::npos, "SPIR-V loop-control hints were not preserved in the fixture") || require(source_matches(result.source, "__local float [A-Za-z_0-9]+\\[4\\]"), "workgroup storage was not localized into the OpenCL kernel") || require(result.source.find("barrier(CLK_LOCAL_MEM_FENCE)") != std::string::npos, "workgroup barrier was not lowered to OpenCL C 1.0") || require(source_matches(result.source, "any\\(\\([A-Za-z_0-9]+\\) != \\(\\(int4\\)\\(0\\)\\)\\)") && source_matches(result.source, "all\\(\\([A-Za-z_0-9]+\\) != \\(\\(int4\\)\\(0\\)\\)\\)"), "boolean-vector any/all was not canonicalized for OpenCL sign-bit semantics") || require(result.source.find("__kernel __attribute__((reqd_work_group_size(4, 1, 1))) void momo_main") != std::string::npos, "OpenCL kernel declaration is missing") || require(result.source.find("momo_buffer_offset_0") != std::string::npos, "buffer offset argument is missing") || require(result.source.find("momo_buffer_size_") == std::string::npos, "unused buffer byte-size argument was emitted") || require(result.source.find("(__global uchar *)&(") == std::string::npos, "scalar storage load was wrapped in an unsupported robust-access guard") || require(result.source.find("volatile int momo_active = 1") != std::string::npos && result.source.find("if (momo_active != 0)") != std::string::npos, "workgroup return convergence and storage-store predication are missing") || require(result.source.find("inout ") == std::string::npos, "GLSL inout qualifier leaked into OpenCL source") || require(result.source.find("layout(") == std::string::npos, "Vulkan GLSL layout syntax leaked into OpenCL source"))
         return 1;
 
     const size_t kernel_begin = result.source.find("void momo_main(");
-    const size_t helper_begin = result.source.find("float load_scale(");
-    const std::string push_argument = "struct Parameters momo_push_constants)";
+    const std::string helper_name = source_capture(result.source, "\nfloat ([A-Za-z_0-9]+)\\(__private ");
+    const size_t helper_begin = result.source.find("\nfloat " + helper_name + "(");
+    const std::string push_type = source_capture(result.source, "struct ([A-Za-z_0-9]+) momo_push_constants =");
+    const std::string push_resource = source_capture(result.source, "#define ([A-Za-z_0-9]+) momo_push_constants\n");
+    const std::string push_argument = "struct " + push_type + " momo_push_constants)";
     const std::string scalar_arguments = "float momo_push_constant_0, int momo_push_constant_1, uint momo_push_constant_2)";
     if (require(kernel_begin != std::string::npos
                     && result.source.find(scalar_arguments, kernel_begin) < result.source.find('\n', kernel_begin),
                 "push constants were not lowered to individual scalar kernel arguments")
-        || require(result.source.find("struct Parameters momo_push_constants = {momo_push_constant_0, momo_push_constant_1, momo_push_constant_2};") != std::string::npos,
+        || require(!push_type.empty()
+                       && result.source.find("struct " + push_type + " momo_push_constants = {momo_push_constant_0, momo_push_constant_1, momo_push_constant_2};") != std::string::npos,
                    "push-constant scalars were not assembled into a private structure")
         || require(helper_begin != std::string::npos
-                       && result.source.find(push_argument, helper_begin) < result.source.find('\n', helper_begin),
+                       && result.source.find("\nfloat ", helper_begin + 1) == std::string::npos,
+                   "expected only the early-return helper to survive inlining")
+        || require(helper_begin != std::string::npos
+                       && result.source.find(push_argument, helper_begin + 1) < result.source.find('\n', helper_begin + 1),
                    "retained early-return helper did not receive the by-value push-constant ABI")
-        || require(result.source.find("#define momo_push_constants_value momo_push_constants\n") != std::string::npos
-                       && result.source.find("return momo_push_constants_value.scale;") != std::string::npos
-                       && result.source.find("momo_push_constants_value.bias") != std::string::npos
-                       && result.source.find("momo_push_constants_value.element_count") != std::string::npos,
+        || require(!push_resource.empty()
+                       && result.source.find("return " + push_resource + ".momo_member_0;") != std::string::npos
+                       && result.source.find(push_resource + ".momo_member_1") != std::string::npos
+                       && result.source.find(push_resource + ".momo_member_2") != std::string::npos,
                    "push-constant resource and fields do not reference the shared value argument")
         || require(result.source.find("momo_buffer_offset_1, momo_push_constants)") != std::string::npos,
                    "retained helper call did not pass push constants by value")
-        || require(result.source.find("struct Parameters*") == std::string::npos
-                       && result.source.find("struct Parameters *") == std::string::npos
+        || require(result.source.find("struct " + push_type + "*") == std::string::npos
+                       && result.source.find("struct " + push_type + " *") == std::string::npos
                        && result.source.find("&momo_push_constants") == std::string::npos
                        && result.source.find("&(momo_push_constants") == std::string::npos
                        && result.source.find("(*momo_push_constants)") == std::string::npos,
@@ -202,13 +224,13 @@ int main(int argc, char** argv)
                    "float16 storage buffer was not lowered to half4")
         || require(fp16_result.source.find("__global momo_hmat4 *") != std::string::npos,
                    "float16 mat4 storage buffer was not lowered")
-        || require(fp16_result.source.find("__local ulong scratch[4]") != std::string::npos,
+        || require(source_matches(fp16_result.source, "__local ulong [A-Za-z_0-9]+\\[4\\]"),
                    "packed float16 workgroup storage was not lowered to ulong")
         || require(fp16_result.source.find("as_ulong(") != std::string::npos && fp16_result.source.find("as_ushort4(") != std::string::npos,
                    "packed float16 workgroup bitcasts were not lowered with OpenCL as_type builtins")
         || require(fp16_result.source.find("convert_short4(") != std::string::npos,
                    "half4 OpSelect mask was not normalized to the OpenCL element width")
-        || require(fp16_result.source.find("int4 keep = convert_int4(") != std::string::npos,
+        || require(source_matches(fp16_result.source, "int4 [A-Za-z_0-9]+ = convert_int4\\("),
                    "half4 comparison result was not normalized to the SPIR-V boolean representation")
         || require(fp16_result.source.find("typedef struct { half4 c[4]; } momo_hmat4") != std::string::npos,
                    "float16 mat4 representation was not emitted")
@@ -255,7 +277,7 @@ int main(int argc, char** argv)
                    "singleton subgroup unexpectedly requires an OpenCL extension")
         || require(singleton_result.source.find("#pragma OPENCL EXTENSION cl_khr_subgroups") == std::string::npos,
                    "singleton subgroup enabled a native OpenCL extension")
-        || require(singleton_result.source.find("gl_LocalInvocationIndex") != std::string::npos && singleton_result.source.find("10000u") != std::string::npos && singleton_result.source.find("mem_fence(CLK_GLOBAL_MEM_FENCE)") != std::string::npos && singleton_result.source.find("sub_group_barrier(") == std::string::npos,
+        || require(singleton_result.source.find("gl_LocalInvocationIndex") != std::string::npos && singleton_result.source.find(" = (true ? 1u : 0u)") != std::string::npos && singleton_result.source.find("mem_fence(CLK_GLOBAL_MEM_FENCE)") != std::string::npos && singleton_result.source.find("sub_group_barrier(") == std::string::npos,
                    "singleton subgroup built-ins or election were not lowered"))
         return 1;
 

@@ -10,12 +10,21 @@ OpenCLDriverPolicy opencl_driver_policy(const std::string& vendor, const std::st
     OpenCLDriverPolicy policy;
     if (vendor == "QUALCOMM")
     {
+        // Compiler revisions are shared across different driver builds.
+        const std::string compiler_prefix = " Compiler ";
+        const size_t compiler_pos = driver.find(compiler_prefix);
+        std::string compiler;
+        if (compiler_pos != std::string::npos)
+        {
+            const size_t version_pos = compiler_pos + compiler_prefix.size();
+            compiler = driver.substr(version_pos, driver.find_first_of(" \t\r\n", version_pos) - version_pos);
+        }
         // Select lowering before compiling the capability probe: a compiler
         // crash in negDp2accFolding cannot be recovered as a build error.
-        policy.split_packed_dot_acc_sat = driver == "OpenCL 3.0 QUALCOMM build: 0800.73.1 Compiler E031.47.18.50";
+        policy.split_packed_dot_acc_sat = compiler == "E031.47.18.50" || compiler == "E031.47.18.51";
         // This compiler accepts unsigned x signed native saturation, including
         // when the accumulator aliases the original signed input.
-        policy.swap_mixed_dot_acc_sat = driver == "OpenCL 3.0 QUALCOMM build: 0676.73 Compiler E031.41.03.62";
+        policy.swap_mixed_dot_acc_sat = compiler == "E031.41.03.62";
     }
     else if (vendor == "Imagination Technologies")
     {

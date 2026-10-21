@@ -24,7 +24,8 @@ struct ResourceInfo
     uint32_t descriptor_set;
     uint32_t binding;
     BufferAccess access;
-    std::string instance_name;
+    // Original shader name for ABI reflection; source symbols are allocated separately.
+    std::string name;
 };
 
 bool resource_less(const ResourceInfo& a, const ResourceInfo& b);
@@ -58,6 +59,7 @@ public:
     bool needs_converged_returns() const;
 
 protected:
+    void replace_illegal_names() override;
     void emit_entry_point_declarations() override;
     void emit_header() override;
     void emit_buffer_block(const SPIRVariable& var) override;
@@ -96,7 +98,6 @@ private:
     bool access_chain_contains_matrix(uint32_t base, const uint32_t* indices, uint32_t count);
     bool emit_matrix_access_chain(const Instruction& instruction, const uint32_t* ops);
     static const char* function_pointer_address_space(StorageClass storage);
-    void emit_struct_typedef(const SPIRType& type);
 
     void validate_capabilities();
     void apply_specializations();
@@ -124,7 +125,6 @@ private:
     std::map<uint32_t, size_t> resource_indices;
     uint32_t push_constant_variable_id;
     uint32_t local_size[3];
-    std::set<uint32_t> emitted_struct_typedefs;
     std::set<uint32_t> storage_block_types;
 };
 

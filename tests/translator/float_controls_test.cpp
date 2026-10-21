@@ -132,7 +132,7 @@ static bool assemble(const char* name, const Fixture& fixture, std::vector<uint3
     return tools.Assemble(fixture.assembly(), &words) && tools.Validate(words);
 }
 
-static int check_translation(const char* name, const Fixture& fixture, const ExpectedControls& expected, const char* entry_point = "main", const char* relaxed_math_standard = "-cl-std=CL3.0")
+static int check_translation(const char* name, const Fixture& fixture, const ExpectedControls& expected, const char* entry_point = "main", uint32_t language_version = 300, bool full_profile = true)
 {
     std::vector<uint32_t> words;
     if (!assemble(name, fixture, words))
@@ -165,7 +165,8 @@ static int check_translation(const char* name, const Fixture& fixture, const Exp
     }
 
     momoten_detail::ShaderDeviceProfile profile;
-    profile.relaxed_math_standard = relaxed_math_standard;
+    profile.compiler.version = language_version;
+    profile.compiler.full_profile = full_profile;
     const std::string build_options = momoten_detail::opencl_build_options(translated.abi, profile);
     const bool fast_relaxed = build_options.find("-cl-fast-relaxed-math") != std::string::npos;
     const struct
@@ -188,10 +189,11 @@ static int check_translation(const char* name, const Fixture& fixture, const Exp
             return 1;
         }
     }
-    if (((expected.build_options & (MadEnable | FastRelaxedMath)) && build_options.find(relaxed_math_standard) == std::string::npos)
-        || (!*relaxed_math_standard && build_options.find("-cl-std=") != std::string::npos))
+    const std::string standard = momoten_detail::opencl_language_options(profile.compiler);
+    if ((!standard.empty() && build_options.compare(0, standard.size(), standard) != 0)
+        || (standard.empty() && build_options.find("-cl-std=") != std::string::npos))
     {
-        fprintf(stderr, "float_controls_test: %s relaxed math did not select the required language standard: '%s'\n", name, build_options.c_str());
+        fprintf(stderr, "float_controls_test: %s lost the selected language standard: '%s'\n", name, build_options.c_str());
         return 1;
     }
     return 0;
@@ -272,8 +274,11 @@ int main()
     int status = 0;
     Fixture fixture;
     status |= check_translation("complete default", fixture, ExpectedControls(full_flags, relaxed_options));
-    status |= check_translation("complete default with OpenCL C 2.0", fixture, ExpectedControls(full_flags, relaxed_options), "main", "-cl-std=CL2.0");
-    status |= check_translation("old or embedded profile avoids arbitrary-accuracy mad", fixture, ExpectedControls(full_flags, FiniteMath | NoSignedZeros), "main", "");
+    status |= check_translation("complete default with OpenCL C 2.0", fixture, ExpectedControls(full_flags, relaxed_options), "main", 200);
+    status |= check_translation("old language avoids arbitrary-accuracy mad", fixture, ExpectedControls(full_flags, FiniteMath | NoSignedZeros), "main", 120);
+
+    status |= check_translation("OpenCL 1.0 keeps default language", fixture, ExpectedControls(full_flags, FiniteMath | NoSignedZeros), "main", 100);
+    status |= check_translation("embedded CL3.0 keeps language without relaxed math", fixture, ExpectedControls(full_flags, FiniteMath | NoSignedZeros), "main", 300, false);
 
     fixture.modes = "OpExecutionModeId %main FPFastMathDefault %float %partial\n";
     status |= check_translation("partial default", fixture, ExpectedControls(0x10007, limited_options));

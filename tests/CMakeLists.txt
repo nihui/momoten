@@ -67,6 +67,11 @@ add_test(NAME momoten_memory_state COMMAND momoten_memory_state_test)
 set_tests_properties(momoten_memory_state PROPERTIES
     LABELS "momoten;runtime;memory")
 
+add_executable(momoten_subgroup_validation_test runtime/subgroup_validation_test.cpp)
+target_compile_features(momoten_subgroup_validation_test PRIVATE cxx_std_11)
+add_test(NAME momoten_subgroup_validation COMMAND momoten_subgroup_validation_test)
+set_tests_properties(momoten_subgroup_validation PROPERTIES LABELS "momoten;runtime;subgroup")
+
 add_executable(momoten_parameter_size_test
     api/parameter_size_test.cpp
     "${CMAKE_CURRENT_SOURCE_DIR}/../src/backend/driver_policy.cpp"
@@ -96,6 +101,21 @@ target_link_libraries(momoten_driver_policy_test PRIVATE
 add_test(NAME momoten_driver_policy COMMAND momoten_driver_policy_test)
 set_tests_properties(momoten_driver_policy PROPERTIES
     LABELS "momoten;api;profile;integer-dot")
+
+add_executable(momoten_device_profile_test
+    api/device_profile_test.cpp
+    "${CMAKE_CURRENT_SOURCE_DIR}/../src/backend/driver_policy.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/../src/backend/device_profile.cpp")
+target_compile_features(momoten_device_profile_test PRIVATE cxx_std_11)
+target_compile_definitions(momoten_device_profile_test PRIVATE
+    CL_TARGET_OPENCL_VERSION=100)
+target_include_directories(momoten_device_profile_test PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}/../src")
+target_link_libraries(momoten_device_profile_test PRIVATE
+    momoten::translator momoten_opencl_headers momoten_vulkan_headers)
+add_test(NAME momoten_device_profile COMMAND momoten_device_profile_test)
+set_tests_properties(momoten_device_profile PROPERTIES
+    LABELS "momoten;api;profile;subgroup;compiler")
 
 function(momoten_add_float_controls_test target_name translator_target test_name)
     add_executable(${target_name}
@@ -304,6 +324,8 @@ momoten_compile_test_shader(momoten_fp64_test_spv fp64_buffer.comp vulkan1.1)
 momoten_compile_test_shader(momoten_int16_test_spv int16_buffer.comp vulkan1.1)
 momoten_compile_test_shader(momoten_scalar_16bit_test_spv scalar_16bit_buffer.comp vulkan1.1)
 momoten_compile_test_shader(momoten_subgroup_basic_test_spv subgroup_basic.comp vulkan1.1)
+momoten_compile_test_shader(momoten_subgroup_values_test_spv subgroup_values.comp vulkan1.1)
+momoten_compile_test_shader(momoten_opencl_names_test_spv opencl_names.comp vulkan1.1)
 momoten_compile_test_shader(momoten_integer_dot_product_test_spv integer_dot_product.comp vulkan1.1)
 momoten_compile_test_shader(momoten_workgroup_split_test_spv workgroup_split.comp vulkan1.1)
 momoten_compile_test_shader(momoten_workgroup_3d_test_spv workgroup_3d.comp vulkan1.1)
@@ -362,6 +384,27 @@ if(TARGET momoten_amalgamated_translator)
         LABELS "momoten;amalgamation;translator")
 endif()
 
+function(momoten_add_opencl_symbols_test target_name translator_target test_name)
+    add_executable(${target_name} translator/opencl_symbols_test.cpp)
+    target_compile_features(${target_name} PRIVATE cxx_std_11)
+    target_link_libraries(${target_name} PRIVATE ${translator_target} momoten::headers SPIRV-Tools-static)
+    add_dependencies(${target_name} momoten-test-spv)
+    add_test(NAME ${test_name} COMMAND ${target_name}
+        "${momoten_test_spv}"
+        "${momoten_opencl_names_test_spv}"
+        "${momoten_vector_extract_test_spv}"
+        "${momoten_pow_constant_base_test_spv}")
+    set_tests_properties(${test_name} PROPERTIES LABELS "momoten;translator;compiler")
+endfunction()
+
+momoten_add_opencl_symbols_test(momoten_opencl_symbols_test momoten::translator momoten_opencl_symbols)
+if(TARGET momoten_amalgamated_translator)
+    momoten_add_opencl_symbols_test(momoten_amalgamated_opencl_symbols_test
+        momoten_amalgamated_translator momoten_amalgamated_opencl_symbols)
+    set_tests_properties(momoten_amalgamated_opencl_symbols PROPERTIES
+        LABELS "momoten;amalgamation;translator;compiler")
+endif()
+
 if(DEFINED NCNN_MOMOTEN_CLANG AND NOT DEFINED MOMOTEN_CLANG)
     set(MOMOTEN_CLANG "${NCNN_MOMOTEN_CLANG}" CACHE FILEPATH
         "Path to clang used by momoten syntax tests")
@@ -395,6 +438,19 @@ if(MOMOTEN_CLANG)
             -P "${CMAKE_CURRENT_SOURCE_DIR}/translator/strict_cl10_test.cmake")
     set_tests_properties(momoten_opencl_c_1_0_syntax PROPERTIES
         LABELS "momoten;translator;opencl-1.0")
+
+    add_test(NAME momoten_opencl_names
+        COMMAND "${CMAKE_COMMAND}"
+            -DTRANSLATOR=$<TARGET_FILE:${momoten_syntax_translator}>
+            -DCLANG=${MOMOTEN_CLANG}
+            -DSPV_FILE=${momoten_opencl_names_test_spv}
+            -DGLSLANG=${MOMOTEN_GLSLANG_VALIDATOR}
+            -DCOLLISION_SHADER=${CMAKE_CURRENT_SOURCE_DIR}/shaders/opencl_name_collision.comp
+            -DFUNCTION_SHADER=${CMAKE_CURRENT_SOURCE_DIR}/shaders/opencl_name_function.comp
+            -DOUTPUT_DIR=${CMAKE_CURRENT_BINARY_DIR}/opencl-names
+            -P "${CMAKE_CURRENT_SOURCE_DIR}/translator/opencl_names_test.cmake")
+    set_tests_properties(momoten_opencl_names PROPERTIES
+        LABELS "momoten;translator;compiler")
 
     add_test(NAME momoten_opencl_apple_type_aliases
         COMMAND "${CMAKE_COMMAND}"
@@ -517,14 +573,17 @@ if(TARGET momoten_driver)
 
     add_executable(momoten_driver_test runtime/driver_test.cpp)
     target_compile_features(momoten_driver_test PRIVATE cxx_std_11)
+    target_compile_definitions(momoten_driver_test PRIVATE CL_TARGET_OPENCL_VERSION=100)
+    target_include_directories(momoten_driver_test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/../src")
     target_link_libraries(momoten_driver_test PRIVATE
-        momoten::driver momoten_vulkan_headers)
+        momoten::driver momoten::headers momoten_vulkan_headers momoten_opencl_headers)
     add_dependencies(momoten_driver_test momoten-test-spv)
 
     add_test(NAME momoten_driver_simple
         COMMAND momoten_driver_test "${momoten_test_spv}"
             "${momoten_subgroup_basic_test_spv}"
-            "${momoten_integer_dot_product_test_spv}")
+            "${momoten_integer_dot_product_test_spv}"
+            "${momoten_subgroup_values_test_spv}")
     set_tests_properties(momoten_driver_simple PROPERTIES
         LABELS "momoten;runtime;requires-opencl-multilane-barrier"
         SKIP_RETURN_CODE 77)
@@ -572,13 +631,16 @@ if(TARGET momoten_amalgamated_driver)
 
     add_executable(momoten_amalgamated_driver_test runtime/driver_test.cpp)
     target_compile_features(momoten_amalgamated_driver_test PRIVATE cxx_std_11)
+    target_compile_definitions(momoten_amalgamated_driver_test PRIVATE CL_TARGET_OPENCL_VERSION=100)
+    target_include_directories(momoten_amalgamated_driver_test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/../src")
     target_link_libraries(momoten_amalgamated_driver_test PRIVATE
-        momoten_amalgamated_driver momoten_vulkan_headers)
+        momoten_amalgamated_driver momoten::headers momoten_vulkan_headers momoten_opencl_headers)
     add_dependencies(momoten_amalgamated_driver_test momoten-test-spv)
     add_test(NAME momoten_amalgamated_driver_simple
         COMMAND momoten_amalgamated_driver_test "${momoten_test_spv}"
             "${momoten_subgroup_basic_test_spv}"
-            "${momoten_integer_dot_product_test_spv}")
+            "${momoten_integer_dot_product_test_spv}"
+            "${momoten_subgroup_values_test_spv}")
     set_tests_properties(momoten_amalgamated_driver_simple PROPERTIES
         LABELS "momoten;amalgamation;runtime;requires-opencl-multilane-barrier"
         SKIP_RETURN_CODE 77)

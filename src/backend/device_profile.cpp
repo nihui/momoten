@@ -5,6 +5,7 @@
 #include "objects.h"
 
 #include <algorithm>
+#include <cstdio>
 #include <cstring>
 #include <sstream>
 #include <vector>
@@ -45,10 +46,10 @@ struct OpenCLCNameVersion
     char name[MOMOTEN_CL_NAME_VERSION_MAX_NAME_SIZE];
 };
 
-static std::string probe_relaxed_math_standard(cl_device_id device)
+static OpenCLCompilerProfile probe_opencl_compiler_profile(cl_device_id device)
 {
-    if (device_info_string(device, CL_DEVICE_PROFILE) != "FULL_PROFILE")
-        return std::string();
+    OpenCLCompilerProfile profile;
+    profile.full_profile = device_info_string(device, CL_DEVICE_PROFILE) == "FULL_PROFILE";
 
     size_t size = 0;
     if (g_opencl.p_clGetDeviceInfo(device, MOMOTEN_CL_DEVICE_OPENCL_C_ALL_VERSIONS, 0, 0, &size) == CL_SUCCESS && size && size % sizeof(OpenCLCNameVersion) == 0)
@@ -56,24 +57,38 @@ static std::string probe_relaxed_math_standard(cl_device_id device)
         std::vector<OpenCLCNameVersion> versions(size / sizeof(OpenCLCNameVersion));
         if (g_opencl.p_clGetDeviceInfo(device, MOMOTEN_CL_DEVICE_OPENCL_C_ALL_VERSIONS, size, versions.data(), 0) == CL_SUCCESS)
         {
-            uint32_t major = 0;
+            uint32_t selected = 0;
             for (size_t i = 0; i < versions.size(); i++)
             {
-                if (strncmp(versions[i].name, "OpenCL C", sizeof(versions[i].name)) == 0)
-                    major = std::max(major, versions[i].version >> 22);
+                if (strncmp(versions[i].name, "OpenCL C", sizeof(versions[i].name)) != 0)
+                    continue;
+                const uint32_t major = versions[i].version >> 22;
+                const uint32_t minor = (versions[i].version >> 12) & 0x3ffu;
+                const uint32_t version = major * 100 + minor * 10;
+                if ((major == 1 && minor <= 2) || ((major == 2 || major == 3) && minor == 0))
+                    selected = std::max(selected, version);
             }
-            if (major >= 3)
-                return "-cl-std=CL3.0";
-            if (major == 2)
-                return "-cl-std=CL2.0";
+            if (selected)
+            {
+                profile.version = selected;
+                return profile;
+            }
         }
     }
+
+    // OpenCL 1.0 lacks this query and -cl-std. Later implementations report
+    // their language version here even without the OpenCL 3.0 version list.
     const std::string version = device_info_string(device, MOMOTEN_CL_DEVICE_OPENCL_C_VERSION);
-    if (version.compare(0, 11, "OpenCL C 3.") == 0)
-        return "-cl-std=CL3.0";
-    if (version.compare(0, 11, "OpenCL C 2.") == 0)
-        return "-cl-std=CL2.0";
-    return std::string();
+    unsigned int major = 0;
+    unsigned int minor = 0;
+    if (sscanf(version.c_str(), "OpenCL C %u.%u", &major, &minor) == 2)
+    {
+        if (major == 3 || major == 2)
+            profile.version = major * 100;
+        else if (major == 1)
+            profile.version = 100 + std::min(minor, 2u) * 10;
+    }
+    return profile;
 }
 
 static bool has_opencl_c_feature(cl_device_id device, const char* required_name)
@@ -106,53 +121,17 @@ static bool declares_int64(cl_device_id device, const std::string& extensions)
     return has_opencl_c_feature(device, "__opencl_c_int64");
 }
 
-static uint32_t probe_opencl_subgroup_size(cl_device_id device,
-                                           const std::string& extensions,
-                                           size_t max_workgroup_size,
-                                           size_t max_work_item_size_x)
+static uint32_t query_opencl_subgroup_size(cl_kernel kernel, cl_device_id device, size_t max_workgroup_size, size_t max_work_item_size_x)
 {
-    if (!extension_string_contains(extensions, "cl_khr_subgroups") || !momoten_detail::g_opencl.p_clGetKernelSubGroupInfoKHR)
+    if (!momoten_detail::g_opencl.p_clGetKernelSubGroupInfoKHR)
         return 0;
 
-    static const char source[] = "#pragma OPENCL EXTENSION cl_khr_subgroups : enable\n"
-                                 "__kernel void momo_subgroup_probe(__global uint* output)\n"
-                                 "{\n"
-                                 "    output[get_global_id(0)] = get_sub_group_size();\n"
-                                 "}\n";
-
-    cl_int ret = CL_SUCCESS;
-    cl_context context = momoten_detail::g_opencl.p_clCreateContext(
-        0, 1, &device, 0, 0, &ret);
-    if (!context || ret != CL_SUCCESS)
-        return 0;
-
-    const char* source_pointer = source;
-    const size_t source_size = sizeof(source) - 1;
-    cl_program program = momoten_detail::g_opencl.p_clCreateProgramWithSource(
-        context, 1, &source_pointer, &source_size, &ret);
-    if (!program || ret != CL_SUCCESS)
-    {
-        momoten_detail::g_opencl.p_clReleaseContext(context);
-        return 0;
-    }
-
-    ret = momoten_detail::g_opencl.p_clBuildProgram(program, 1, &device, 0, 0, 0);
-    cl_kernel kernel = ret == CL_SUCCESS ? momoten_detail::g_opencl.p_clCreateKernel(program, "momo_subgroup_probe", &ret) : 0;
-
+    const size_t local_size[3] = {
+        std::max<size_t>(1, std::min(max_workgroup_size, max_work_item_size_x)), 1, 1};
     size_t subgroup_size = 0;
-    if (kernel && ret == CL_SUCCESS)
-    {
-        const size_t local_size[3] = {
-            std::max<size_t>(1, std::min(max_workgroup_size, max_work_item_size_x)), 1, 1};
-        ret = momoten_detail::g_opencl.p_clGetKernelSubGroupInfoKHR(
-            kernel, device, CL_KERNEL_MAX_SUB_GROUP_SIZE_FOR_NDRANGE_KHR,
-            sizeof(local_size), local_size, sizeof(subgroup_size), &subgroup_size, 0);
-    }
-
-    if (kernel)
-        momoten_detail::g_opencl.p_clReleaseKernel(kernel);
-    momoten_detail::g_opencl.p_clReleaseProgram(program);
-    momoten_detail::g_opencl.p_clReleaseContext(context);
+    const cl_int ret = momoten_detail::g_opencl.p_clGetKernelSubGroupInfoKHR(
+        kernel, device, CL_KERNEL_MAX_SUB_GROUP_SIZE_FOR_NDRANGE_KHR,
+        sizeof(local_size), local_size, sizeof(subgroup_size), &subgroup_size, 0);
 
     // Vulkan subgroupSize is restricted to a power of two no greater than
     // 128. A failed or unusual query lets the caller use the emulated fallback.
@@ -161,49 +140,106 @@ static uint32_t probe_opencl_subgroup_size(cl_device_id device,
     return static_cast<uint32_t>(subgroup_size);
 }
 
-static uint32_t probe_emulated_basic_subgroup_size(
-    cl_device_id device, size_t max_workgroup_size)
+// Capability probes share the selected language dialect and one context.
+// Keep compiler options independent of shader-specific math permissions.
+class OpenCLCapabilityProbe
 {
-    // This value selects a logical subgroup implemented by momoten; it is not
-    // reported as a native OpenCL subgroup contract. The kernel scheduling
-    // hint gives the emulation a portable, performance-oriented width without
-    // relying on vendor names or device-specific queries.
-    static const char source[] = "__kernel void momo_workgroup_probe(void) {}\n";
-
-    cl_int ret = CL_SUCCESS;
-    cl_context context = momoten_detail::g_opencl.p_clCreateContext(
-        0, 1, &device, 0, 0, &ret);
-    if (!context || ret != CL_SUCCESS)
-        return 0;
-
-    const char* source_pointer = source;
-    const size_t source_size = sizeof(source) - 1;
-    cl_program program = momoten_detail::g_opencl.p_clCreateProgramWithSource(
-        context, 1, &source_pointer, &source_size, &ret);
-    if (!program || ret != CL_SUCCESS)
+public:
+    OpenCLCapabilityProbe(cl_device_id device_id, const OpenCLCompilerProfile& compiler)
+        : device(device_id), options(opencl_language_options(compiler)), context(0), kernel(0)
     {
-        momoten_detail::g_opencl.p_clReleaseContext(context);
-        return 0;
+        cl_int ret = CL_SUCCESS;
+        context = g_opencl.p_clCreateContext(0, 1, &device, 0, 0, &ret);
+        if (context && ret != CL_SUCCESS)
+        {
+            g_opencl.p_clReleaseContext(context);
+            context = 0;
+        }
     }
 
-    ret = momoten_detail::g_opencl.p_clBuildProgram(program, 1, &device, 0, 0, 0);
-    cl_kernel kernel = ret == CL_SUCCESS ? momoten_detail::g_opencl.p_clCreateKernel(program, "momo_workgroup_probe", &ret) : 0;
-
-    size_t preferred_multiple = 0;
-    if (kernel && ret == CL_SUCCESS)
+    ~OpenCLCapabilityProbe()
     {
-        ret = momoten_detail::g_opencl.p_clGetKernelWorkGroupInfo(
-            kernel, device, CL_KERNEL_PREFERRED_WORK_GROUP_SIZE_MULTIPLE,
-            sizeof(preferred_multiple), &preferred_multiple, 0);
+        if (kernel)
+            g_opencl.p_clReleaseKernel(kernel);
+        if (context)
+            g_opencl.p_clReleaseContext(context);
     }
 
-    if (kernel)
-        momoten_detail::g_opencl.p_clReleaseKernel(kernel);
-    momoten_detail::g_opencl.p_clReleaseProgram(program);
-    momoten_detail::g_opencl.p_clReleaseContext(context);
+    cl_kernel build(const std::string& source, const char* name)
+    {
+        if (kernel)
+        {
+            g_opencl.p_clReleaseKernel(kernel);
+            kernel = 0;
+        }
+        if (!context)
+            return 0;
 
-    const size_t candidate = std::min<size_t>(preferred_multiple, std::min<size_t>(max_workgroup_size, 128));
-    if (ret != CL_SUCCESS || candidate <= 1)
+        const char* source_pointer = source.c_str();
+        const size_t source_size = source.size();
+        cl_int ret = CL_SUCCESS;
+        cl_program program = g_opencl.p_clCreateProgramWithSource(context, 1, &source_pointer, &source_size, &ret);
+        if (!program)
+            return 0;
+        if (ret == CL_SUCCESS)
+            ret = g_opencl.p_clBuildProgram(program, 1, &device, options.empty() ? 0 : options.c_str(), 0, 0);
+        if (ret == CL_SUCCESS)
+            kernel = g_opencl.p_clCreateKernel(program, name, &ret);
+        g_opencl.p_clReleaseProgram(program);
+        if (kernel && ret != CL_SUCCESS)
+        {
+            g_opencl.p_clReleaseKernel(kernel);
+            kernel = 0;
+        }
+        return kernel;
+    }
+
+private:
+    OpenCLCapabilityProbe(const OpenCLCapabilityProbe&) = delete;
+    OpenCLCapabilityProbe& operator=(const OpenCLCapabilityProbe&) = delete;
+
+    cl_device_id device;
+    std::string options;
+    cl_context context;
+    cl_kernel kernel;
+};
+
+static uint32_t probe_native_subgroup_size(OpenCLCapabilityProbe& probe, cl_device_id device, const std::string& extensions, size_t max_workgroup_size, size_t max_work_item_size_x)
+{
+    if (!extension_string_contains(extensions, "cl_khr_subgroups") || !extension_string_contains(extensions, "cl_khr_subgroup_non_uniform_vote") || !g_opencl.p_clGetKernelSubGroupInfoKHR)
+        return 0;
+
+    // Compile every builtin emitted by native BASIC lowering, including the
+    // vote extension's election and both local and global memory barriers.
+    static const char source[] = "#pragma OPENCL EXTENSION cl_khr_subgroups : enable\n"
+                                 "#pragma OPENCL EXTENSION cl_khr_subgroup_non_uniform_vote : enable\n"
+                                 "__kernel void momo_subgroup_probe(__global uint4* output)\n"
+                                 "{\n"
+                                 "    uint elected = sub_group_elect();\n"
+                                 "    sub_group_barrier(CLK_LOCAL_MEM_FENCE | CLK_GLOBAL_MEM_FENCE);\n"
+                                 "    output[get_global_id(0)] = (uint4)(get_sub_group_size(), get_sub_group_local_id(), get_sub_group_id(), get_num_sub_groups() + elected);\n"
+                                 "}\n";
+    cl_kernel kernel = probe.build(source, "momo_subgroup_probe");
+    return kernel ? query_opencl_subgroup_size(kernel, device, max_workgroup_size, max_work_item_size_x) : 0;
+}
+
+static uint32_t probe_emulated_subgroup_size(OpenCLCapabilityProbe& probe, cl_device_id device, const std::string& extensions, size_t max_workgroup_size, size_t max_work_item_size_x)
+{
+    // A width query does not require subgroup builtins. It can still guide
+    // emulation when native BASIC operations are unavailable. The scheduling
+    // hint is a last resort and need not equal the hardware subgroup width.
+    cl_kernel kernel = probe.build("__kernel void momo_workgroup_probe(void) {}\n", "momo_workgroup_probe");
+    if (!kernel)
+        return 0;
+
+    size_t preferred_size = 0;
+    if (extension_string_contains(extensions, "cl_khr_subgroups"))
+        preferred_size = query_opencl_subgroup_size(kernel, device, max_workgroup_size, max_work_item_size_x);
+    if (preferred_size == 0 && g_opencl.p_clGetKernelWorkGroupInfo(kernel, device, CL_KERNEL_PREFERRED_WORK_GROUP_SIZE_MULTIPLE, sizeof(preferred_size), &preferred_size, 0) != CL_SUCCESS)
+        return 0;
+
+    const size_t candidate = std::min<size_t>(preferred_size, std::min<size_t>(max_workgroup_size, 128));
+    if (candidate <= 1)
         return 0;
 
     uint32_t logical_size = 1;
@@ -213,7 +249,7 @@ static uint32_t probe_emulated_basic_subgroup_size(
 }
 
 static bool probe_integer_dot_product(
-    cl_device_id device, const std::string& extensions,
+    OpenCLCapabilityProbe& probe, cl_device_id device, const std::string& extensions,
     momoten_detail::IntegerDotProductProfile& profile, const OpenCLDriverPolicy& policy)
 {
     profile = momoten_detail::IntegerDotProductProfile();
@@ -307,23 +343,7 @@ static bool probe_integer_dot_product(
     }
     source += "}\n";
 
-    cl_int ret = CL_SUCCESS;
-    cl_context context = momoten_detail::g_opencl.p_clCreateContext(
-        0, 1, &device, 0, 0, &ret);
-    if (!context || ret != CL_SUCCESS)
-        return false;
-
-    const char* source_pointer = source.c_str();
-    const size_t source_size = source.size();
-    cl_program program = momoten_detail::g_opencl.p_clCreateProgramWithSource(
-        context, 1, &source_pointer, &source_size, &ret);
-    if (program && ret == CL_SUCCESS)
-        ret = momoten_detail::g_opencl.p_clBuildProgram(program, 1, &device, 0, 0, 0);
-
-    if (program)
-        momoten_detail::g_opencl.p_clReleaseProgram(program);
-    momoten_detail::g_opencl.p_clReleaseContext(context);
-    profile.supported = program && ret == CL_SUCCESS;
+    profile.supported = probe.build(source, "momo_integer_dot_product_probe") != 0;
     return profile.supported;
 }
 
@@ -332,6 +352,8 @@ ShaderDeviceProfile probe_shader_device_profile(
     size_t max_workgroup_size, size_t max_work_item_size_x, const OpenCLDriverPolicy& policy)
 {
     ShaderDeviceProfile profile;
+    profile.compiler = probe_opencl_compiler_profile(device);
+    OpenCLCapabilityProbe probe(device, profile.compiler);
     profile.fp16 = extension_string_contains(extensions, "cl_khr_fp16");
     profile.int64 = declares_int64(device, extensions);
 
@@ -362,24 +384,17 @@ ShaderDeviceProfile probe_shader_device_profile(
     profile.float_controls2 = (single_config & strict_config) == strict_config
                               && (!profile.fp16 || (half_config & strict_config) == strict_config)
                               && (!profile.fp64 || (double_config & strict_config) == strict_config);
-    profile.relaxed_math_standard = probe_relaxed_math_standard(device);
-
-    const uint32_t opencl_subgroup_size = probe_opencl_subgroup_size(
-        device, extensions, max_workgroup_size, max_work_item_size_x);
-    const bool native_basic = opencl_subgroup_size != 0
-                              && extension_string_contains(
-                                  extensions, "cl_khr_subgroup_non_uniform_vote");
-    if (native_basic)
+    const uint32_t opencl_subgroup_size = probe_native_subgroup_size(
+        probe, device, extensions, max_workgroup_size, max_work_item_size_x);
+    if (opencl_subgroup_size != 0)
     {
         profile.subgroup_mode = momoten::SubgroupModeNative;
         profile.subgroup_size = opencl_subgroup_size;
     }
     else
     {
-        uint32_t emulated_subgroup_size = opencl_subgroup_size;
-        if (emulated_subgroup_size == 0)
-            emulated_subgroup_size = probe_emulated_basic_subgroup_size(
-                device, max_workgroup_size);
+        const uint32_t emulated_subgroup_size = probe_emulated_subgroup_size(
+            probe, device, extensions, max_workgroup_size, max_work_item_size_x);
         if (emulated_subgroup_size != 0)
         {
             profile.subgroup_mode = momoten::SubgroupModeEmulatedBasic;
@@ -388,8 +403,13 @@ ShaderDeviceProfile probe_shader_device_profile(
     }
 
     probe_integer_dot_product(
-        device, extensions, profile.integer_dot_product, policy);
+        probe, device, extensions, profile.integer_dot_product, policy);
     return profile;
+}
+
+OpenCLCompilerProfile::OpenCLCompilerProfile()
+    : version(100), full_profile(false)
+{
 }
 
 IntegerDotProductAccelerationProfile::IntegerDotProductAccelerationProfile()
@@ -570,38 +590,55 @@ bool validate_pipeline_abi(
            && validate_workgroup_limits(device, abi, invocations, diagnostic);
 }
 
+std::string opencl_language_options(const OpenCLCompilerProfile& profile)
+{
+    switch (profile.version)
+    {
+    case 110: return "-cl-std=CL1.1";
+    case 120: return "-cl-std=CL1.2";
+    case 200: return "-cl-std=CL2.0";
+    case 300: return "-cl-std=CL3.0";
+    default: return std::string(); // OpenCL 1.0 has no -cl-std option.
+    }
+}
+
+static void append_opencl_build_option(std::string& options, const char* option)
+{
+    if (!options.empty())
+        options += ' ';
+    options += option;
+}
+
 std::string opencl_build_options(const momoten::KernelABI& abi, const ShaderDeviceProfile& profile)
 {
+    std::string options = opencl_language_options(profile.compiler);
     // Keep the restricted fp64 path conservative. Several otherwise capable
     // online compilers become unstable while optimizing long double-precision
-    // arithmetic chains. This core option changes optimization only, not the
-    // shader's floating-point semantics.
+    // arithmetic chains. Retain the selected language even on this path.
     if (abi.fp64)
-        return "-cl-opt-disable";
+    {
+        append_opencl_build_option(options, "-cl-opt-disable");
+        return options;
+    }
 
     const momoten::FloatingPointControls& controls = abi.floating_point;
+    // Modern FULL_PROFILE math guarantees are required for OpenCL mad and
+    // unsafe math. Language selection itself also applies to embedded devices.
+    const bool relaxed_math = profile.compiler.full_profile && profile.compiler.version >= 200;
     // The seven SPIR-V permissions cover arithmetic transforms, but not
     // approximate builtin functions or a required DenormPreserve mode.
     // OpenCL half mad accuracy is not sufficient for Vulkan half arithmetic.
-    if (!profile.relaxed_math_standard.empty() && controls.widths == momoten::FloatingPointWidth32 && controls.fast_math_flags == 0x7000fu && !controls.denorm_preserve_widths && !controls.requires_builtin_accuracy)
-        return profile.relaxed_math_standard + " -cl-fast-relaxed-math";
-
-    std::string options;
+    if (relaxed_math && controls.widths == momoten::FloatingPointWidth32 && controls.fast_math_flags == 0x7000fu && !controls.denorm_preserve_widths && !controls.requires_builtin_accuracy)
+    {
+        append_opencl_build_option(options, "-cl-fast-relaxed-math");
+        return options;
+    }
     if ((controls.fast_math_flags & 3u) == 3u) // NotNaN | NotInf
-        options = "-cl-finite-math-only";
+        append_opencl_build_option(options, "-cl-finite-math-only");
     if (controls.fast_math_flags & 4u) // NSZ
-    {
-        if (!options.empty())
-            options += ' ';
-        options += "-cl-no-signed-zeros";
-    }
-    if (!profile.relaxed_math_standard.empty() && (controls.fast_math_flags & 0x10000u) && !(controls.widths & momoten::FloatingPointWidth16)) // AllowContract
-    {
-        if (!options.empty())
-            options += ' ';
-        options += "-cl-mad-enable";
-        options = profile.relaxed_math_standard + ' ' + options;
-    }
+        append_opencl_build_option(options, "-cl-no-signed-zeros");
+    if (relaxed_math && (controls.fast_math_flags & 0x10000u) && !(controls.widths & momoten::FloatingPointWidth16)) // AllowContract
+        append_opencl_build_option(options, "-cl-mad-enable");
     return options;
 }
 
