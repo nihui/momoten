@@ -17,6 +17,12 @@ OpenCLDriverPolicy opencl_driver_policy(const std::string& vendor, const std::st
         // when the accumulator aliases the original signed input.
         policy.swap_mixed_dot_acc_sat = driver == "OpenCL 3.0 QUALCOMM build: 0676.73 Compiler E031.41.03.62";
     }
+    else if (vendor == "Imagination Technologies")
+    {
+        // Copy events remain running after clFlush until a blocking wait.
+        // A kernel copy allows submissions and fences to progress asynchronously.
+        policy.use_buffer_copy_kernel = driver == "1.10@5130912" || driver == "1.11@5425693";
+    }
     return policy;
 }
 

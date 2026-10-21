@@ -429,6 +429,10 @@ std::string CompilerOpenCL::bitcast_glsl_op(const SPIRType& result_type, const S
         throw std::runtime_error("unsupported OpenCL bitcast shape");
 
     std::string type = type_to_glsl(result_type);
+    // Mixed-signedness arithmetic can request an identity bitcast for one
+    // operand. Older PowerVR compilers omit these as_type overloads.
+    if (result_type.basetype == argument_type.basetype && result_type.width == argument_type.width && result_type.vecsize == argument_type.vecsize)
+        return "(" + type + ")";
     return "as_" + type;
 }
 

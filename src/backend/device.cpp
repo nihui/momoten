@@ -178,7 +178,6 @@ std::vector<VkPhysicalDevice> discover_opencl_devices(VkInstance instance)
         for (cl_uint d = 0; d < device_count; d++)
         {
             const cl_bool device_available = get_device_value<cl_bool>(devices[d], CL_DEVICE_AVAILABLE, CL_FALSE);
-            const cl_bool compiler_available = get_device_value<cl_bool>(devices[d], CL_DEVICE_COMPILER_AVAILABLE, CL_FALSE);
             const cl_bool little_endian = get_device_value<cl_bool>(devices[d], CL_DEVICE_ENDIAN_LITTLE, CL_FALSE);
             const cl_device_type device_type = get_device_value<cl_device_type>(devices[d], CL_DEVICE_TYPE, 0);
             const cl_bool host_unified_memory = get_device_value<cl_bool>(
@@ -186,7 +185,8 @@ std::vector<VkPhysicalDevice> discover_opencl_devices(VkInstance instance)
             const cl_uint vendor_id = get_device_value<cl_uint>(devices[d], CL_DEVICE_VENDOR_ID, 0);
             const cl_uint address_bits = get_device_value<cl_uint>(devices[d], CL_DEVICE_ADDRESS_BITS, 0);
             const cl_uint work_item_dimensions = get_device_value<cl_uint>(devices[d], CL_DEVICE_MAX_WORK_ITEM_DIMENSIONS, 0);
-            if (device_available != CL_TRUE || compiler_available != CL_TRUE || little_endian != CL_TRUE || (address_bits != 32 && address_bits != 64) || work_item_dimensions < 3)
+            if (device_available != CL_TRUE || little_endian != CL_TRUE || (address_bits != 32 && address_bits != 64) || work_item_dimensions < 3
+                || !momoten_detail::opencl_compiler_available(momoten_detail::g_opencl, devices[d]))
                 continue;
 
             VkPhysicalDevice_T* physical = new VkPhysicalDevice_T;

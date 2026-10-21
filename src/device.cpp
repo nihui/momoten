@@ -261,6 +261,8 @@ void impl_destroy_device(VkDevice device, const VkAllocationCallbacks*)
          it != device->program_cache.end(); ++it)
         momoten_detail::g_opencl.p_clReleaseProgram(it->second);
     device->program_cache.clear();
+    if (device->buffer_copy_kernel)
+        momoten_detail::g_opencl.p_clReleaseKernel(device->buffer_copy_kernel);
     delete device->queue;
     momoten_detail::g_opencl.p_clReleaseCommandQueue(device->command_queue);
     momoten_detail::g_opencl.p_clReleaseContext(device->context);

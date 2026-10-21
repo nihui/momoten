@@ -134,6 +134,7 @@ function(momoten_add_workgroup_pipeline_test target_name translator_target test_
         "${CMAKE_CURRENT_SOURCE_DIR}/../src/backend/cache.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/../src/backend/driver_policy.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/../src/backend/device_profile.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/../src/backend/buffer_copy.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/../src/backend/replay.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/../src/backend/memory_sync.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/../src/backend/memory_state.cpp")
