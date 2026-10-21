@@ -89,17 +89,6 @@ void CompilerOpenCL::emit_entry_point_declarations()
 
 void CompilerOpenCL::emit_header()
 {
-    if (requires_scalar_pow)
-        resource_names.insert("momo_pow");
-    // Reserve the shared push-constant argument name before resource and local
-    // names are assigned.
-    if (push_constant_variable_id != 0)
-    {
-        resource_names.insert("momo_push_constants");
-        const SPIRType& push_type = get_variable_data_type(get<SPIRVariable>(push_constant_variable_id));
-        for (size_t i = 0; i < push_type.member_types.size(); i++)
-            resource_names.insert("momo_push_constant_" + std::to_string(i));
-    }
     // CompilerGLSL supplies the structured control-flow and expression
     // emitter. These switches make its output C-like before the virtual
     // type/resource hooks below finish the OpenCL-specific lowering.

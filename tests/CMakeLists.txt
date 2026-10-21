@@ -384,6 +384,27 @@ if(TARGET momoten_amalgamated_translator)
         LABELS "momoten;amalgamation;translator")
 endif()
 
+function(momoten_add_opencl_symbols_test target_name translator_target test_name)
+    add_executable(${target_name} translator/opencl_symbols_test.cpp)
+    target_compile_features(${target_name} PRIVATE cxx_std_11)
+    target_link_libraries(${target_name} PRIVATE ${translator_target} momoten::headers SPIRV-Tools-static)
+    add_dependencies(${target_name} momoten-test-spv)
+    add_test(NAME ${test_name} COMMAND ${target_name}
+        "${momoten_test_spv}"
+        "${momoten_opencl_names_test_spv}"
+        "${momoten_vector_extract_test_spv}"
+        "${momoten_pow_constant_base_test_spv}")
+    set_tests_properties(${test_name} PROPERTIES LABELS "momoten;translator;compiler")
+endfunction()
+
+momoten_add_opencl_symbols_test(momoten_opencl_symbols_test momoten::translator momoten_opencl_symbols)
+if(TARGET momoten_amalgamated_translator)
+    momoten_add_opencl_symbols_test(momoten_amalgamated_opencl_symbols_test
+        momoten_amalgamated_translator momoten_amalgamated_opencl_symbols)
+    set_tests_properties(momoten_amalgamated_opencl_symbols PROPERTIES
+        LABELS "momoten;amalgamation;translator;compiler")
+endif()
+
 if(DEFINED NCNN_MOMOTEN_CLANG AND NOT DEFINED MOMOTEN_CLANG)
     set(MOMOTEN_CLANG "${NCNN_MOMOTEN_CLANG}" CACHE FILEPATH
         "Path to clang used by momoten syntax tests")

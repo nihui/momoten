@@ -8,6 +8,9 @@
 
 namespace momoten_detail {
 
+// Verified compiler/runtime defects only. Reported capabilities and language
+// selection belong to ShaderDeviceProfile; portable source rules belong to
+// the translator. Resolve these workarounds before compiling capability probes.
 struct OpenCLDriverPolicy
 {
     bool split_packed_dot_acc_sat = false;

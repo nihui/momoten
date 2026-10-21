@@ -300,12 +300,9 @@ void CompilerOpenCL::reflect_resources(KernelABI& abi)
         const bool nonreadable = flags.get(DecorationNonReadable);
         info.access = nonwritable ? BufferAccessReadOnly : (nonreadable ? BufferAccessWriteOnly : BufferAccessReadWrite);
 
-        info.instance_name = get_name(resource.id);
-        if (info.instance_name.empty())
-        {
-            info.instance_name = "momo_resource_" + std::to_string(resource.id);
-            set_name(resource.id, info.instance_name);
-        }
+        info.name = get_name(resource.id);
+        if (info.name.empty())
+            info.name = "momo_resource_" + std::to_string(resource.id);
         resources.push_back(info);
     }
     std::sort(resources.begin(), resources.end(), resource_less);
@@ -324,7 +321,7 @@ void CompilerOpenCL::reflect_resources(KernelABI& abi)
         argument.buffer_arg_index = arg_index++;
         argument.offset_arg_index = arg_index++;
         argument.access = resources[i].access;
-        argument.name = resources[i].instance_name;
+        argument.name = resources[i].name;
         abi.buffers.push_back(argument);
     }
 
@@ -339,8 +336,6 @@ void CompilerOpenCL::reflect_resources(KernelABI& abi)
         const Resource& resource = shader_resources.push_constant_buffers[0];
         validate_push_constant_block(resource, abi.push_constant_size);
         push_constant_variable_id = resource.id;
-        if (get_name(resource.id).empty())
-            set_name(resource.id, "momo_push_block");
         abi.push_constant_arg_index = static_cast<int>(arg_index);
     }
 }

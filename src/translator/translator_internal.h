@@ -24,7 +24,8 @@ struct ResourceInfo
     uint32_t descriptor_set;
     uint32_t binding;
     BufferAccess access;
-    std::string instance_name;
+    // Original shader name for ABI reflection; source symbols are allocated separately.
+    std::string name;
 };
 
 bool resource_less(const ResourceInfo& a, const ResourceInfo& b);

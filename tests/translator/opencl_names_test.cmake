@@ -98,3 +98,10 @@ endforeach()
 foreach(name get_global_id sub_group_elect MAX_WORK_DIM NULL cl_khr_subgroups cl_khr_integer_dot_product)
     check_name_fixture("resource_${name}" Params "${name}" x)
 endforeach()
+
+# Original shader names may also impersonate the backend's own namespaces.
+foreach(name momo_main momo_buffer_0 momo_push_constants momo_spv_1 momo_member_0 future_vendor_macro)
+    check_name_fixture("internal_type_${name}" "${name}" global x)
+    check_name_fixture("internal_member_${name}" Params global "${name}")
+    check_name_fixture("internal_resource_${name}" Params "${name}" x)
+endforeach()
