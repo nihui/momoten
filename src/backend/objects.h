@@ -37,6 +37,7 @@ struct VkPhysicalDevice_T
     std::string vendor;
     std::string driver;
     std::string extensions;
+    momoten_detail::OpenCLDriverPolicy driver_policy;
     cl_device_type opencl_device_type;
     cl_uint vendor_id;
     uint32_t device_id;

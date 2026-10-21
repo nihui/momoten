@@ -216,17 +216,31 @@ bool CompilerOpenCL::emit_integer_dot_product_instruction(
 
         first = integer_expression_as(ops[2], SPIRType::UInt);
         second = integer_expression_as(ops[3], SPIRType::UInt);
+        const bool split_accumulation = accumulating && translation_options.integer_dot_product_split_packed_acc_sat;
         const char* function = 0;
-        if (!accumulating)
+        if (!accumulating || split_accumulation)
             function = signed_dot ? "dot_4x8packed_ss_int" : unsigned_dot ? "dot_4x8packed_uu_uint"
                                                                           : "dot_4x8packed_su_int";
         else
             function = signed_dot ? "dot_acc_sat_4x8packed_ss_int" : unsigned_dot ? "dot_acc_sat_4x8packed_uu_uint"
                                                                                   : "dot_acc_sat_4x8packed_su_int";
+        if (accumulating && mixed_dot && !split_accumulation && translation_options.integer_dot_product_swap_mixed_acc_sat)
+        {
+            // Preserve native saturation while avoiding the broken signed x
+            // unsigned overload. Swap the inputs together with their signs.
+            function = "dot_acc_sat_4x8packed_us_int";
+            first.swap(second);
+        }
         expression = std::string(function) + "(" + first + ", " + second;
-        if (accumulating)
-            expression += ", " + integer_expression_as(ops[4], unsigned_dot ? SPIRType::UInt : SPIRType::Int);
+        if (accumulating && !split_accumulation)
+            expression += ", " + integer_expression_as(ops[4], native_result_base);
         expression += ")";
+        if (split_accumulation)
+        {
+            // Four 8-bit products fit in 32 bits for every signedness, so a
+            // native dot followed by add_sat preserves saturating semantics.
+            expression = "add_sat(" + expression + ", " + integer_expression_as(ops[4], native_result_base) + ")";
+        }
         expression = convert_result(expression, native_result_base);
     }
     else if (first_type.width == 8 && first_type.vecsize == 4)
@@ -237,6 +251,8 @@ bool CompilerOpenCL::emit_integer_dot_product_instruction(
             ops[2], unsigned_dot ? SPIRType::UByte : SPIRType::SByte);
         second = integer_expression_as(
             ops[3], signed_dot ? SPIRType::SByte : SPIRType::UByte);
+        if (accumulating && mixed_dot && translation_options.integer_dot_product_swap_mixed_acc_sat)
+            first.swap(second);
         expression = std::string(accumulating ? "dot_acc_sat(" : "dot(") + first + ", " + second;
         if (accumulating)
             expression += ", " + integer_expression_as(ops[4], unsigned_dot ? SPIRType::UInt : SPIRType::Int);

@@ -439,9 +439,10 @@ int main(int argc, char** argv)
             0x7f80ff01u, 0x0203feffu, 0x04030201u, 0x08070605u,
             0x80000000u, 0x7fffffffu, 2u, 3u,
             0xffffffffu, 0xfffffffeu, 0x80000001u, 0xfffffffdu};
-        const uint32_t integer_expected[14] = {
+        const uint32_t integer_expected[16] = {
             0xffffff7fu, 70u, 119u, 12u, 0x80000000u, 0xffffffffu, 0x7fffffffu,
-            0x7ffffffdu, 0xffffffffu, 0u, 123u, 0x80000000u, 0xffffffffu, 321u};
+            0x7ffffffdu, 0xffffffffu, 0u, 123u, 0x80000000u, 0xffffffffu, 321u,
+            0x7f80ff78u, 0x80000000u};
         uint32_t* integer_input_mapping = reinterpret_cast<uint32_t*>(input);
         uint32_t* integer_output_mapping = reinterpret_cast<uint32_t*>(output);
         memcpy(integer_input_mapping, integer_input, sizeof(integer_input));
@@ -466,7 +467,7 @@ int main(int argc, char** argv)
         if (result != VK_SUCCESS) return fail("vkQueueSubmit(integer dot)", result);
         result = vkWaitForFences(device, 1, &fence, VK_TRUE, UINT64_MAX);
         if (result != VK_SUCCESS) return fail("vkWaitForFences(integer dot)", result);
-        for (uint32_t i = 0; i < 14; i++)
+        for (uint32_t i = 0; i < 16; i++)
         {
             if (integer_output_mapping[i] != integer_expected[i])
             {

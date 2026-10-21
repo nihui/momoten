@@ -10,6 +10,7 @@ set_tests_properties(momoten_version_configuration PROPERTIES
 add_executable(momoten_driver_version_test
     api/driver_version_test.cpp
     "${CMAKE_CURRENT_SOURCE_DIR}/../src/instance.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/../src/backend/driver_policy.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/../src/backend/device_profile.cpp")
 target_compile_features(momoten_driver_version_test PRIVATE cxx_std_11)
 target_compile_definitions(momoten_driver_version_test PRIVATE
@@ -68,6 +69,7 @@ set_tests_properties(momoten_memory_state PROPERTIES
 
 add_executable(momoten_parameter_size_test
     api/parameter_size_test.cpp
+    "${CMAKE_CURRENT_SOURCE_DIR}/../src/backend/driver_policy.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/../src/backend/device_profile.cpp")
 target_compile_features(momoten_parameter_size_test PRIVATE cxx_std_11)
 target_compile_definitions(momoten_parameter_size_test PRIVATE
@@ -80,9 +82,25 @@ add_test(NAME momoten_parameter_size COMMAND momoten_parameter_size_test)
 set_tests_properties(momoten_parameter_size PROPERTIES
     LABELS "momoten;api;abi")
 
+add_executable(momoten_driver_policy_test
+    api/driver_policy_test.cpp
+    "${CMAKE_CURRENT_SOURCE_DIR}/../src/backend/driver_policy.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/../src/backend/device_profile.cpp")
+target_compile_features(momoten_driver_policy_test PRIVATE cxx_std_11)
+target_compile_definitions(momoten_driver_policy_test PRIVATE
+    CL_TARGET_OPENCL_VERSION=100)
+target_include_directories(momoten_driver_policy_test PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}/../src")
+target_link_libraries(momoten_driver_policy_test PRIVATE
+    momoten::translator momoten_opencl_headers momoten_vulkan_headers)
+add_test(NAME momoten_driver_policy COMMAND momoten_driver_policy_test)
+set_tests_properties(momoten_driver_policy PROPERTIES
+    LABELS "momoten;api;profile;integer-dot")
+
 function(momoten_add_float_controls_test target_name translator_target test_name)
     add_executable(${target_name}
         translator/float_controls_test.cpp
+        "${CMAKE_CURRENT_SOURCE_DIR}/../src/backend/driver_policy.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/../src/backend/device_profile.cpp")
     target_compile_features(${target_name} PRIVATE cxx_std_11)
     target_compile_definitions(${target_name} PRIVATE
@@ -114,6 +132,7 @@ function(momoten_add_workgroup_pipeline_test target_name translator_target test_
         "${CMAKE_CURRENT_SOURCE_DIR}/../src/backend/pipeline_build.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/../src/backend/program.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/../src/backend/cache.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/../src/backend/driver_policy.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/../src/backend/device_profile.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/../src/backend/replay.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/../src/backend/memory_sync.cpp"

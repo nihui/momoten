@@ -214,7 +214,7 @@ static uint32_t probe_emulated_basic_subgroup_size(
 
 static bool probe_integer_dot_product(
     cl_device_id device, const std::string& extensions,
-    momoten_detail::IntegerDotProductProfile& profile)
+    momoten_detail::IntegerDotProductProfile& profile, const OpenCLDriverPolicy& policy)
 {
     profile = momoten_detail::IntegerDotProductProfile();
     cl_device_integer_dot_product_capabilities_khr capabilities = 0;
@@ -261,9 +261,9 @@ static bool probe_integer_dot_product(
     ap.unsigned_accelerated = acceleration_packed.unsigned_accelerated == CL_TRUE;
     ap.signed_accelerated = acceleration_packed.signed_accelerated == CL_TRUE;
     ap.mixed_signedness_accelerated = acceleration_packed.mixed_signedness_accelerated == CL_TRUE;
-    ap.accumulating_saturating_unsigned_accelerated = acceleration_packed.accumulating_saturating_unsigned_accelerated == CL_TRUE;
-    ap.accumulating_saturating_signed_accelerated = acceleration_packed.accumulating_saturating_signed_accelerated == CL_TRUE;
-    ap.accumulating_saturating_mixed_signedness_accelerated = acceleration_packed.accumulating_saturating_mixed_signedness_accelerated == CL_TRUE;
+    ap.accumulating_saturating_unsigned_accelerated = !policy.split_packed_dot_acc_sat && acceleration_packed.accumulating_saturating_unsigned_accelerated == CL_TRUE;
+    ap.accumulating_saturating_signed_accelerated = !policy.split_packed_dot_acc_sat && acceleration_packed.accumulating_saturating_signed_accelerated == CL_TRUE;
+    ap.accumulating_saturating_mixed_signedness_accelerated = !policy.split_packed_dot_acc_sat && acceleration_packed.accumulating_saturating_mixed_signedness_accelerated == CL_TRUE;
 
     std::string source = "#pragma OPENCL EXTENSION cl_khr_integer_dot_product : enable\n"
                          "__kernel void momo_integer_dot_product_probe(__global uint* output, uint a, uint b)\n"
@@ -271,11 +271,23 @@ static bool probe_integer_dot_product(
                          "    output[0] = as_uint(dot_4x8packed_ss_int(a, b));\n"
                          "    output[1] = dot_4x8packed_uu_uint(a, b);\n"
                          "    output[2] = as_uint(dot_4x8packed_su_int(a, b));\n"
-                         "    output[3] = as_uint(dot_4x8packed_us_int(a, b));\n"
-                         "    output[4] = as_uint(dot_acc_sat_4x8packed_ss_int(a, b, as_int(a)));\n"
-                         "    output[5] = dot_acc_sat_4x8packed_uu_uint(a, b, a);\n"
-                         "    output[6] = as_uint(dot_acc_sat_4x8packed_su_int(a, b, as_int(a)));\n"
-                         "    output[7] = as_uint(dot_acc_sat_4x8packed_us_int(a, b, as_int(a)));\n";
+                         "    output[3] = as_uint(dot_4x8packed_us_int(a, b));\n";
+    if (policy.split_packed_dot_acc_sat)
+    {
+        source += "    output[4] = as_uint(add_sat(dot_4x8packed_ss_int(a, b), as_int(a)));\n"
+                  "    output[5] = add_sat(dot_4x8packed_uu_uint(a, b), a);\n"
+                  "    output[6] = as_uint(add_sat(dot_4x8packed_su_int(a, b), as_int(a)));\n"
+                  "    output[7] = as_uint(add_sat(dot_4x8packed_us_int(a, b), as_int(a)));\n";
+    }
+    else
+    {
+        source += "    output[4] = as_uint(dot_acc_sat_4x8packed_ss_int(a, b, as_int(a)));\n"
+                  "    output[5] = dot_acc_sat_4x8packed_uu_uint(a, b, a);\n";
+        source += policy.swap_mixed_dot_acc_sat
+                      ? "    output[6] = as_uint(dot_acc_sat_4x8packed_us_int(b, a, as_int(a)));\n"
+                      : "    output[6] = as_uint(dot_acc_sat_4x8packed_su_int(a, b, as_int(a)));\n";
+        source += "    output[7] = as_uint(dot_acc_sat_4x8packed_us_int(a, b, as_int(a)));\n";
+    }
     if (supports_8bit)
     {
         source += "    char4 sa = as_char4(a);\n"
@@ -287,9 +299,11 @@ static bool probe_integer_dot_product(
                   "    output[10] = as_uint(dot(sa, ub));\n"
                   "    output[11] = as_uint(dot(ua, sb));\n"
                   "    output[12] = as_uint(dot_acc_sat(sa, sb, as_int(a)));\n"
-                  "    output[13] = dot_acc_sat(ua, ub, a);\n"
-                  "    output[14] = as_uint(dot_acc_sat(sa, ub, as_int(a)));\n"
-                  "    output[15] = as_uint(dot_acc_sat(ua, sb, as_int(a)));\n";
+                  "    output[13] = dot_acc_sat(ua, ub, a);\n";
+        source += policy.swap_mixed_dot_acc_sat
+                      ? "    output[14] = as_uint(dot_acc_sat(ub, sa, as_int(a)));\n"
+                      : "    output[14] = as_uint(dot_acc_sat(sa, ub, as_int(a)));\n";
+        source += "    output[15] = as_uint(dot_acc_sat(ua, sb, as_int(a)));\n";
     }
     source += "}\n";
 
@@ -315,7 +329,7 @@ static bool probe_integer_dot_product(
 
 ShaderDeviceProfile probe_shader_device_profile(
     cl_device_id device, const std::string& extensions,
-    size_t max_workgroup_size, size_t max_work_item_size_x)
+    size_t max_workgroup_size, size_t max_work_item_size_x, const OpenCLDriverPolicy& policy)
 {
     ShaderDeviceProfile profile;
     profile.fp16 = extension_string_contains(extensions, "cl_khr_fp16");
@@ -374,7 +388,7 @@ ShaderDeviceProfile probe_shader_device_profile(
     }
 
     probe_integer_dot_product(
-        device, extensions, profile.integer_dot_product);
+        device, extensions, profile.integer_dot_product, policy);
     return profile;
 }
 
@@ -409,6 +423,8 @@ void configure_translation_options(
     options.integer_dot_product = enabled.integer_dot_product;
     options.integer_dot_product_input_4x8bit = enabled.integer_dot_product && physical.integer_dot_product.input_4x8bit;
     options.integer_dot_product_input_4x8bit_packed = enabled.integer_dot_product && physical.integer_dot_product.input_4x8bit_packed;
+    options.integer_dot_product_split_packed_acc_sat = enabled.integer_dot_product && device->physical_device->driver_policy.split_packed_dot_acc_sat;
+    options.integer_dot_product_swap_mixed_acc_sat = enabled.integer_dot_product && device->physical_device->driver_policy.swap_mixed_dot_acc_sat;
 }
 
 bool resolve_workgroup_invocations(

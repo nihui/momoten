@@ -6,6 +6,7 @@
 
 #include "../vulkan_internal.h"
 #include "opencl_loader.h"
+#include "driver_policy.h"
 #include "momoten/spv_to_clc.h"
 
 #include <cstdint>
@@ -68,7 +69,8 @@ struct EnabledShaderProfile
 
 ShaderDeviceProfile probe_shader_device_profile(
     cl_device_id device, const std::string& extensions,
-    size_t max_workgroup_size, size_t max_work_item_size_x);
+    size_t max_workgroup_size, size_t max_work_item_size_x,
+    const OpenCLDriverPolicy& policy);
 
 void configure_translation_options(
     VkDevice device, momoten::TranslationOptions& options);

@@ -54,4 +54,11 @@ void main()
     output_data.values[13] = uint(dotAccSatEXT(
         ivec2(int(input_data.values[10]), int(input_data.values[5])),
         unsigned_vector_a, 321));
+
+    // Exercise the compiler crash when the signed input is also the accumulator.
+    output_data.values[14] = uint(dotPacked4x8AccSatEXT(
+        signed_a, unsigned_b, signed_a));
+    int signed_min = int(input_data.values[4]);
+    output_data.values[15] = uint(dotPacked4x8AccSatEXT(
+        signed_min, unsigned_b, signed_min));
 }

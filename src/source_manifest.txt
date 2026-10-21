@@ -25,6 +25,7 @@ translator src/translator/opencl_codegen.cpp
 driver src/backend/opencl_loader.h
 driver src/vulkan_internal.h
 driver src/vulkan_procs.inc
+driver src/backend/driver_policy.h
 driver src/backend/device_profile.h
 driver src/backend/memory_state.h
 driver src/backend/command_stream.h
@@ -41,6 +42,7 @@ driver src/backend/android7_loader.h
 driver src/backend/android7_loader.cpp
 driver src/backend/loader.cpp
 driver src/backend/cache.cpp
+driver src/backend/driver_policy.cpp
 driver src/backend/device_profile.cpp
 driver src/backend/memory_state.cpp
 driver src/backend/device.cpp
