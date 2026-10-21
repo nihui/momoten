@@ -8,7 +8,7 @@ layout(local_size_x = 1) in;
 layout(set = 0, binding = 0, std430) buffer Output
 {
     uint values[];
-} global;
+} _pipe_1;
 
 layout(push_constant) uniform queue_t
 {
@@ -35,5 +35,5 @@ void main()
     uint float4 = pc.float4;
     uint private = pipe + _pipe + event_t;
     uint atomic_int = kernel(private);
-    global.values[0] = atomic_int + float4 + reserve_id_t[pipe & 1u];
+    _pipe_1.values[0] = atomic_int + float4 + reserve_id_t[pipe & 1u];
 }

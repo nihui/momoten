@@ -4,6 +4,7 @@
 #include <vulkan/vulkan.h>
 
 #include "backend/objects.h"
+#include "subgroup_validation.h"
 
 #include <math.h>
 #include <stddef.h>
@@ -598,6 +599,24 @@ int main(int argc, char** argv)
         if (!subgroup_size)
             return fail("subgroupSize", VK_ERROR_UNKNOWN);
 
+        const VkDeviceSize subgroup_bytes = 2 * (subgroup_size * 2 + 4) * sizeof(SubgroupInvocation);
+        VkMemoryAllocateInfo subgroup_allocation = allocation_info;
+        subgroup_allocation.allocationSize = subgroup_bytes;
+        VkDeviceMemory subgroup_memory = VK_NULL_HANDLE;
+        result = vkAllocateMemory(device, &subgroup_allocation, 0, &subgroup_memory);
+        if (result != VK_SUCCESS) return fail("vkAllocateMemory(subgroup)", result);
+        VkBufferCreateInfo subgroup_buffer_info = buffer_info;
+        subgroup_buffer_info.size = subgroup_bytes;
+        VkBuffer subgroup_buffer = VK_NULL_HANDLE;
+        result = vkCreateBuffer(device, &subgroup_buffer_info, 0, &subgroup_buffer);
+        if (result != VK_SUCCESS) return fail("vkCreateBuffer(subgroup)", result);
+        result = vkBindBufferMemory(device, subgroup_buffer, subgroup_memory, 0);
+        if (result != VK_SUCCESS) return fail("vkBindBufferMemory(subgroup)", result);
+        void* subgroup_mapping = 0;
+        result = vkMapMemory(device, subgroup_memory, 0, subgroup_bytes, 0, &subgroup_mapping);
+        if (result != VK_SUCCESS) return fail("vkMapMemory(subgroup)", result);
+        SubgroupInvocation* subgroup_output = static_cast<SubgroupInvocation*>(subgroup_mapping);
+
         const uint32_t local_sizes[] = {4, subgroup_size, subgroup_size * 2, subgroup_size + 4};
         for (size_t c = 0; c < sizeof(local_sizes) / sizeof(local_sizes[0]); c++)
         {
@@ -623,15 +642,16 @@ int main(int argc, char** argv)
             }
             if (result != VK_SUCCESS) return fail("vkCreateComputePipelines(subgroup size)", result);
 
-            uint32_t* subgroup_output = reinterpret_cast<uint32_t*>(input);
-            memset(subgroup_output, 0, 8 * sizeof(uint32_t));
+            memset(subgroup_output, 0xff, static_cast<size_t>(subgroup_bytes));
             result = vkResetFences(device, 1, &fence);
             if (result != VK_SUCCESS) return fail("vkResetFences(subgroup)", result);
             result = vkResetCommandBuffer(command_buffer, 0);
             if (result != VK_SUCCESS) return fail("vkResetCommandBuffer(subgroup)", result);
             result = vkBeginCommandBuffer(command_buffer, &begin_info);
             if (result != VK_SUCCESS) return fail("vkBeginCommandBuffer(subgroup)", result);
-            descriptor_infos[0].buffer = input_buffer;
+            descriptor_infos[0].buffer = subgroup_buffer;
+            descriptor_infos[0].offset = 0;
+            descriptor_infos[0].range = subgroup_bytes;
             descriptor_infos[1].buffer = output_buffer;
             vkCmdBindPipeline(command_buffer, VK_PIPELINE_BIND_POINT_COMPUTE, test_pipeline);
             vkCmdPushDescriptorSetKHR(command_buffer, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline_layout, 0, 2, writes);
@@ -642,21 +662,21 @@ int main(int argc, char** argv)
             if (result != VK_SUCCESS) return fail("vkQueueSubmit(subgroup)", result);
             result = vkWaitForFences(device, 1, &fence, VK_TRUE, UINT64_MAX);
             if (result != VK_SUCCESS) return fail("vkWaitForFences(subgroup)", result);
-            const uint32_t sampled_ids[] = {0, local_size / 2 - 1, local_size / 2, local_size - 1};
-            for (uint32_t i = 0; i < 8; i++)
+            for (uint32_t workgroup = 0; workgroup < 2; workgroup++)
             {
-                const uint32_t local_id = sampled_ids[i % 4];
-                const uint32_t lane = local_id % subgroup_size;
-                const uint32_t expected = subgroup_size + lane * 10u + local_id / subgroup_size * 100u + (local_size + subgroup_size - 1u) / subgroup_size * 1000u + (lane == 0 ? 10000u : 0u);
-                if (subgroup_output[i] != expected)
+                const char* error = validate_subgroup_output(subgroup_output + workgroup * local_size, local_size, subgroup_size, emulated);
+                if (error)
                 {
-                    fprintf(stderr, "driver_test: subgroup %s local_size=%u output[%u]=%u expected=%u\n", barriers ? "barriers" : "values", local_size, i, subgroup_output[i], expected);
+                    fprintf(stderr, "driver_test: subgroup %s local_size=%u workgroup=%u: %s\n", barriers ? "barriers" : "values", local_size, workgroup, error);
                     status = 1;
                 }
             }
             fprintf(stderr, "driver_test: checked subgroup %s outputs for local_size=%u\n", barriers ? "barriers" : "values", local_size);
             vkDestroyPipeline(device, test_pipeline, 0);
         }
+        vkUnmapMemory(device, subgroup_memory);
+        vkDestroyBuffer(device, subgroup_buffer, 0);
+        vkFreeMemory(device, subgroup_memory, 0);
     }
 
     // OpenCL 1.0 clEnqueueMarker provides a completion event for an empty

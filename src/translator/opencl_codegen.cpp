@@ -67,7 +67,7 @@ void CompilerOpenCL::emit_entry_point_declarations()
                 values += ", ";
             values += "momo_push_constant_" + std::to_string(i);
         }
-        statement("struct ", type_to_glsl(push_type), " momo_push_constants = {", values, "};");
+        statement(type_to_glsl(push_type), " momo_push_constants = {", values, "};");
     }
     if (translation_options.workgroup_mode == WorkgroupModeVirtual)
     {
@@ -108,6 +108,9 @@ void CompilerOpenCL::emit_header()
     backend.use_initializer_list = true;
     backend.use_typed_initializer_list = false;
     backend.use_array_constructor = false;
+    // C struct tags have their own namespace. Use the same explicit type in
+    // definitions and references, after the emitter has resolved its name.
+    backend.explicit_struct_type = true;
     backend.array_is_value_type = false;
     backend.array_is_value_type_in_buffer_blocks = false;
     backend.implicit_c_integer_promotion_rules = true;
@@ -388,7 +391,7 @@ std::string CompilerOpenCL::type_to_glsl(const SPIRType& type, uint32_t id)
         base = "double";
         break;
     case SPIRType::Struct:
-        return to_name(type.self);
+        return "struct " + to_name(type.self);
     default:
         throw std::runtime_error("SPIR-V type cannot be represented by the initial OpenCL C profile");
     }
@@ -1298,15 +1301,6 @@ const char* CompilerOpenCL::function_pointer_address_space(StorageClass storage)
     if (!qualifier)
         throw std::runtime_error("unsupported function-pointer storage class in the OpenCL C profile");
     return qualifier;
-}
-
-void CompilerOpenCL::emit_struct_typedef(const SPIRType& type)
-{
-    if (emitted_struct_typedefs.insert(type.self).second)
-    {
-        const std::string name = type_to_glsl(type);
-        statement("typedef struct ", name, " ", name, ";");
-    }
 }
 
 } // namespace momoten

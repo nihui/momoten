@@ -255,7 +255,7 @@ int main(int argc, char** argv)
                    "singleton subgroup unexpectedly requires an OpenCL extension")
         || require(singleton_result.source.find("#pragma OPENCL EXTENSION cl_khr_subgroups") == std::string::npos,
                    "singleton subgroup enabled a native OpenCL extension")
-        || require(singleton_result.source.find("gl_LocalInvocationIndex") != std::string::npos && singleton_result.source.find("10000u") != std::string::npos && singleton_result.source.find("mem_fence(CLK_GLOBAL_MEM_FENCE)") != std::string::npos && singleton_result.source.find("sub_group_barrier(") == std::string::npos,
+        || require(singleton_result.source.find("gl_LocalInvocationIndex") != std::string::npos && singleton_result.source.find("elected = (true ? 1u : 0u)") != std::string::npos && singleton_result.source.find("mem_fence(CLK_GLOBAL_MEM_FENCE)") != std::string::npos && singleton_result.source.find("sub_group_barrier(") == std::string::npos,
                    "singleton subgroup built-ins or election were not lowered"))
         return 1;
 

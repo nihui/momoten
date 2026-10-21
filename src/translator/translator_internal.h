@@ -97,7 +97,6 @@ private:
     bool access_chain_contains_matrix(uint32_t base, const uint32_t* indices, uint32_t count);
     bool emit_matrix_access_chain(const Instruction& instruction, const uint32_t* ops);
     static const char* function_pointer_address_space(StorageClass storage);
-    void emit_struct_typedef(const SPIRType& type);
 
     void validate_capabilities();
     void apply_specializations();
@@ -125,7 +124,6 @@ private:
     std::map<uint32_t, size_t> resource_indices;
     uint32_t push_constant_variable_id;
     uint32_t local_size[3];
-    std::set<uint32_t> emitted_struct_typedefs;
     std::set<uint32_t> storage_block_types;
 };
 

@@ -67,6 +67,11 @@ add_test(NAME momoten_memory_state COMMAND momoten_memory_state_test)
 set_tests_properties(momoten_memory_state PROPERTIES
     LABELS "momoten;runtime;memory")
 
+add_executable(momoten_subgroup_validation_test runtime/subgroup_validation_test.cpp)
+target_compile_features(momoten_subgroup_validation_test PRIVATE cxx_std_11)
+add_test(NAME momoten_subgroup_validation COMMAND momoten_subgroup_validation_test)
+set_tests_properties(momoten_subgroup_validation PROPERTIES LABELS "momoten;runtime;subgroup")
+
 add_executable(momoten_parameter_size_test
     api/parameter_size_test.cpp
     "${CMAKE_CURRENT_SOURCE_DIR}/../src/backend/driver_policy.cpp"
@@ -418,6 +423,8 @@ if(MOMOTEN_CLANG)
             -DTRANSLATOR=$<TARGET_FILE:${momoten_syntax_translator}>
             -DCLANG=${MOMOTEN_CLANG}
             -DSPV_FILE=${momoten_opencl_names_test_spv}
+            -DGLSLANG=${MOMOTEN_GLSLANG_VALIDATOR}
+            -DCOLLISION_SHADER=${CMAKE_CURRENT_SOURCE_DIR}/shaders/opencl_name_collision.comp
             -DOUTPUT_DIR=${CMAKE_CURRENT_BINARY_DIR}/opencl-names
             -P "${CMAKE_CURRENT_SOURCE_DIR}/translator/opencl_names_test.cmake")
     set_tests_properties(momoten_opencl_names PROPERTIES

@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 #include "momoten/spv_to_clc.h"
+#include "subgroup_validation.h"
 
 #include <CL/cl.h>
 #include <CL/cl_ext.h>
@@ -487,7 +488,7 @@ static int run_subgroup_basic_kernel(cl_context context, cl_command_queue queue,
         return 1;
     }
 
-    uint32_t output[4] = {};
+    SubgroupInvocation output[4] = {};
     cl_int ret = CL_SUCCESS;
     cl_mem buffer = clCreateBuffer(context, CL_MEM_READ_WRITE | CL_MEM_COPY_HOST_PTR,
                                    sizeof(output), output, &ret);
@@ -516,21 +517,11 @@ static int run_subgroup_basic_kernel(cl_context context, cl_command_queue queue,
         status = fail("subgroup BASIC kernel dispatch", ret);
     else
     {
-        for (uint32_t i = 0; i < 4; i++)
+        const char* error = validate_subgroup_output(output, 4, translated.abi.subgroup_size, true);
+        if (error)
         {
-            const uint32_t subgroup_size = translated.abi.subgroup_size;
-            const uint32_t invocation_id = i % subgroup_size;
-            const uint32_t subgroup_id = i / subgroup_size;
-            const uint32_t subgroup_count = (4u + subgroup_size - 1) / subgroup_size;
-            const uint32_t expected = subgroup_size + invocation_id * 10u
-                                      + subgroup_id * 100u + subgroup_count * 1000u
-                                      + (invocation_id == 0 ? 10000u : 0u);
-            if (output[i] != expected)
-            {
-                fprintf(stderr, "opencl_test: subgroup output[%u]=%u expected=%u\n",
-                        i, output[i], expected);
-                status = 1;
-            }
+            fprintf(stderr, "opencl_test: subgroup BASIC: %s\n", error);
+            status = 1;
         }
     }
 

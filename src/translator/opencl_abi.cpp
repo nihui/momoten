@@ -50,7 +50,6 @@ void CompilerOpenCL::emit_push_constant_block(const SPIRVariable& var)
 
     add_resource_name(var.self);
     SPIRType& type = get<SPIRType>(var.basetype);
-    emit_struct_typedef(type);
     emit_struct(type);
 
     const std::string instance_name = to_name(var.self);
@@ -141,7 +140,7 @@ void CompilerOpenCL::emit_function_prototype(SPIRFunction& func, const Bitset& r
             if (!first_argument)
                 declaration << ", ";
             const SPIRType& push_type = get_variable_data_type(get<SPIRVariable>(push_constant_variable_id));
-            declaration << "struct " << type_to_glsl(push_type) << " momo_push_constants";
+            declaration << type_to_glsl(push_type) << " momo_push_constants";
         }
 
         declaration << ")";

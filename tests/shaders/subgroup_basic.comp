@@ -13,28 +13,15 @@ layout(set = 0, binding = 0, std430) writeonly buffer Output
 
 void main()
 {
-    uint value = gl_SubgroupSize;
-    value += gl_SubgroupInvocationID * 10u;
-    value += gl_SubgroupID * 100u;
-    value += gl_NumSubgroups * 1000u;
-    if (subgroupElect())
-        value += 10000u;
+    uint elected = subgroupElect() ? 1u : 0u;
     subgroupMemoryBarrierBuffer();
     subgroupBarrier();
-    // Four samples per workgroup cover both sides of the midpoint and the
-    // final invocation. At the default size of four, every invocation writes.
-    uint lane = gl_LocalInvocationID.x;
-    uint midpoint = gl_WorkGroupSize.x / 2u;
-    uint sample_index;
-    if (lane == 0u)
-        sample_index = 0u;
-    else if (lane + 1u == midpoint)
-        sample_index = 1u;
-    else if (lane == midpoint)
-        sample_index = 2u;
-    else if (lane + 1u == gl_WorkGroupSize.x)
-        sample_index = 3u;
-    else
-        return;
-    output_data.values[gl_WorkGroupID.x * 4u + sample_index] = value;
+    // Store every invocation separately so the host can validate any legal
+    // native mapping, including multiple and partially occupied subgroups.
+    uint offset = (gl_WorkGroupID.x * gl_WorkGroupSize.x + gl_LocalInvocationID.x) * 5u;
+    output_data.values[offset] = gl_SubgroupSize;
+    output_data.values[offset + 1u] = gl_SubgroupInvocationID;
+    output_data.values[offset + 2u] = gl_SubgroupID;
+    output_data.values[offset + 3u] = gl_NumSubgroups;
+    output_data.values[offset + 4u] = elected;
 }

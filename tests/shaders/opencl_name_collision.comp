@@ -1,0 +1,30 @@
+// Copyright 2026 nihui
+// SPDX-License-Identifier: Apache-2.0
+
+#version 450
+
+#ifndef BLOCK_NAME
+#define BLOCK_NAME _global
+#endif
+#ifndef BUFFER_NAME
+#define BUFFER_NAME global
+#endif
+#ifndef MEMBER_NAME
+#define MEMBER_NAME x
+#endif
+
+layout(local_size_x = 1) in;
+layout(set = 0, binding = 0, std430) buffer Output
+{
+    uint values[];
+} BUFFER_NAME;
+
+layout(push_constant) uniform BLOCK_NAME
+{
+    uint MEMBER_NAME;
+} pc;
+
+void main()
+{
+    BUFFER_NAME.values[gl_GlobalInvocationID.x] = pc.MEMBER_NAME;
+}

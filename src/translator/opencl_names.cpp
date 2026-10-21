@@ -7,7 +7,7 @@
 
 namespace momoten {
 
-void CompilerOpenCL::replace_illegal_names()
+static bool is_opencl_reserved_name(const std::string& name)
 {
     // Use the union of OpenCL C 1.x, 2.0 and 3.0 names. Translation is shared
     // by all compiler profiles, including those without optional features.
@@ -26,9 +26,23 @@ void CompilerOpenCL::replace_illegal_names()
             "image2d_array_t", "image2d_depth_t", "image2d_array_depth_t",
             "image2d_msaa_t", "image2d_array_msaa_t", "image2d_msaa_depth_t", "image2d_array_msaa_depth_t",
             "sampler_t", "event_t", "queue_t", "ndrange_t", "clk_event_t", "reserve_id_t",
+            "kernel_enqueue_flags_t", "clk_profiling_info",
             "cl_mem_fence_flags", "memory_scope", "memory_order",
+            // Enumerators share C's ordinary identifier namespace with
+            // variables, functions and typedef names.
+            "memory_scope_work_item", "memory_scope_sub_group", "memory_scope_work_group",
+            "memory_scope_device", "memory_scope_all_svm_devices", "memory_scope_all_devices",
+            "memory_order_relaxed", "memory_order_acquire", "memory_order_release",
+            "memory_order_acq_rel", "memory_order_seq_cst",
             "atomic_int", "atomic_uint", "atomic_long", "atomic_ulong", "atomic_float", "atomic_double",
             "atomic_intptr_t", "atomic_uintptr_t", "atomic_size_t", "atomic_ptrdiff_t", "atomic_flag",
+            "ATOMIC_FLAG_INIT", "ATOMIC_VAR_INIT", "MAXFLOAT", "HUGE_VAL", "HUGE_VALF", "INFINITY", "NAN",
+            // Device enqueue and pipe builtins added by OpenCL C 2.0.
+            "enqueue_kernel", "ndrange_1D", "ndrange_2D", "ndrange_3D",
+            "retain_event", "release_event", "create_user_event", "is_valid_event",
+            "set_user_event_status", "capture_event_profiling_info",
+            "read_pipe", "write_pipe", "reserve_read_pipe", "reserve_write_pipe",
+            "commit_read_pipe", "commit_write_pipe", "is_valid_reserve_id",
             "quad", "complex", "imaginary"};
         const char* bases[] = {"char", "uchar", "short", "ushort", "int", "uint", "long", "ulong", "half", "float", "double", "bool", "quad", "complex", "imaginary"};
         const char* widths[] = {"2", "3", "4", "8", "16"};
@@ -38,21 +52,58 @@ void CompilerOpenCL::replace_illegal_names()
         return names;
     }();
 
-    // Rename SPIR-V aliases before emission so declarations and references
-    // use the same names. SPIRV-Cross's normal name caches resolve collisions
-    // with existing identifiers such as both pipe and _pipe in one scope.
-    CompilerGLSL::replace_illegal_names();
-    CompilerGLSL::replace_illegal_names(keywords);
+    if (keywords.count(name))
+        return true;
 
-    // The inherited helper covers variables, functions, types and members,
-    // but constant arrays and specialization expressions also have aliases.
-    ir.for_each_typed_id<SPIRConstant>([&](uint32_t id, const SPIRConstant&) {
-        if (keywords.count(get_name(id)))
-            set_name(id, "_" + get_name(id));
+    // OpenCL headers expose macro families and builtin functions in the
+    // shader's namespace. Macros can also expand struct tags and members.
+    static const char* prefixes[] = {
+        "CL_", "CLK_", "M_", "FP_", "FLT_", "DBL_", "HALF_", "CHAR_", "SCHAR_", "UCHAR_",
+        "SHRT_", "USHRT_", "INT_", "UINT_", "LONG_", "ULONG_",
+        "get_", "sub_group_", "work_group_", "atomic_", "atom_", "async_work_group_"};
+    for (const char* prefix : prefixes)
+        if (name.compare(0, std::char_traits<char>::length(prefix), prefix) == 0)
+            return true;
+    return false;
+}
+
+void CompilerOpenCL::replace_illegal_names()
+{
+    // Rewrite aliases before emission so declarations and references agree.
+    // Keep SPIRV-Cross's language-independent sanitization and name caches.
+    CompilerGLSL::replace_illegal_names();
+    const auto rename = [&](uint32_t id) {
+        const std::string name = get_name(id);
+        if (is_opencl_reserved_name(name))
+            set_name(id, "_" + name);
+    };
+    ir.for_each_typed_id<SPIRVariable>([&](uint32_t, const SPIRVariable& var) {
+        if (!is_hidden_variable(var))
+            rename(var.self);
     });
-    ir.for_each_typed_id<SPIRConstantOp>([&](uint32_t id, const SPIRConstantOp&) {
-        if (keywords.count(get_name(id)))
-            set_name(id, "_" + get_name(id));
+    ir.for_each_typed_id<SPIRFunction>([&](uint32_t, const SPIRFunction& func) {
+        rename(func.self);
+    });
+    ir.for_each_typed_id<SPIRConstant>([&](uint32_t, const SPIRConstant& constant) {
+        rename(constant.self);
+    });
+    ir.for_each_typed_id<SPIRConstantOp>([&](uint32_t, const SPIRConstantOp& constant) {
+        rename(constant.self);
+    });
+    ir.for_each_typed_id<SPIRType>([&](uint32_t, SPIRType& type) {
+        rename(type.self);
+        type.member_name_cache.clear();
+        for (uint32_t i = 0; i < type.member_types.size(); i++)
+        {
+            const std::string name = get_member_name(type.self, i);
+            if (is_opencl_reserved_name(name))
+                set_member_name(type.self, i, "_" + name);
+            add_member_name(type, i);
+            // Resource aliases become macros, which ignore C member scope.
+            // Reserve finalized member names before allocating resource names,
+            // including suffixes introduced by collisions such as pipe/_pipe.
+            resource_names.insert(to_member_name(type, i));
+        }
     });
 }
 
