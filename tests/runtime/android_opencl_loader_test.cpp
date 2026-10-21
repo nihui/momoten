@@ -32,6 +32,7 @@ struct State
     bool helper_available = true;
     bool helper_symbol = true;
     bool sphal_success = true;
+    bool android7_success = false;
     bool consumed_error = false;
     bool expose_api = false;
     bool compatible = true;
@@ -42,6 +43,7 @@ struct State
     int driver_opens = 0, driver_closes = 0;
     int next_lookups = 0, helper_opens = 0, helper_lookups = 0, helper_closes = 0;
     int sphal_calls[2] = {0, 0};
+    int android7_calls = 0;
     int public_calls = 0, icd_calls = 0;
     std::string error, returned_error;
 };
@@ -207,6 +209,28 @@ static void reset()
 
 } // namespace mock
 
+// This POSIX-portable test covers ordering and handle ownership. The separate
+// Linux test includes the real helper and validates its ELF/linker machinery.
+#define MOMOTEN_ANDROID7_LOADER_H
+namespace momoten_android7 {
+static void* open_library(const char* path, int flags, bool debug)
+{
+    CHECK(strcmp(path, mock::driver_path) == 0);
+    CHECK(flags == (RTLD_LOCAL | RTLD_NOW));
+    CHECK(debug == (strcmp(getenv("MOMOTEN_DEBUG"), "0") != 0));
+    CHECK(mock::state.error.empty() && !mock::state.helper_live);
+    CHECK(mock::state.driver_opens > mock::state.android7_calls);
+    CHECK(mock::state.next_lookups == mock::state.driver_opens);
+    CHECK(!mock::state.sphal_success ||
+          (!mock::state.next_symbol &&
+           (!mock::state.helper_available || !mock::state.helper_symbol)));
+    mock::state.android7_calls++;
+    if (!mock::state.android7_success) return 0;
+    mock::state.driver_live = true;
+    return &mock::driver_token;
+}
+} // namespace momoten_android7
+
 #define __ANDROID__ 1
 #define dlopen mock::dlopen
 #define dlsym mock::dlsym
@@ -243,6 +267,7 @@ static std::string failed_load_log(bool consumed_error)
         text.append(buffer, n);
     fclose(log);
     CHECK(mock::state.helper_closes == 1 && mock::state.driver_closes == 0);
+    CHECK(mock::state.android7_calls == 1);
     CHECK(mock::state.error.empty());
     return text;
 }
@@ -259,6 +284,7 @@ int main()
     void* driver = open_opencl_library(mock::driver_path);
     CHECK(driver && state.driver_opens == 1);
     CHECK(state.next_lookups == 0 && state.helper_opens == 0);
+    CHECK(state.android7_calls == 0);
     close_opencl_library(driver);
     CHECK(state.driver_closes == 1);
 
@@ -267,6 +293,7 @@ int main()
     driver = open_opencl_library(mock::driver_path);
     CHECK(driver && state.next_lookups == 1 && state.sphal_calls[0] == 1);
     CHECK(state.helper_opens == 0 && state.helper_closes == 0);
+    CHECK(state.android7_calls == 0);
     close_opencl_library(driver);
     CHECK(state.driver_closes == 1);
 
@@ -281,24 +308,50 @@ int main()
         close_opencl_library(driver);
     }
     CHECK(state.next_lookups == 2 && state.driver_closes == 2);
+    CHECK(state.android7_calls == 0);
 
     mock::reset();
     state.helper_available = false;
     CHECK(!open_opencl_library(mock::driver_path));
     CHECK(state.helper_opens == 1 && state.helper_lookups == 0 && state.helper_closes == 0);
     CHECK(state.sphal_calls[0] == 0 && state.error.empty());
+    CHECK(state.android7_calls == 1);
 
     mock::reset();
     state.helper_symbol = false;
     CHECK(!open_opencl_library(mock::driver_path));
     CHECK(state.helper_lookups == 1 && state.helper_closes == 1);
     CHECK(state.sphal_calls[0] == 0 && state.error.empty());
+    CHECK(state.android7_calls == 1);
 
     mock::reset();
     state.next_symbol = true;
     state.sphal_success = false;
     CHECK(!open_opencl_library(mock::driver_path));
     CHECK(state.sphal_calls[0] == 1 && state.helper_opens == 0 && state.helper_closes == 0);
+    CHECK(state.android7_calls == 1);
+
+    // Android 7 is attempted only after both ordinary and SP-HAL loading fail.
+    // A returned handle remains a normal dlclose-owned library on every call.
+    mock::reset();
+    state.helper_available = false;
+    state.android7_success = true;
+    for (int attempt = 0; attempt < 2; attempt++)
+    {
+        driver = open_opencl_library(mock::driver_path);
+        CHECK(driver == &mock::driver_token && state.driver_live);
+        CHECK(state.android7_calls == attempt + 1);
+        close_opencl_library(driver);
+        CHECK(state.driver_closes == attempt + 1);
+    }
+
+    mock::reset();
+    state.sphal_success = false;
+    state.android7_success = true;
+    driver = open_opencl_library(mock::driver_path);
+    CHECK(driver && state.sphal_calls[0] == 1 && state.android7_calls == 1);
+    CHECK(state.helper_closes == 1 && !state.helper_live);
+    close_opencl_library(driver);
 
     const std::string dependency_log = failed_load_log(false);
     CHECK(dependency_log.find("driver namespace denied") != std::string::npos);
@@ -327,6 +380,28 @@ int main()
     CHECK(!try_opencl_driver(mock::driver_path));
     CHECK(state.public_calls == 2 && state.icd_calls == 0);
     CHECK(state.helper_closes == 1 && state.driver_closes == 1);
+
+    // The older fallback must also preserve public-first vendor initialization.
+    mock::reset();
+    state.helper_available = false;
+    state.android7_success = true;
+    state.expose_api = true;
+    CHECK(try_opencl_driver(mock::driver_path));
+    CHECK(state.android7_calls == 1 && state.public_calls == 2 && state.icd_calls == 0);
+    CHECK(g_opencl_library == &mock::driver_token && state.driver_live);
+    close_opencl_library(g_opencl_library);
+    g_opencl_library = 0;
+    g_opencl_platforms.clear();
+    CHECK(state.driver_closes == 1);
+
+    mock::reset();
+    state.helper_available = false;
+    state.android7_success = true;
+    state.expose_api = true;
+    state.compatible = false;
+    CHECK(!try_opencl_driver(mock::driver_path));
+    CHECK(state.android7_calls == 1 && state.public_calls == 2 && state.icd_calls == 0);
+    CHECK(state.driver_closes == 1);
     mock::reset();
     return 0;
 }

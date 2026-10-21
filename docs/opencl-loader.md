@@ -35,6 +35,16 @@ APKs targeting API 31+ may also need a
 declaration for an exposed vendor library; use `android:required="false"`
 when OpenCL support is optional. This does not make private libraries public.
 
+On Android 7.0/7.1 (API 24/25) only, a final fallback resolves the resident
+linker's private `do_dlopen` and mutex from its ELF symbol tables and loads
+using the already-mapped system `libart` as the caller. The system linker
+still loads the driver and dependencies, returning a normal `dlopen` handle;
+no root access or copied libraries are needed. This is an APK compatibility
+path, not a public Android API: it requires readable linker symbols and a
+mapped `libart`, and is skipped when either is unavailable. With
+`MOMOTEN_DEBUG=1`, Android logcat reports the result and available linker error
+detail. Other Android versions do not use this fallback.
+
 ## Mesa Rusticl
 
 `RUSTICL_ENABLE` enables Mesa devices, but it does not select Rusticl when

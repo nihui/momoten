@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 #include "opencl_loader.h"
+#include "android7_loader.h"
 
 #include <algorithm>
 #include <cstdlib>
@@ -275,6 +276,8 @@ static OpenCLLibrary open_opencl_library(const char* path)
     // function pointer after releasing the library that supplied it.
     if (vndksupport)
         dlclose(vndksupport);
+    if (!library)
+        library = momoten_android7::open_library(path, RTLD_LOCAL | RTLD_NOW, debug_enabled());
     return library;
 #else
     return dlopen(path, RTLD_LOCAL | RTLD_NOW);

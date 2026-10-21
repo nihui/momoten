@@ -37,6 +37,7 @@ driver src/backend/runtime.h
 driver src/backend/program.h
 driver src/backend/pipeline_build.h
 driver src/abi_guard.h
+driver src/backend/android7_loader.h
 driver src/backend/loader.cpp
 driver src/backend/cache.cpp
 driver src/backend/device_profile.cpp
