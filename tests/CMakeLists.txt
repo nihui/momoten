@@ -425,6 +425,7 @@ if(MOMOTEN_CLANG)
             -DSPV_FILE=${momoten_opencl_names_test_spv}
             -DGLSLANG=${MOMOTEN_GLSLANG_VALIDATOR}
             -DCOLLISION_SHADER=${CMAKE_CURRENT_SOURCE_DIR}/shaders/opencl_name_collision.comp
+            -DFUNCTION_SHADER=${CMAKE_CURRENT_SOURCE_DIR}/shaders/opencl_name_function.comp
             -DOUTPUT_DIR=${CMAKE_CURRENT_BINARY_DIR}/opencl-names
             -P "${CMAKE_CURRENT_SOURCE_DIR}/translator/opencl_names_test.cmake")
     set_tests_properties(momoten_opencl_names PROPERTIES

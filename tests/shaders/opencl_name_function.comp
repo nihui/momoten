@@ -1,0 +1,33 @@
+// Copyright 2026 nihui
+// SPDX-License-Identifier: Apache-2.0
+
+#version 450
+
+#ifndef FUNCTION_NAME
+#define FUNCTION_NAME to_global
+#endif
+
+layout(local_size_x = 4) in;
+layout(set = 0, binding = 0, std430) buffer Output
+{
+    uint values[];
+}
+output_data;
+
+shared uint scratch[4];
+
+// Shared memory and an early return keep this helper out of the inlining path.
+uint FUNCTION_NAME(uint x)
+{
+    if (x == 0u)
+        return 7u;
+    return x + 5u;
+}
+
+void main()
+{
+    uint i = gl_LocalInvocationID.x;
+    scratch[i] = FUNCTION_NAME(i);
+    barrier();
+    output_data.values[gl_GlobalInvocationID.x] = scratch[3u - i];
+}

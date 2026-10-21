@@ -37,6 +37,7 @@ static bool is_opencl_reserved_name(const std::string& name)
             "atomic_int", "atomic_uint", "atomic_long", "atomic_ulong", "atomic_float", "atomic_double",
             "atomic_intptr_t", "atomic_uintptr_t", "atomic_size_t", "atomic_ptrdiff_t", "atomic_flag",
             "ATOMIC_FLAG_INIT", "ATOMIC_VAR_INIT", "MAXFLOAT", "HUGE_VAL", "HUGE_VALF", "INFINITY", "NAN",
+            "NULL", "MAX_WORK_DIM",
             // Device enqueue and pipe builtins added by OpenCL C 2.0.
             "enqueue_kernel", "ndrange_1D", "ndrange_2D", "ndrange_3D",
             "retain_event", "release_event", "create_user_event", "is_valid_event",
@@ -58,7 +59,7 @@ static bool is_opencl_reserved_name(const std::string& name)
     // OpenCL headers expose macro families and builtin functions in the
     // shader's namespace. Macros can also expand struct tags and members.
     static const char* prefixes[] = {
-        "CL_", "CLK_", "M_", "FP_", "FLT_", "DBL_", "HALF_", "CHAR_", "SCHAR_", "UCHAR_",
+        "CL_", "CLK_", "cl_", "M_", "FP_", "FLT_", "DBL_", "HALF_", "CHAR_", "SCHAR_", "UCHAR_",
         "SHRT_", "USHRT_", "INT_", "UINT_", "LONG_", "ULONG_",
         "get_", "sub_group_", "work_group_", "atomic_", "atom_", "async_work_group_"};
     for (const char* prefix : prefixes)
@@ -82,7 +83,12 @@ void CompilerOpenCL::replace_illegal_names()
             rename(var.self);
     });
     ir.for_each_typed_id<SPIRFunction>([&](uint32_t, const SPIRFunction& func) {
-        rename(func.self);
+        // Builtins vary by language version, extension and compiler. Give all
+        // retained shader helpers internal names instead of enumerating them.
+        // Keep the kernel ABI name and let the normal name cache resolve any
+        // collisions with shader resources or other generated identifiers.
+        if (func.self != ir.default_entry_point)
+            set_name(func.self, "momo_function_" + std::to_string(func.self));
     });
     ir.for_each_typed_id<SPIRConstant>([&](uint32_t, const SPIRConstant& constant) {
         rename(constant.self);
