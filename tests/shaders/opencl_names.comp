@@ -1,0 +1,39 @@
+// Copyright 2026 nihui
+// SPDX-License-Identifier: Apache-2.0
+
+#version 450
+
+layout(local_size_x = 1) in;
+
+layout(set = 0, binding = 0, std430) buffer Output
+{
+    uint values[];
+} global;
+
+layout(push_constant) uniform queue_t
+{
+    uint pipe;
+    uint _pipe;
+    uint generic;
+    uint float4;
+} pc;
+
+layout(constant_id = 1) const uint size_t = 3u;
+const uint reserve_id_t[2] = uint[](11u, 13u);
+
+uint kernel(uint read_only)
+{
+    return read_only + size_t;
+}
+
+void main()
+{
+    // Preserve both an OpenCL keyword and its likely renamed spelling.
+    uint pipe = pc.pipe;
+    uint _pipe = pc._pipe;
+    uint event_t = pc.generic;
+    uint float4 = pc.float4;
+    uint private = pipe + _pipe + event_t;
+    uint atomic_int = kernel(private);
+    global.values[0] = atomic_int + float4 + reserve_id_t[pipe & 1u];
+}

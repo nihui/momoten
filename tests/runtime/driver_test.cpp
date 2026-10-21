@@ -3,6 +3,8 @@
 
 #include <vulkan/vulkan.h>
 
+#include "backend/objects.h"
+
 #include <math.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -40,9 +42,9 @@ static int fail(const char* operation, VkResult result)
 
 int main(int argc, char** argv)
 {
-    if (argc < 2 || argc > 4)
+    if (argc < 2 || argc > 5)
     {
-        fprintf(stderr, "driver_test: expected a SPIR-V path and optional subgroup and integer-dot SPIR-V paths\n");
+        fprintf(stderr, "driver_test: expected a SPIR-V path and optional subgroup-barrier, integer-dot and subgroup-values SPIR-V paths\n");
         return 1;
     }
 
@@ -52,19 +54,19 @@ int main(int argc, char** argv)
         fprintf(stderr, "driver_test: failed to read SPIR-V\n");
         return 1;
     }
-    std::vector<uint32_t> subgroup_words;
-    if (argc == 3 && !read_spirv(argv[2], subgroup_words))
+    std::vector<uint32_t> subgroup_words[2];
+    if (argc >= 3 && !read_spirv(argv[2], subgroup_words[0]))
     {
         fprintf(stderr, "driver_test: failed to read subgroup SPIR-V\n");
         return 1;
     }
-    if (argc == 4 && !read_spirv(argv[2], subgroup_words))
+    if (argc >= 5 && !read_spirv(argv[4], subgroup_words[1]))
     {
-        fprintf(stderr, "driver_test: failed to read subgroup SPIR-V\n");
+        fprintf(stderr, "driver_test: failed to read subgroup-values SPIR-V\n");
         return 1;
     }
     std::vector<uint32_t> integer_dot_words;
-    if (argc == 4 && !read_spirv(argv[3], integer_dot_words))
+    if (argc >= 4 && !read_spirv(argv[3], integer_dot_words))
     {
         fprintf(stderr, "driver_test: failed to read integer dot-product SPIR-V\n");
         return 1;
@@ -271,22 +273,16 @@ int main(int argc, char** argv)
     result = vkCreateComputePipelines(device, VK_NULL_HANDLE, 1, &pipeline_info, 0, &duplicate_pipeline);
     if (result != VK_SUCCESS) return fail("vkCreateComputePipelines(duplicate)", result);
 
-    VkShaderModule subgroup_module = VK_NULL_HANDLE;
-    VkPipeline subgroup_pipeline = VK_NULL_HANDLE;
-    if (!subgroup_words.empty())
+    VkShaderModule subgroup_modules[2] = {VK_NULL_HANDLE, VK_NULL_HANDLE};
+    for (size_t s = 0; s < 2; s++)
     {
+        if (subgroup_words[s].empty())
+            continue;
         VkShaderModuleCreateInfo subgroup_module_info = module_info;
-        subgroup_module_info.codeSize = subgroup_words.size() * sizeof(uint32_t);
-        subgroup_module_info.pCode = subgroup_words.data();
-        result = vkCreateShaderModule(device, &subgroup_module_info, 0, &subgroup_module);
+        subgroup_module_info.codeSize = subgroup_words[s].size() * sizeof(uint32_t);
+        subgroup_module_info.pCode = subgroup_words[s].data();
+        result = vkCreateShaderModule(device, &subgroup_module_info, 0, &subgroup_modules[s]);
         if (result != VK_SUCCESS) return fail("vkCreateShaderModule(subgroup)", result);
-        VkComputePipelineCreateInfo subgroup_pipeline_info = pipeline_info;
-        subgroup_pipeline_info.stage.module = subgroup_module;
-        subgroup_pipeline_info.stage.pSpecializationInfo = 0;
-        result = vkCreateComputePipelines(device, VK_NULL_HANDLE, 1,
-                                          &subgroup_pipeline_info, 0,
-                                          &subgroup_pipeline);
-        if (result != VK_SUCCESS) return fail("vkCreateComputePipelines(subgroup)", result);
     }
 
     VkShaderModule integer_dot_module = VK_NULL_HANDLE;
@@ -584,8 +580,14 @@ int main(int argc, char** argv)
         }
     }
 
-    if (subgroup_pipeline)
+    for (size_t s = 0; s < 2; s++)
     {
+        if (!subgroup_modules[s])
+            continue;
+        const bool barriers = s == 0;
+        // This test links directly to momoten. Consult its actual mode rather
+        // than interpreting a native pipeline failure as an emulation limit.
+        const bool emulated = physical_device->shader_profile.subgroup_mode == momoten::SubgroupModeEmulatedBasic;
         VkPhysicalDeviceSubgroupProperties subgroup_properties = {};
         subgroup_properties.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SUBGROUP_PROPERTIES;
         VkPhysicalDeviceProperties2 properties = {};
@@ -605,24 +607,21 @@ int main(int argc, char** argv)
             if (c != 0 && local_size == 4)
                 continue;
 
-            VkPipeline test_pipeline = subgroup_pipeline;
-            if (c != 0)
+            VkPipeline test_pipeline = VK_NULL_HANDLE;
+            VkSpecializationInfo subgroup_specialization = specialization_info;
+            subgroup_specialization.pData = &local_size;
+            VkComputePipelineCreateInfo subgroup_pipeline_info = pipeline_info;
+            subgroup_pipeline_info.stage.module = subgroup_modules[s];
+            subgroup_pipeline_info.stage.pSpecializationInfo = &subgroup_specialization;
+            result = vkCreateComputePipelines(device, VK_NULL_HANDLE, 1, &subgroup_pipeline_info, 0, &test_pipeline);
+            if (barriers && emulated && local_size > subgroup_size)
             {
-                VkSpecializationInfo subgroup_specialization = specialization_info;
-                subgroup_specialization.pData = &local_size;
-                VkComputePipelineCreateInfo subgroup_pipeline_info = pipeline_info;
-                subgroup_pipeline_info.stage.module = subgroup_module;
-                subgroup_pipeline_info.stage.pSpecializationInfo = &subgroup_specialization;
-                result = vkCreateComputePipelines(device, VK_NULL_HANDLE, 1, &subgroup_pipeline_info, 0, &test_pipeline);
-                // BASIC emulation explicitly rejects barriers spanning more
-                // than one logical subgroup. Native devices exercise them.
-                if (result == VK_ERROR_FEATURE_NOT_PRESENT && local_size > subgroup_size)
-                {
-                    fprintf(stderr, "driver_test: subgroup barrier local_size=%u unavailable\n", local_size);
-                    continue;
-                }
-                if (result != VK_SUCCESS) return fail("vkCreateComputePipelines(subgroup size)", result);
+                if (result != VK_ERROR_FEATURE_NOT_PRESENT)
+                    return fail("expected emulated subgroup barrier rejection", result);
+                fprintf(stderr, "driver_test: checked emulated subgroup barrier rejection for local_size=%u\n", local_size);
+                continue;
             }
+            if (result != VK_SUCCESS) return fail("vkCreateComputePipelines(subgroup size)", result);
 
             uint32_t* subgroup_output = reinterpret_cast<uint32_t*>(input);
             memset(subgroup_output, 0, 8 * sizeof(uint32_t));
@@ -651,13 +650,12 @@ int main(int argc, char** argv)
                 const uint32_t expected = subgroup_size + lane * 10u + local_id / subgroup_size * 100u + (local_size + subgroup_size - 1u) / subgroup_size * 1000u + (lane == 0 ? 10000u : 0u);
                 if (subgroup_output[i] != expected)
                 {
-                    fprintf(stderr, "driver_test: subgroup local_size=%u output[%u]=%u expected=%u\n", local_size, i, subgroup_output[i], expected);
+                    fprintf(stderr, "driver_test: subgroup %s local_size=%u output[%u]=%u expected=%u\n", barriers ? "barriers" : "values", local_size, i, subgroup_output[i], expected);
                     status = 1;
                 }
             }
-            fprintf(stderr, "driver_test: checked subgroup outputs for local_size=%u\n", local_size);
-            if (c != 0)
-                vkDestroyPipeline(device, test_pipeline, 0);
+            fprintf(stderr, "driver_test: checked subgroup %s outputs for local_size=%u\n", barriers ? "barriers" : "values", local_size);
+            vkDestroyPipeline(device, test_pipeline, 0);
         }
     }
 
@@ -673,10 +671,10 @@ int main(int argc, char** argv)
     vkDestroyFence(device, fence, 0);
     vkDestroyCommandPool(device, pool, 0);
     vkDestroyPipeline(device, duplicate_pipeline, 0);
-    vkDestroyPipeline(device, subgroup_pipeline, 0);
     vkDestroyPipeline(device, integer_dot_pipeline, 0);
     vkDestroyPipeline(device, pipeline, 0);
-    vkDestroyShaderModule(device, subgroup_module, 0);
+    for (size_t s = 0; s < 2; s++)
+        vkDestroyShaderModule(device, subgroup_modules[s], 0);
     vkDestroyShaderModule(device, integer_dot_module, 0);
     vkDestroyShaderModule(device, module, 0);
     vkDestroyPipelineLayout(device, pipeline_layout, 0);

@@ -58,6 +58,7 @@ public:
     bool needs_converged_returns() const;
 
 protected:
+    void replace_illegal_names() override;
     void emit_entry_point_declarations() override;
     void emit_header() override;
     void emit_buffer_block(const SPIRVariable& var) override;
