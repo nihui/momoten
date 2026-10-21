@@ -32,6 +32,7 @@ namespace mock {
 
 static const char* const driver_path = "/vendor/lib64/libOpenCL.so";
 static int driver_token, helper_token, platform_token, device_token;
+static int context_token, program_token, kernel_token;
 struct State
 {
     bool ordinary = false;
@@ -46,6 +47,10 @@ struct State
     bool helper_live = false;
     bool driver_live = false;
     bool initialized = false;
+    cl_bool compiler_available = CL_TRUE;
+    int compiler_failure = 0; // info, context, program, build, or kernel
+    bool context_live = false, program_live = false, kernel_live = false;
+    int context_calls = 0, program_calls = 0, build_calls = 0, kernel_calls = 0;
     int generation = 0;
     int driver_opens = 0, driver_closes = 0;
     int next_lookups = 0, helper_opens = 0, helper_lookups = 0, helper_closes = 0;
@@ -153,10 +158,67 @@ static cl_int CL_API_CALL device_info(cl_device_id, cl_device_info name,
                                       size_t size, void* value, size_t*)
 {
     CHECK(state.initialized && size == sizeof(cl_uint));
+    if (name == CL_DEVICE_COMPILER_AVAILABLE && state.compiler_failure == 1)
+        return CL_INVALID_VALUE;
     const cl_uint result = name == CL_DEVICE_ADDRESS_BITS               ? 64
                            : name == CL_DEVICE_MAX_WORK_ITEM_DIMENSIONS ? 3
+                           : name == CL_DEVICE_COMPILER_AVAILABLE       ? state.compiler_available
                                                                         : CL_TRUE;
     memcpy(value, &result, sizeof(result));
+    return CL_SUCCESS;
+}
+static cl_context CL_API_CALL create_context(const cl_context_properties* properties, cl_uint count, const cl_device_id* devices,
+                                             void(CL_CALLBACK* callback)(const char*, const void*, size_t, void*), void* data, cl_int* error)
+{
+    CHECK(!properties && count == 1 && devices[0] == reinterpret_cast<cl_device_id>(&device_token) && !callback && !data);
+    CHECK(!state.context_live);
+    state.context_calls++;
+    *error = state.compiler_failure == 2 ? CL_OUT_OF_RESOURCES : CL_SUCCESS;
+    state.context_live = *error == CL_SUCCESS;
+    return state.context_live ? reinterpret_cast<cl_context>(&context_token) : 0;
+}
+static cl_int CL_API_CALL release_context(cl_context context)
+{
+    CHECK(context == reinterpret_cast<cl_context>(&context_token) && state.context_live && !state.program_live);
+    state.context_live = false;
+    return CL_SUCCESS;
+}
+static cl_program CL_API_CALL create_program(cl_context context, cl_uint count, const char** source, const size_t* lengths, cl_int* error)
+{
+    CHECK(context == reinterpret_cast<cl_context>(&context_token) && state.context_live && !state.program_live);
+    CHECK(count == 1 && source[0] && strstr(source[0], "__kernel") && !lengths);
+    state.program_calls++;
+    *error = state.compiler_failure == 3 ? CL_OUT_OF_RESOURCES : CL_SUCCESS;
+    state.program_live = *error == CL_SUCCESS;
+    return state.program_live ? reinterpret_cast<cl_program>(&program_token) : 0;
+}
+static cl_int CL_API_CALL release_program(cl_program program)
+{
+    CHECK(program == reinterpret_cast<cl_program>(&program_token) && state.program_live && !state.kernel_live);
+    state.program_live = false;
+    return CL_SUCCESS;
+}
+static cl_int CL_API_CALL build_program(cl_program program, cl_uint count, const cl_device_id* devices, const char* options,
+                                        void(CL_CALLBACK* callback)(cl_program, void*), void* data)
+{
+    CHECK(program == reinterpret_cast<cl_program>(&program_token) && state.program_live);
+    CHECK(count == 1 && devices[0] == reinterpret_cast<cl_device_id>(&device_token) && !options && !callback && !data);
+    state.build_calls++;
+    return state.compiler_failure == 4 ? CL_COMPILER_NOT_AVAILABLE : CL_SUCCESS;
+}
+static cl_kernel CL_API_CALL create_kernel(cl_program program, const char* name, cl_int* error)
+{
+    CHECK(program == reinterpret_cast<cl_program>(&program_token) && state.program_live && !state.kernel_live);
+    CHECK(strcmp(name, "momo_compiler_probe") == 0);
+    state.kernel_calls++;
+    *error = state.compiler_failure == 5 ? CL_INVALID_PROGRAM_EXECUTABLE : CL_SUCCESS;
+    state.kernel_live = *error == CL_SUCCESS;
+    return state.kernel_live ? reinterpret_cast<cl_kernel>(&kernel_token) : 0;
+}
+static cl_int CL_API_CALL release_kernel(cl_kernel kernel)
+{
+    CHECK(kernel == reinterpret_cast<cl_kernel>(&kernel_token) && state.kernel_live);
+    state.kernel_live = false;
     return CL_SUCCESS;
 }
 static void unused_entry_point()
@@ -196,6 +258,13 @@ static void* dlsym(void* library, const char* name)
     if (strcmp(name, "clIcdGetPlatformIDsKHR") == 0) return reinterpret_cast<void*>(icd_platforms);
     if (strcmp(name, "clGetDeviceIDs") == 0) return reinterpret_cast<void*>(devices);
     if (strcmp(name, "clGetDeviceInfo") == 0) return reinterpret_cast<void*>(device_info);
+    if (strcmp(name, "clCreateContext") == 0) return reinterpret_cast<void*>(create_context);
+    if (strcmp(name, "clReleaseContext") == 0) return reinterpret_cast<void*>(release_context);
+    if (strcmp(name, "clCreateProgramWithSource") == 0) return reinterpret_cast<void*>(create_program);
+    if (strcmp(name, "clReleaseProgram") == 0) return reinterpret_cast<void*>(release_program);
+    if (strcmp(name, "clBuildProgram") == 0) return reinterpret_cast<void*>(build_program);
+    if (strcmp(name, "clCreateKernel") == 0) return reinterpret_cast<void*>(create_kernel);
+    if (strcmp(name, "clReleaseKernel") == 0) return reinterpret_cast<void*>(release_kernel);
 #define MOCK_REQUIRED(name) \
     if (strcmp(#name, name_string) == 0) return reinterpret_cast<void*>(unused_entry_point);
     const char* name_string = name;
@@ -224,6 +293,7 @@ static int dlclose(void* library)
 static void reset()
 {
     CHECK(!state.helper_live && !state.driver_live);
+    CHECK(!state.context_live && !state.program_live && !state.kernel_live);
     state = State();
 }
 
@@ -305,7 +375,7 @@ static std::string failed_load_log(bool consumed_error)
     return mock::state.log_text;
 }
 
-static void check_driver_validation(bool android7, bool compatible)
+static void check_driver_validation(bool android7, bool compatible, cl_bool compiler = CL_TRUE, int compiler_failure = 0)
 {
     using namespace momoten_detail;
     using mock::state;
@@ -314,13 +384,21 @@ static void check_driver_validation(bool android7, bool compatible)
     state.android7_success = android7;
     state.expose_api = true;
     state.compatible = compatible;
-    CHECK(try_opencl_driver(mock::driver_path) == compatible);
+    state.compiler_available = compiler;
+    state.compiler_failure = compiler_failure;
+    const bool accepted = compatible && compiler_failure == 0;
+    CHECK(try_opencl_driver(mock::driver_path) == accepted);
     CHECK(state.public_calls == 2 && state.icd_calls == 0);
     CHECK(state.android7_calls == (android7 ? 1 : 0));
     CHECK(state.helper_closes == (android7 ? 0 : 1));
-    CHECK(state.driver_closes == (compatible ? 0 : 1));
-    CHECK(state.driver_live == compatible);
-    if (compatible)
+    CHECK(state.driver_closes == (accepted ? 0 : 1));
+    CHECK(state.driver_live == accepted);
+    CHECK(state.context_calls == (compatible && compiler == CL_FALSE && compiler_failure != 1 ? 1 : 0));
+    CHECK(state.program_calls == (state.context_calls && compiler_failure != 2 ? 1 : 0));
+    CHECK(state.build_calls == (state.program_calls && compiler_failure != 3 ? 1 : 0));
+    CHECK(state.kernel_calls == (state.build_calls && compiler_failure != 4 ? 1 : 0));
+    CHECK(!state.context_live && !state.program_live && !state.kernel_live);
+    if (accepted)
     {
         CHECK(g_opencl_library == &mock::driver_token && g_opencl_platforms.size() == 1);
         close_opencl_library(g_opencl_library);
@@ -426,6 +504,12 @@ int main()
     check_driver_validation(false, false);
     check_driver_validation(true, true);
     check_driver_validation(true, false);
+    // A false compiler flag needs a usable executable. Every failure still
+    // rejects the driver and releases all resources acquired by the probe.
+    check_driver_validation(false, true, CL_FALSE);
+    check_driver_validation(false, false, CL_FALSE);
+    for (int failure = 1; failure <= 5; failure++)
+        check_driver_validation(false, true, CL_FALSE, failure);
     mock::reset();
     return 0;
 }

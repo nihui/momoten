@@ -58,6 +58,7 @@ struct OpenCLApi
 extern OpenCLApi g_opencl;
 
 bool debug_enabled();
+bool opencl_compiler_available(const OpenCLApi& functions, cl_device_id device);
 cl_int momo_clGetPlatformIDs(cl_uint num_entries, cl_platform_id* platforms,
                              cl_uint* num_platforms);
 

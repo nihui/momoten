@@ -33,6 +33,7 @@ driver src/backend/objects.h
 driver src/backend/cache.h
 driver src/backend/device.h
 driver src/backend/memory_sync.h
+driver src/backend/buffer_copy.h
 driver src/backend/replay.h
 driver src/backend/runtime.h
 driver src/backend/program.h
@@ -48,6 +49,7 @@ driver src/backend/memory_state.cpp
 driver src/backend/device.cpp
 driver src/backend/program.cpp
 driver src/backend/memory_sync.cpp
+driver src/backend/buffer_copy.cpp
 driver src/backend/replay.cpp
 driver src/backend/runtime.cpp
 driver src/backend/pipeline_build.cpp

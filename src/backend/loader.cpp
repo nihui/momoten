@@ -363,6 +363,44 @@ static bool validate_opencl_functions(const OpenCLApi& functions)
     return true;
 }
 
+bool opencl_compiler_available(const OpenCLApi& functions, cl_device_id device)
+{
+    cl_bool available = CL_FALSE;
+    if (functions.p_clGetDeviceInfo(device, CL_DEVICE_COMPILER_AVAILABLE, sizeof(available), &available, 0) != CL_SUCCESS)
+        return false;
+    if (available == CL_TRUE)
+        return true;
+    if (available != CL_FALSE)
+        return false;
+
+    // Some PowerVR drivers report no compiler even though source compilation
+    // works. Verify that a usable kernel can be built before accepting them.
+    cl_int error = CL_SUCCESS;
+    cl_context context = functions.p_clCreateContext(0, 1, &device, 0, 0, &error);
+    if (!context)
+        return false;
+    bool supported = false;
+    if (error == CL_SUCCESS)
+    {
+        const char* source = "__kernel void momo_compiler_probe(__global int* output) { output[get_global_id(0)] = 0; }";
+        cl_program program = functions.p_clCreateProgramWithSource(context, 1, &source, 0, &error);
+        if (program)
+        {
+            if (error == CL_SUCCESS && functions.p_clBuildProgram(program, 1, &device, 0, 0, 0) == CL_SUCCESS)
+            {
+                cl_kernel kernel = functions.p_clCreateKernel(program, "momo_compiler_probe", &error);
+                supported = kernel && error == CL_SUCCESS;
+                if (kernel)
+                    functions.p_clReleaseKernel(kernel);
+            }
+            functions.p_clReleaseProgram(program);
+        }
+    }
+    functions.p_clReleaseContext(context);
+    log_opencl_loader(false, "OpenCL compiler probe %s with CL_DEVICE_COMPILER_AVAILABLE=CL_FALSE", supported ? "passed" : "failed");
+    return supported;
+}
+
 static bool has_compatible_opencl_device(const OpenCLApi& functions,
                                          const std::vector<cl_platform_id>& platforms)
 {
@@ -381,16 +419,12 @@ static bool has_compatible_opencl_device(const OpenCLApi& functions,
         for (size_t d = 0; d < devices.size(); d++)
         {
             cl_bool available = CL_FALSE;
-            cl_bool compiler = CL_FALSE;
             cl_bool little_endian = CL_FALSE;
             cl_uint address_bits = 0;
             cl_uint dimensions = 0;
             if (functions.p_clGetDeviceInfo(devices[d], CL_DEVICE_AVAILABLE,
                                             sizeof(available), &available, 0)
                     == CL_SUCCESS
-                && functions.p_clGetDeviceInfo(devices[d], CL_DEVICE_COMPILER_AVAILABLE,
-                                               sizeof(compiler), &compiler, 0)
-                       == CL_SUCCESS
                 && functions.p_clGetDeviceInfo(devices[d], CL_DEVICE_ENDIAN_LITTLE,
                                                sizeof(little_endian), &little_endian, 0)
                        == CL_SUCCESS
@@ -400,7 +434,8 @@ static bool has_compatible_opencl_device(const OpenCLApi& functions,
                 && functions.p_clGetDeviceInfo(devices[d], CL_DEVICE_MAX_WORK_ITEM_DIMENSIONS,
                                                sizeof(dimensions), &dimensions, 0)
                        == CL_SUCCESS
-                && available == CL_TRUE && compiler == CL_TRUE && little_endian == CL_TRUE && (address_bits == 32 || address_bits == 64) && dimensions >= 3)
+                && available == CL_TRUE && little_endian == CL_TRUE && (address_bits == 32 || address_bits == 64) && dimensions >= 3
+                && opencl_compiler_available(functions, devices[d]))
                 return true;
         }
     }

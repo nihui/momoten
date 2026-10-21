@@ -160,6 +160,17 @@ static int check_profile(const char* name, const char* vendor, const char* drive
     return 0;
 }
 
+static int check_copy_policy(const char* vendor, const char* driver, bool use_kernel)
+{
+    const momoten_detail::OpenCLDriverPolicy policy = momoten_detail::opencl_driver_policy(vendor, driver);
+    if (policy.use_buffer_copy_kernel != use_kernel || policy.split_packed_dot_acc_sat || policy.swap_mixed_dot_acc_sat)
+    {
+        fprintf(stderr, "driver_policy_test: incorrect copy policy for %s / %s\n", vendor, driver);
+        return 1;
+    }
+    return 0;
+}
+
 int main()
 {
     momoten_detail::g_opencl.p_clGetDeviceInfo = get_device_info;
@@ -181,5 +192,10 @@ int main()
            || check_profile("mixed saturation other vendor", "another vendor", mixed_driver, true, false)
            || check_profile("mixed saturation other release", "QUALCOMM", "OpenCL 3.0 QUALCOMM build: 0676.74 Compiler E031.41.03.62", true, false)
            || check_profile("mixed saturation other compiler", "QUALCOMM", "OpenCL 3.0 QUALCOMM build: 0676.73 Compiler E031.41.03.63", true, false)
-           || check_profile("missing identity", "", "", true, false);
+           || check_profile("missing identity", "", "", true, false)
+           || check_copy_policy("Imagination Technologies", "1.10@5130912", true)
+           || check_copy_policy("Imagination Technologies", "1.11@5425693", true)
+           || check_copy_policy("Imagination Technologies", "1.11@5425694", false)
+           || check_copy_policy("another vendor", "1.11@5425693", false)
+           || check_copy_policy("", "", false);
 }

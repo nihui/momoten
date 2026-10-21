@@ -71,6 +71,7 @@ struct VkDevice_T
     std::vector<std::string> enabled_extensions;
     cl_context context;
     cl_command_queue command_queue;
+    cl_kernel buffer_copy_kernel = 0;
     VkQueue queue;
     std::mutex queue_mutex;
     std::vector<PendingSubmission> pending_submissions;

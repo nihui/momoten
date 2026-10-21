@@ -3,6 +3,7 @@
 
 #include "replay.h"
 #include "memory_sync.h"
+#include "buffer_copy.h"
 
 #include <algorithm>
 
@@ -75,8 +76,8 @@ cl_int replay_copy(ReplayState& state, const RecordedCommand& command)
         cl_event event = 0;
         const cl_uint wait_count = state.tail_event ? 1u : 0u;
         const cl_event* wait_list = state.tail_event ? &state.tail_event : 0;
-        ret = momoten_detail::g_opencl.p_clEnqueueCopyBuffer(
-            state.device->command_queue, src_memory->memory, dst_memory->memory,
+        ret = momoten_detail::enqueue_buffer_copy(
+            state.device, src_memory->memory, dst_memory->memory,
             src_offset, dst_offset, size, wait_count, wait_list, &event);
         if (ret != CL_SUCCESS)
             return ret;

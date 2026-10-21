@@ -188,7 +188,7 @@ int main(int argc, char** argv)
     VkBufferCreateInfo buffer_info = {};
     buffer_info.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
     buffer_info.size = descriptor_offset + data_size;
-    buffer_info.usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT;
+    buffer_info.usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT;
     buffer_info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
     VkBuffer input_buffer = VK_NULL_HANDLE;
     VkBuffer output_buffer = VK_NULL_HANDLE;
@@ -513,6 +513,73 @@ int main(int argc, char** argv)
         if (fabsf(input[i] - expected) > 1e-6f)
         {
             fprintf(stderr, "driver_test: copied input[%u]=%g expected=%g\n", i, input[i], expected);
+            status = 1;
+        }
+    }
+
+    // Exercise vector-copy tails, offsets not aligned to 16 bytes, same-buffer
+    // copies, and event dependencies. Read the entire destination back through
+    // another device copy so writes beyond the requested region are visible.
+    const struct CopyCase
+    {
+        VkDeviceSize source_offset;
+        VkDeviceSize destination_offset;
+        VkDeviceSize size;
+        bool same_buffer;
+    } copy_cases[] = {
+        {0, 0, 4, false}, {4, 8, 12, false}, {12, 4, 20, false}, {0, 12, 68, false}, {4, 0, 76, false}, {0, 0, 80, false}, {0, 48, 20, true}, {44, 4, 28, true}};
+    unsigned char* input_bytes = static_cast<unsigned char*>(input_mapping) + bind_offset;
+    const size_t copy_buffer_size = static_cast<size_t>(buffer_info.size);
+    for (size_t c = 0; c < sizeof(copy_cases) / sizeof(copy_cases[0]); c++)
+    {
+        unsigned char expected[80];
+        for (size_t i = 0; i < copy_buffer_size; i++)
+            input_bytes[i] = expected[i] = static_cast<unsigned char>(i * 7 + c);
+        result = vkResetFences(device, 1, &fence);
+        if (result != VK_SUCCESS) return fail("vkResetFences(copy seed)", result);
+        result = vkResetCommandBuffer(command_buffer, 0);
+        if (result != VK_SUCCESS) return fail("vkResetCommandBuffer(copy seed)", result);
+        result = vkBeginCommandBuffer(command_buffer, &begin_info);
+        if (result != VK_SUCCESS) return fail("vkBeginCommandBuffer(copy seed)", result);
+        const VkBufferCopy whole = {0, 0, buffer_info.size};
+        vkCmdCopyBuffer(command_buffer, input_buffer, output_buffer, 1, &whole);
+        result = vkEndCommandBuffer(command_buffer);
+        if (result != VK_SUCCESS) return fail("vkEndCommandBuffer(copy seed)", result);
+        result = vkQueueSubmit(queue, 1, &submit_info, fence);
+        if (result != VK_SUCCESS) return fail("vkQueueSubmit(copy seed)", result);
+        result = vkWaitForFences(device, 1, &fence, VK_TRUE, 10000000000ull);
+        if (result != VK_SUCCESS) return fail("vkWaitForFences(copy seed)", result);
+
+        for (size_t i = 0; i < copy_buffer_size; i++)
+            input_bytes[i] = static_cast<unsigned char>(i * 13 + 99);
+        const CopyCase& test = copy_cases[c];
+        memcpy(expected + test.destination_offset,
+               (test.same_buffer ? expected : input_bytes) + test.source_offset,
+               static_cast<size_t>(test.size));
+        result = vkResetFences(device, 1, &fence);
+        if (result != VK_SUCCESS) return fail("vkResetFences(copy ranges)", result);
+        result = vkResetCommandBuffer(command_buffer, 0);
+        if (result != VK_SUCCESS) return fail("vkResetCommandBuffer(copy ranges)", result);
+        result = vkBeginCommandBuffer(command_buffer, &begin_info);
+        if (result != VK_SUCCESS) return fail("vkBeginCommandBuffer(copy ranges)", result);
+        const VkBufferCopy partial = {test.source_offset, test.destination_offset, test.size};
+        vkCmdCopyBuffer(command_buffer, test.same_buffer ? output_buffer : input_buffer, output_buffer, 1, &partial);
+        VkMemoryBarrier copy_barrier = {};
+        copy_barrier.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
+        copy_barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+        copy_barrier.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+        vkCmdPipelineBarrier(command_buffer, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                             0, 1, &copy_barrier, 0, 0, 0, 0);
+        vkCmdCopyBuffer(command_buffer, output_buffer, input_buffer, 1, &whole);
+        result = vkEndCommandBuffer(command_buffer);
+        if (result != VK_SUCCESS) return fail("vkEndCommandBuffer(copy ranges)", result);
+        result = vkQueueSubmit(queue, 1, &submit_info, fence);
+        if (result != VK_SUCCESS) return fail("vkQueueSubmit(copy ranges)", result);
+        result = vkWaitForFences(device, 1, &fence, VK_TRUE, 10000000000ull);
+        if (result != VK_SUCCESS) return fail("vkWaitForFences(copy ranges)", result);
+        if (memcmp(input_bytes, expected, copy_buffer_size) != 0)
+        {
+            fprintf(stderr, "driver_test: copy range case %zu corrupted the destination or its surrounding bytes\n", c);
             status = 1;
         }
     }
