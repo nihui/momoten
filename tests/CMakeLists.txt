@@ -218,29 +218,32 @@ if(UNIX AND NOT ANDROID)
     target_compile_features(momoten_android_opencl_loader_test PRIVATE cxx_std_11)
     target_compile_definitions(momoten_android_opencl_loader_test PRIVATE
         CL_TARGET_OPENCL_VERSION=100)
+    target_include_directories(momoten_android_opencl_loader_test PRIVATE
+        "${CMAKE_CURRENT_SOURCE_DIR}/runtime/android_stubs")
     target_link_libraries(momoten_android_opencl_loader_test PRIVATE
         momoten_opencl_headers Threads::Threads)
     add_test(NAME momoten_android_opencl_loader
         COMMAND momoten_android_opencl_loader_test)
     set_tests_properties(momoten_android_opencl_loader PROPERTIES
         LABELS "momoten;runtime;android;loader")
-endif()
 
-# Exercise the actual Android 7 ELF and linker helper with host Android stubs.
-# /proc/self/maps and native ELF headers make this test Linux-specific.
-if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND NOT ANDROID)
-    find_package(Threads REQUIRED)
-    add_executable(momoten_android7_opencl_loader_test
-        runtime/android7_opencl_loader_test.cpp)
-    target_compile_features(momoten_android7_opencl_loader_test PRIVATE cxx_std_11)
-    target_include_directories(momoten_android7_opencl_loader_test PRIVATE
-        "${CMAKE_CURRENT_SOURCE_DIR}/runtime/android_stubs")
-    target_link_libraries(momoten_android7_opencl_loader_test PRIVATE
-        Threads::Threads ${CMAKE_DL_LIBS})
-    add_test(NAME momoten_android7_opencl_loader
-        COMMAND momoten_android7_opencl_loader_test)
-    set_tests_properties(momoten_android7_opencl_loader PROPERTIES
-        LABELS "momoten;runtime;android;loader")
+    # Exercise the actual Android 7 ELF and linker helper with host Android stubs.
+    # /proc/self/maps and native ELF headers make this test Linux-specific.
+    if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+        add_executable(momoten_android7_opencl_loader_test
+            runtime/android7_opencl_loader_test.cpp
+            ../src/backend/android7_loader.cpp)
+        target_compile_features(momoten_android7_opencl_loader_test PRIVATE cxx_std_11)
+        target_compile_definitions(momoten_android7_opencl_loader_test PRIVATE __ANDROID__)
+        target_include_directories(momoten_android7_opencl_loader_test PRIVATE
+            "${CMAKE_CURRENT_SOURCE_DIR}/runtime/android_stubs")
+        target_link_libraries(momoten_android7_opencl_loader_test PRIVATE
+            Threads::Threads ${CMAKE_DL_LIBS})
+        add_test(NAME momoten_android7_opencl_loader
+            COMMAND momoten_android7_opencl_loader_test)
+        set_tests_properties(momoten_android7_opencl_loader PROPERTIES
+            LABELS "momoten;runtime;android;loader")
+    endif()
 endif()
 
 if(DEFINED NCNN_MOMOTEN_GLSLANG_VALIDATOR AND

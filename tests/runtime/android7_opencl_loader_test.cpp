@@ -1,9 +1,9 @@
 // Copyright 2026 nihui
 // SPDX-License-Identifier: Apache-2.0
 
-// Compile the actual Android helper on Linux with only its three Android
-// declarations stubbed. No Android linker, driver installation, or GPU is used.
-#include <cstdarg>
+// Link the actual Android helper on Linux with minimal Android declarations
+// stubbed. No Android linker, driver installation, or GPU is used.
+#include "../../src/backend/android7_loader.h"
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -20,15 +20,20 @@
 #include <sys/stat.h>
 #include <unistd.h>
 #include <android/dlext.h>
-#include <android/log.h>
 #include <sys/system_properties.h>
 
-#define CHECK(condition) do { if (!(condition)) { \
-    fprintf(stderr, "android7_opencl_loader_test:%d: %s\n", __LINE__, #condition); \
-    abort(); } } while (0)
+#define CHECK(condition)                                                                   \
+    do {                                                                                   \
+        if (!(condition))                                                                  \
+        {                                                                                  \
+            fprintf(stderr, "android7_opencl_loader_test:%d: %s\n", __LINE__, #condition); \
+            abort();                                                                       \
+        }                                                                                  \
+    } while (0)
 
 static const char* sdk_version = "0";
 static std::string log_text;
+static bool debug_logging = false;
 static pthread_mutex_t* active_mutex = 0;
 
 // Check ownership from another thread so a recursive mutex cannot disguise a
@@ -55,25 +60,22 @@ extern "C" int __system_property_get(const char* name, char* value)
     strcpy(value, sdk_version);
     return strlen(value);
 }
-extern "C" int __android_log_print(int, const char* tag, const char* format, ...)
+namespace momoten_detail {
+
+void log_android_opencl_load(const char* path, const char* operation, const char* error)
 {
-    CHECK(strcmp(tag, "momoten") == 0);
     if (active_mutex) check_locked(false); // Logging must happen after unlock.
-    char buffer[2048];
-    va_list args;
-    va_start(args, format);
-    const int length = vsnprintf(buffer, sizeof(buffer), format, args);
-    va_end(args);
-    log_text += buffer;
-    return length;
+    CHECK(path && operation);
+    if (!debug_logging) return;
+    log_text += operation;
+    log_text += path;
+    log_text += error ? error : "loaded";
 }
 
-#define __ANDROID__ 1
-#include "../../src/backend/android7_loader.h"
-#undef __ANDROID__
+} // namespace momoten_detail
 
 // A real file-backed mapping gives /proc/self/maps an address independent of
-// LoadedElf's temporary parsing map. Nonzero virtual addresses test load bias.
+// Android7LoadedElf's temporary parsing map. Nonzero virtual addresses test load bias.
 struct ElfFixture
 {
     char path[64];
@@ -82,7 +84,8 @@ struct ElfFixture
     std::vector<unsigned char> bytes;
     unsigned char* mapping;
 
-    ElfFixture() : fd(-1), page(sysconf(_SC_PAGESIZE)), bytes(page * 2), mapping(0)
+    ElfFixture()
+        : fd(-1), page(sysconf(_SC_PAGESIZE)), bytes(page * 2), mapping(0)
     {
         strcpy(path, "/tmp/momoten-android7-XXXXXX");
         fd = mkstemp(path);
@@ -145,10 +148,22 @@ struct ElfFixture
         CHECK(close(fd) == 0);
         CHECK(unlink(path) == 0);
     }
-    ElfW(Ehdr)& header() { return *reinterpret_cast<ElfW(Ehdr)*>(&bytes[0]); }
-    ElfW(Phdr)* segments() { return reinterpret_cast<ElfW(Phdr)*>(&bytes[sizeof(ElfW(Ehdr))]); }
-    ElfW(Shdr)* sections() { return reinterpret_cast<ElfW(Shdr)*>(&bytes[0x600]); }
-    ElfW(Sym)* entries() { return reinterpret_cast<ElfW(Sym)*>(&bytes[0x200]); }
+    ElfW(Ehdr) & header()
+    {
+        return *reinterpret_cast<ElfW(Ehdr)*>(&bytes[0]);
+    }
+    ElfW(Phdr) * segments()
+    {
+        return reinterpret_cast<ElfW(Phdr)*>(&bytes[sizeof(ElfW(Ehdr))]);
+    }
+    ElfW(Shdr) * sections()
+    {
+        return reinterpret_cast<ElfW(Shdr)*>(&bytes[0x600]);
+    }
+    ElfW(Sym) * entries()
+    {
+        return reinterpret_cast<ElfW(Sym)*>(&bytes[0x200]);
+    }
     void save()
     {
         CHECK(ftruncate(fd, bytes.size()) == 0);
@@ -158,14 +173,14 @@ struct ElfFixture
 
 static void test_elf()
 {
-    using momoten_android7::LoadedElf;
-    CHECK(!LoadedElf("/no/such/momoten-linker").symbol("function", STT_FUNC));
+    using momoten_detail::Android7LoadedElf;
+    CHECK(!Android7LoadedElf("/no/such/momoten-linker").symbol("function", STT_FUNC));
     {
         ElfFixture f;
         void* function;
         unsigned char* object;
         {
-            LoadedElf elf(f.path);
+            Android7LoadedElf elf(f.path);
             function = elf.symbol("function", STT_FUNC);
             object = static_cast<unsigned char*>(elf.symbol("object", STT_OBJECT, sizeof(pthread_mutex_t)));
             CHECK(function == f.mapping + 0x900);
@@ -181,53 +196,53 @@ static void test_elf()
         CHECK(f.mapping[f.page + 0x100] == 0x5a);
         f.sections()[1].sh_type = SHT_DYNSYM;
         f.save();
-        CHECK(LoadedElf(f.path).symbol("function", STT_FUNC) == function);
+        CHECK(Android7LoadedElf(f.path).symbol("function", STT_FUNC) == function);
     }
     {
         ElfFixture f;
         f.header().e_ident[EI_MAG0] = 0;
         f.save();
-        CHECK(!LoadedElf(f.path).symbol("function", STT_FUNC));
+        CHECK(!Android7LoadedElf(f.path).symbol("function", STT_FUNC));
     }
     {
         ElfFixture f;
         f.header().e_shoff = static_cast<ElfW(Off)>(-1);
         f.save();
-        CHECK(!LoadedElf(f.path).symbol("function", STT_FUNC));
+        CHECK(!Android7LoadedElf(f.path).symbol("function", STT_FUNC));
     }
     {
         ElfFixture f;
         f.sections()[1].sh_size = f.bytes.size();
         f.save();
-        CHECK(!LoadedElf(f.path).symbol("function", STT_FUNC));
+        CHECK(!Android7LoadedElf(f.path).symbol("function", STT_FUNC));
     }
     {
         ElfFixture f;
         f.sections()[2].sh_offset = f.bytes.size() - 1;
         f.save();
-        CHECK(!LoadedElf(f.path).symbol("function", STT_FUNC));
+        CHECK(!Android7LoadedElf(f.path).symbol("function", STT_FUNC));
     }
     {
         ElfFixture f;
         f.sections()[2].sh_size = 9; // "function" has no NUL within this table.
         f.save();
-        CHECK(!LoadedElf(f.path).symbol("function", STT_FUNC));
+        CHECK(!Android7LoadedElf(f.path).symbol("function", STT_FUNC));
     }
     {
         ElfFixture f;
         f.entries()[1].st_shndx = SHN_UNDEF;
         f.entries()[2].st_name = 999;
         f.save();
-        LoadedElf elf(f.path);
+        Android7LoadedElf elf(f.path);
         CHECK(!elf.symbol("function", STT_FUNC));
         CHECK(!elf.symbol("object", STT_OBJECT));
     }
     {
         ElfFixture f;
         f.entries()[1].st_value = 0x4000 + f.page; // Non-executable data page.
-        f.entries()[2].st_value = 0x4900; // Non-writable text page.
+        f.entries()[2].st_value = 0x4900;          // Non-writable text page.
         f.save();
-        LoadedElf elf(f.path);
+        Android7LoadedElf elf(f.path);
         CHECK(!elf.symbol("function", STT_FUNC));
         CHECK(!elf.symbol("object", STT_OBJECT));
     }
@@ -235,14 +250,14 @@ static void test_elf()
         ElfFixture f;
         f.entries()[2].st_value = 0x4000 + 2 * f.page - 1;
         f.save();
-        LoadedElf elf(f.path);
+        Android7LoadedElf elf(f.path);
         CHECK(elf.symbol("object", STT_OBJECT, 1) == f.mapping + 2 * f.page - 1);
         CHECK(!elf.symbol("object", STT_OBJECT, sizeof(pthread_mutex_t)));
     }
     {
         ElfFixture f;
         CHECK(ftruncate(f.fd, sizeof(ElfW(Ehdr)) - 1) == 0);
-        CHECK(!LoadedElf(f.path).symbol("function", STT_FUNC));
+        CHECK(!Android7LoadedElf(f.path).symbol("function", STT_FUNC));
     }
 }
 
@@ -274,31 +289,31 @@ static char* fake_error()
 
 static void test_linker()
 {
-    using momoten_android7::Linker;
+    using momoten_detail::Android7Linker;
     const char* unsupported[] = {"", "0", "23", "26", "35"};
     for (size_t i = 0; i < sizeof(unsupported) / sizeof(unsupported[0]); i++)
     {
         sdk_version = unsupported[i];
-        Linker absent;
-        CHECK(!absent.supported && !absent.open && !absent.mutex && !absent.caller);
+        Android7Linker absent;
+        CHECK(!absent.supported && !absent.do_dlopen && !absent.mutex && !absent.caller);
     }
     sdk_version = "0";
-    Linker linker;
+    Android7Linker linker;
     const char* path = "/vendor/lib/libOpenCL.so";
     const int flags = RTLD_LOCAL | RTLD_NOW;
-    CHECK(!momoten_android7::open_library(path, flags, false));
+    CHECK(!momoten_detail::open_android7_library(path, flags));
     const char* supported[] = {"24", "25"};
     for (size_t i = 0; i < sizeof(supported) / sizeof(supported[0]); i++)
     {
         sdk_version = supported[i];
-        Linker absent;
+        Android7Linker absent;
         CHECK(absent.supported);
-        CHECK(!absent.load(path, flags, false)); // No Android linker on this host.
+        CHECK(!absent.load(path, flags)); // No Android linker on this host.
     }
     sdk_version = "0";
-    CHECK(!linker.load(path, flags, false));
-    linker.open = fake_open;
-    CHECK(!linker.load(path, flags, false));
+    CHECK(!linker.load(path, flags));
+    linker.do_dlopen = fake_open;
+    CHECK(!linker.load(path, flags));
     pthread_mutexattr_t attributes;
     pthread_mutex_t mutex;
     CHECK(pthread_mutexattr_init(&attributes) == 0);
@@ -307,49 +322,52 @@ static void test_linker()
     CHECK(pthread_mutexattr_destroy(&attributes) == 0);
     active_mutex = &mutex;
     linker.mutex = &mutex;
-    CHECK(!linker.load(path, flags, false));
+    CHECK(!linker.load(path, flags));
     CHECK(open_calls == 0);
     linker.caller = &caller_token;
-    linker.open = 0;
-    CHECK(!linker.load(path, flags, false));
-    linker.open = fake_open;
+    linker.do_dlopen = 0;
+    CHECK(!linker.load(path, flags));
+    linker.do_dlopen = fake_open;
     linker.mutex = 0;
-    CHECK(!linker.load(path, flags, false));
+    CHECK(!linker.load(path, flags));
     linker.mutex = &mutex;
     for (int attempt = 0; attempt < 2; attempt++)
     {
-        CHECK(linker.load(path, flags, false) == &library_token);
+        CHECK(linker.load(path, flags) == &library_token);
         check_locked(false);
     }
     CHECK(open_calls == 2 && error_calls == 0 && log_text.empty());
     open_success = false;
-    CHECK(!linker.load(path, flags, true));
+    debug_logging = true;
+    CHECK(!linker.load(path, flags));
     CHECK(log_text.find("no linker error detail") != std::string::npos);
     log_text.clear();
-    linker.error = fake_error;
+    linker.get_error = fake_error;
     expect_cleared_error = true;
-    CHECK(!linker.load(path, flags, true));
+    CHECK(!linker.load(path, flags));
     CHECK(error_calls == 1 && log_text.find("missing vendor dependency") != std::string::npos);
     check_locked(false);
     log_text.clear();
     open_error = 0; // A failing call that provides no new error must not reuse one.
     strcpy(error_buffer, "stale error from a previous call");
-    CHECK(!linker.load(path, flags, true));
+    CHECK(!linker.load(path, flags));
     CHECK(error_calls == 2 && log_text.find("no linker error detail") != std::string::npos);
     CHECK(log_text.find("stale error") == std::string::npos);
     log_text.clear();
-    CHECK(!linker.load(path, flags, false));
+    debug_logging = false;
+    CHECK(!linker.load(path, flags));
     CHECK(error_calls == 3 && log_text.empty());
     check_locked(false);
+    debug_logging = true;
     null_error = true;
     expect_cleared_error = false;
-    CHECK(!linker.load(path, flags, true));
+    CHECK(!linker.load(path, flags));
     CHECK(error_calls == 4 && log_text.find("no linker error detail") != std::string::npos);
     log_text.clear();
     null_error = false;
     expect_cleared_error = true;
     open_success = true;
-    CHECK(linker.load(path, flags, true) == &library_token);
+    CHECK(linker.load(path, flags) == &library_token);
     CHECK(log_text.find("loaded") != std::string::npos);
     CHECK(error_calls == 5);
     check_locked(false);

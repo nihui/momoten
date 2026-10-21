@@ -5,6 +5,7 @@
 #include "android7_loader.h"
 
 #include <algorithm>
+#include <cstdarg>
 #include <cstdlib>
 #include <cstdio>
 #include <cstring>
@@ -21,6 +22,9 @@
 #include <dlfcn.h>
 #endif
 #include <sys/stat.h>
+#if defined(__ANDROID__)
+#include <android/log.h>
+#endif
 
 namespace momoten_detail {
 
@@ -30,6 +34,22 @@ bool debug_enabled()
     if (!value || !value[0])
         value = getenv("NCNN_MOMOTEN_DEBUG");
     return value && value[0] != '\0' && strcmp(value, "0") != 0;
+}
+
+static void log_opencl_loader(bool always, const char* format, ...)
+{
+    if (!always && !debug_enabled())
+        return;
+    va_list args;
+    va_start(args, format);
+#if defined(__ANDROID__)
+    __android_log_vprint(always ? ANDROID_LOG_ERROR : ANDROID_LOG_DEBUG, "momoten", format, args);
+#else
+    fputs("[momoten] ", stderr);
+    vfprintf(stderr, format, args);
+    fputc('\n', stderr);
+#endif
+    va_end(args);
 }
 
 #if defined(_WIN32)
@@ -220,12 +240,16 @@ static std::vector<std::string> opencl_driver_candidates()
 }
 
 #if defined(__ANDROID__)
+void log_android_opencl_load(const char* path, const char* operation, const char* error)
+{
+    log_opencl_loader(false, "%s for %s %s%s", operation, path,
+                      error ? "failed: " : "loaded", error ? error : "");
+}
+
 static void log_opencl_load_error(const char* path, const char* operation)
 {
     const char* error = dlerror();
-    if (debug_enabled())
-        fprintf(stderr, "[momoten] %s for %s failed: %s\n", operation, path,
-                error ? error : "no dlerror; check the Android linker log");
+    log_android_opencl_load(path, operation, error ? error : "no dlerror; check the Android linker log");
 }
 #endif
 
@@ -277,7 +301,7 @@ static OpenCLLibrary open_opencl_library(const char* path)
     if (vndksupport)
         dlclose(vndksupport);
     if (!library)
-        library = momoten_android7::open_library(path, RTLD_LOCAL | RTLD_NOW, debug_enabled());
+        library = open_android7_library(path, RTLD_LOCAL | RTLD_NOW);
     return library;
 #else
     return dlopen(path, RTLD_LOCAL | RTLD_NOW);
@@ -469,15 +493,13 @@ static void load_opencl_driver_once()
         if (try_opencl_driver(candidates[i]))
         {
             g_opencl_loaded = true;
-            if (debug_enabled())
-                fprintf(stderr, "[momoten] loaded OpenCL vendor driver %s without the system ICD loader\n",
-                        g_opencl_driver_path.c_str());
+            log_opencl_loader(false, "loaded OpenCL vendor driver %s without the system ICD loader",
+                              g_opencl_driver_path.c_str());
             return;
         }
-        if (debug_enabled())
-            fprintf(stderr, "[momoten] rejected OpenCL driver candidate %s\n", candidates[i].c_str());
+        log_opencl_loader(false, "rejected OpenCL driver candidate %s", candidates[i].c_str());
     }
-    fprintf(stderr, "[momoten] no usable OpenCL vendor driver; set MOMOTEN_OPENCL_DRIVER to a vendor library or .icd file\n");
+    log_opencl_loader(true, "no usable OpenCL vendor driver; set MOMOTEN_OPENCL_DRIVER to a vendor library or .icd file");
 }
 
 cl_int momo_clGetPlatformIDs(cl_uint num_entries, cl_platform_id* platforms,

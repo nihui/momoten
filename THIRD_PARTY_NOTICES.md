@@ -16,10 +16,10 @@ Release packaging must include the license notices corresponding to the exact
 pinned dependency revisions recorded by the repository's Git submodule links.
 The dependency repositories contain their complete license texts.
 
-The Android 7 ELF lookup in `src/backend/android7_loader.h` follows the
+The Android 7 ELF lookup in `src/backend/android7_loader.cpp` follows the
 [Android stub patch](https://github.com/nihui/mesa-turnip-android-driver/blob/d88dc83e06bcdd6dfa10413ef7e576c96b8b8830/mesa-implement-android_stub.patch)
 from nihui/mesa-turnip-android-driver (MIT, copyright 2016 avs333). Its complete
-permission notice is also retained in the header and generated amalgamation:
+permission notice is also retained in the source and generated amalgamation:
 
 Copyright (c) 2016 avs333
 
