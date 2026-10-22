@@ -171,6 +171,29 @@ function(momoten_add_workgroup_pipeline_test target_name translator_target test_
         LABELS "momoten;api;workgroup")
 endfunction()
 
+function(momoten_add_spirv_analysis_test name translator_target prefix)
+    set(target_name ${prefix}_${name}_test)
+    set(test_name ${prefix}_${name})
+    string(REPLACE "_" "-" label ${name})
+    add_executable(${target_name} translator/${name}_test.cpp)
+    target_compile_features(${target_name} PRIVATE cxx_std_11)
+    target_include_directories(${target_name} PRIVATE
+        "${CMAKE_CURRENT_SOURCE_DIR}/../src")
+    target_link_libraries(${target_name} PRIVATE
+        ${translator_target} momoten::headers spirv-cross-glsl SPIRV-Tools-static)
+    add_test(NAME ${test_name} COMMAND ${target_name})
+    set_tests_properties(${test_name} PROPERTIES
+        LABELS "momoten;translator;${label}")
+endfunction()
+
+foreach(name buffer_loads)
+    momoten_add_spirv_analysis_test(${name} momoten::translator momoten)
+    if(TARGET momoten_amalgamated_translator)
+        momoten_add_spirv_analysis_test(${name}
+            momoten_amalgamated_translator momoten_amalgamated)
+    endif()
+endforeach()
+
 momoten_add_workgroup_pipeline_test(momoten_workgroup_pipeline_test
     momoten::translator momoten_workgroup_pipeline)
 if(TARGET momoten_amalgamated_translator)
@@ -332,6 +355,11 @@ momoten_compile_test_shader(momoten_workgroup_3d_test_spv workgroup_3d.comp vulk
 momoten_compile_test_shader(momoten_vector_extract_test_spv vector_extract_dynamic.comp vulkan1.1)
 momoten_compile_test_shader(momoten_vector_extract_fp64_test_spv vector_extract_fp64.comp vulkan1.1)
 momoten_compile_test_shader(momoten_vector_extract_int16_test_spv vector_extract_int16.comp vulkan1.1)
+momoten_compile_test_shader(momoten_buffer_vector_load_test_spv buffer_vector_load.comp vulkan1.0)
+momoten_compile_test_shader(momoten_buffer_vector_store_test_spv buffer_vector_store.comp vulkan1.0)
+momoten_compile_test_shader(momoten_fp16_vector_load_test_spv fp16_vector_load.comp vulkan1.1)
+momoten_compile_test_shader(momoten_coalesced_buffer_load_test_spv coalesced_buffer_load.comp vulkan1.1)
+momoten_compile_test_shader(momoten_coalesced_fp16_load_test_spv coalesced_fp16_load.comp vulkan1.1)
 momoten_compile_test_shader(momoten_pow_constant_base_test_spv pow_constant_base.comp vulkan1.0)
 
 add_custom_target(momoten-test-spv DEPENDS ${momoten_test_spv_files})
@@ -513,6 +541,21 @@ if(TARGET momoten_test_opencl)
     add_test(NAME momoten_opencl_vector_extract_int16
         COMMAND momoten_opencl_test "${momoten_vector_extract_int16_test_spv}"
             vector-extract-int16)
+    add_test(NAME momoten_opencl_fp16_vector_load
+        COMMAND momoten_opencl_test "${momoten_fp16_vector_load_test_spv}"
+            fp16-vector-load)
+    add_test(NAME momoten_opencl_coalesced_buffer_load
+        COMMAND momoten_opencl_test "${momoten_coalesced_buffer_load_test_spv}"
+            coalesced-buffer-load)
+    add_test(NAME momoten_opencl_coalesced_fp16_load
+        COMMAND momoten_opencl_test "${momoten_coalesced_fp16_load_test_spv}"
+            coalesced-fp16-load)
+    add_test(NAME momoten_opencl_buffer_vector_store
+        COMMAND momoten_opencl_test "${momoten_buffer_vector_store_test_spv}"
+            buffer-vector-store)
+    add_test(NAME momoten_opencl_buffer_vector_load
+        COMMAND momoten_opencl_test "${momoten_buffer_vector_load_test_spv}"
+            buffer-vector-load)
     foreach(width scalar vec2 vec3 vec4)
         add_test(NAME momoten_opencl_pow_${width}
             COMMAND momoten_opencl_test "${momoten_pow_constant_base_test_spv}"
@@ -529,7 +572,9 @@ if(TARGET momoten_test_opencl)
         momoten_opencl_subgroup_basic momoten_opencl_integer_dot_product
         momoten_opencl_workgroup_split momoten_opencl_workgroup_3d
         momoten_opencl_vector_access momoten_opencl_vector_access_fp64
-        momoten_opencl_vector_extract_int16 PROPERTIES
+        momoten_opencl_vector_extract_int16 momoten_opencl_buffer_vector_load
+        momoten_opencl_buffer_vector_store momoten_opencl_fp16_vector_load
+        momoten_opencl_coalesced_buffer_load momoten_opencl_coalesced_fp16_load PROPERTIES
         LABELS "momoten;runtime;direct-opencl"
         SKIP_RETURN_CODE 77)
     # These fixtures synchronize more than one invocation in a workgroup.

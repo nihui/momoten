@@ -50,6 +50,7 @@ struct ShaderDeviceProfile
 {
     OpenCLCompilerProfile compiler;
     bool fp16;
+    bool packed_fp16_vector_loads;
     bool int64;
     bool fp64;
     bool float_controls2;

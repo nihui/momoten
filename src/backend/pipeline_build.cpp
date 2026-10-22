@@ -37,6 +37,9 @@ static void dump_pipeline_artifacts(const std::shared_ptr<ShaderModule>& module,
     hash = fnv1a64(&options.workgroup_mode, sizeof(options.workgroup_mode), hash);
     hash = fnv1a64(&options.subgroup_mode, sizeof(options.subgroup_mode), hash);
     hash = fnv1a64(&options.subgroup_size, sizeof(options.subgroup_size), hash);
+    hash = fnv1a64(&options.native_buffer_vector_loads, sizeof(options.native_buffer_vector_loads), hash);
+    hash = fnv1a64(&options.native_buffer_vector_stores, sizeof(options.native_buffer_vector_stores), hash);
+    hash = fnv1a64(&options.packed_fp16_vector_loads, sizeof(options.packed_fp16_vector_loads), hash);
     hash = fnv1a64(&options.integer_dot_product,
                    sizeof(options.integer_dot_product), hash);
     hash = fnv1a64(&options.integer_dot_product_input_4x8bit,
@@ -71,6 +74,9 @@ static void dump_pipeline_artifacts(const std::shared_ptr<ShaderModule>& module,
     std::ofstream abi((base.str() + ".abi.txt").c_str(), std::ios::trunc);
     abi << "entry_point=" << translated.abi.entry_point << '\n'
         << "address_bits=" << translated.abi.address_bits << '\n'
+        << "native_buffer_vector_loads=" << options.native_buffer_vector_loads << '\n'
+        << "native_buffer_vector_stores=" << options.native_buffer_vector_stores << '\n'
+        << "packed_fp16_vector_loads=" << options.packed_fp16_vector_loads << '\n'
         << "local_size=" << translated.abi.local_size[0] << ','
         << translated.abi.local_size[1] << ',' << translated.abi.local_size[2] << '\n'
         << "subgroup_mode="

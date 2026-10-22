@@ -1,0 +1,19 @@
+// Copyright 2026 nihui
+// SPDX-License-Identifier: Apache-2.0
+
+#version 450
+#extension GL_EXT_shader_16bit_storage : require
+#extension GL_EXT_shader_explicit_arithmetic_types_float16 : require
+
+layout(local_size_x = 1) in;
+layout(binding = 0) readonly buffer Input { f16vec4 data[]; } input_buffer;
+layout(binding = 1) writeonly buffer Output { f16vec4 data[]; } output_buffer;
+
+void main()
+{
+    uint index = gl_GlobalInvocationID.x * 2;
+    f16vec4 a = input_buffer.data[index];
+    f16vec4 b = input_buffer.data[index + 1];
+    output_buffer.data[index] = b.wzyx;
+    output_buffer.data[index + 1] = a.wzyx;
+}

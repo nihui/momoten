@@ -33,8 +33,8 @@ void main()
 {
     uint i = gl_GlobalInvocationID.x;
     f16vec4 value = input_buffer.values[i];
-    f16mat4 identity = matrix_buffer.values[0];
-    f16vec4 transformed = value * identity + f16vec4(float16_t(0.5));
+    f16mat4 matrix = matrix_buffer.values[0];
+    f16vec4 transformed = value * matrix + f16vec4(float16_t(0.5));
     // Exercise OpSelect with a half4 result. OpenCL requires a short4 mask,
     // while SPIR-V boolean vectors are represented as int4 by the translator.
     bvec4 keep = lessThan(transformed, f16vec4(float16_t(100.0)));
@@ -42,5 +42,5 @@ void main()
     scratch[gl_LocalInvocationID.x] = pack64(halfBitsToUint16(transformed));
     barrier();
     f16vec4 restored = uint16BitsToHalf(unpack16(scratch[gl_LocalInvocationID.x]));
-    output_buffer.values[i] = identity * restored;
+    output_buffer.values[i] = matrix * restored;
 }

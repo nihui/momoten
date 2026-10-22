@@ -44,7 +44,7 @@ KernelABI::KernelABI()
 }
 
 TranslationOptions::TranslationOptions()
-    : entry_point("main"), address_bits(32), override_local_size(false), workgroup_mode(WorkgroupModeDirect), subgroup_mode(SubgroupModeSingleton), subgroup_size(1), integer_dot_product(false), integer_dot_product_input_4x8bit(false), integer_dot_product_input_4x8bit_packed(false), integer_dot_product_split_packed_acc_sat(false), integer_dot_product_swap_mixed_acc_sat(false)
+    : entry_point("main"), address_bits(32), override_local_size(false), workgroup_mode(WorkgroupModeDirect), subgroup_mode(SubgroupModeSingleton), subgroup_size(1), integer_dot_product(false), integer_dot_product_input_4x8bit(false), integer_dot_product_input_4x8bit_packed(false), integer_dot_product_split_packed_acc_sat(false), integer_dot_product_swap_mixed_acc_sat(false), native_buffer_vector_loads(false), native_buffer_vector_stores(false), packed_fp16_vector_loads(false)
 {
     local_size[0] = 1;
     local_size[1] = 1;
@@ -55,6 +55,8 @@ CompilerOpenCL::CompilerOpenCL(const uint32_t* words, size_t word_count, const T
                                bool requires_global_int32_atomics_, bool contains_synchronization_barrier)
     : CompilerGLSL(words, word_count), translation_options(options_), requires_global_int32_atomics(requires_global_int32_atomics_), requires_fp16(false), requires_int64(false), requires_fp64(false), requires_integer_dot_product(false), requires_scalar_pow(false), uses_workgroup_storage(false), workgroup_splittable(!contains_synchronization_barrier), push_constant_variable_id(0)
 {
+    if (translation_options.native_buffer_vector_loads)
+        coalesced_buffer_loads = plan_coalesced_buffer_loads(words, word_count, translation_options);
 }
 
 void CompilerOpenCL::prepare(KernelABI& abi)

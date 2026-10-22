@@ -243,6 +243,38 @@ int main(int argc, char** argv)
         return 1;
 
     std::vector<uint32_t> int16;
+    momoten::TranslationOptions packed_options = options;
+    packed_options.native_buffer_vector_loads = true;
+    packed_options.packed_fp16_vector_loads = true;
+    momoten::TranslationResult packed_fp16;
+    if (require(momoten::translate_spirv_to_opencl_c(fp16.data(), fp16.size(), packed_options, packed_fp16),
+                "verified packed fp16 loads were rejected")
+        || require(packed_fp16.source.find("as_half4(vload2(") != std::string::npos,
+                   "packed fp16 load was not emitted")
+        || require(fp16_result.source.find("as_half4(vload2(") == std::string::npos,
+                   "unverified packed fp16 load was emitted"))
+        return 1;
+    std::vector<uint32_t> volatile_fp16(fp16.begin(), fp16.begin() + 5);
+    for (size_t offset = 5; offset < fp16.size();)
+    {
+        const uint32_t count = fp16[offset] >> 16;
+        const uint32_t opcode = fp16[offset] & 0xffffu;
+        if (opcode == 61u && count == 4u) // OpLoad without optional operands.
+        {
+            volatile_fp16.push_back((5u << 16) | opcode);
+            volatile_fp16.insert(volatile_fp16.end(), fp16.begin() + offset + 1, fp16.begin() + offset + count);
+            volatile_fp16.push_back(1u); // MemoryAccessVolatileMask.
+        }
+        else
+            volatile_fp16.insert(volatile_fp16.end(), fp16.begin() + offset, fp16.begin() + offset + count);
+        offset += count;
+    }
+    if (require(momoten::translate_spirv_to_opencl_c(volatile_fp16.data(), volatile_fp16.size(), packed_options, packed_fp16),
+                "volatile fp16 loads were rejected")
+        || require(packed_fp16.source.find("as_half4(vload2(") == std::string::npos,
+                   "volatile fp16 load used the packed path"))
+        return 1;
+
     if (!read_spirv(argv[5], int16))
         return require(false, "failed to read int16 test SPIR-V");
     momoten::TranslationResult int16_result;

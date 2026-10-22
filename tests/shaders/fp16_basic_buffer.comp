@@ -29,11 +29,11 @@ void main()
 {
     uint i = gl_GlobalInvocationID.x;
     f16vec4 value = input_buffer.values[i];
-    f16mat4 identity = matrix_buffer.values[0];
-    f16vec4 transformed = value * identity + f16vec4(float16_t(0.5));
+    f16mat4 matrix = matrix_buffer.values[0];
+    f16vec4 transformed = value * matrix + f16vec4(float16_t(0.5));
     bvec4 keep = lessThan(transformed, f16vec4(float16_t(100.0)));
     transformed = mix(f16vec4(float16_t(123.0)), transformed, keep);
     scratch[gl_LocalInvocationID.x] = transformed;
     barrier();
-    output_buffer.values[i] = identity * scratch[gl_LocalInvocationID.x];
+    output_buffer.values[i] = matrix * scratch[gl_LocalInvocationID.x];
 }

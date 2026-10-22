@@ -131,6 +131,18 @@ struct TranslationOptions
     bool integer_dot_product_split_packed_acc_sat;
     // Use unsigned x signed inputs for native mixed 8-bit saturating dot.
     bool integer_dot_product_swap_mixed_acc_sat;
+    // Use native vector loads for complete, non-volatile storage-buffer vectors.
+    // Also combine proven-contiguous scalar/vector loads into 128-bit reads
+    // within a basic block, without widening the set of bytes accessed.
+    // Keep disabled for CPU OpenCL compilers that speculate widened tail accesses.
+    bool native_buffer_vector_loads;
+    // Use native stores only for complete, non-volatile vec2/vec4 values.
+    // CPU backends retain scalar stores to avoid widened tail writes.
+    bool native_buffer_vector_stores;
+    // Read complete half4 values through uint2 after verifying the device's
+    // implementation-defined as_half4(uint2) component mapping. Requires
+    // native vector loads and storage-buffer byte offsets aligned to 4 bytes.
+    bool packed_fp16_vector_loads;
     std::vector<SpecializationValue> specializations;
 
     TranslationOptions();

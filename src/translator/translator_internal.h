@@ -35,6 +35,15 @@ std::vector<uint32_t> specialize_and_optimize_spirv(
 
 bool spirv_contains_opcode(const std::vector<uint32_t>& words, Op opcode);
 
+struct CoalescedBufferLoad
+{
+    uint32_t first_result;
+    uint32_t word_offset;
+};
+
+std::map<uint32_t, CoalescedBufferLoad> plan_coalesced_buffer_loads(
+    const uint32_t* words, size_t word_count, const TranslationOptions& options);
+
 const char* capability_name(Capability capability);
 
 enum class OpenCLAddressSpace
@@ -88,7 +97,18 @@ protected:
     std::string constant_expression_vector(const SPIRConstant& constant, uint32_t vector) override;
 
 private:
+    struct PrivateVectorAccess
+    {
+        uint32_t variable;
+        uint32_t index;
+    };
+
+    bool emit_memory_instruction(const Instruction& instruction, const uint32_t* ops);
+    void track_private_vector_access(const Instruction& instruction, const uint32_t* ops);
+    bool emit_private_vector_access(const Instruction& instruction, const uint32_t* ops);
+    bool emit_coalesced_buffer_load(const Instruction& instruction, const uint32_t* ops);
     bool emit_storage_buffer_load(const Instruction& instruction, const uint32_t* ops);
+    bool emit_storage_buffer_store(const Instruction& instruction, const uint32_t* ops);
     void emit_fp64_vector_helpers();
     bool emit_fp64_vector_instruction(const Instruction& instruction, const uint32_t* ops);
     void emit_integer_dot_product_helpers();
@@ -126,6 +146,8 @@ private:
     uint32_t push_constant_variable_id;
     uint32_t local_size[3];
     std::set<uint32_t> storage_block_types;
+    std::map<uint32_t, CoalescedBufferLoad> coalesced_buffer_loads;
+    std::map<uint32_t, PrivateVectorAccess> private_vector_accesses;
 };
 
 } // namespace momoten

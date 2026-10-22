@@ -1,0 +1,39 @@
+// Copyright 2026 nihui
+// SPDX-License-Identifier: Apache-2.0
+
+#version 450
+
+layout(local_size_x = 1) in;
+layout(binding = 0) readonly buffer Pairs
+{
+    vec2 data[];
+}
+pairs;
+layout(binding = 1) readonly buffer Quads
+{
+    vec4 data[];
+}
+quads;
+layout(binding = 2) volatile readonly buffer VolatileQuads
+{
+    vec4 data[];
+}
+volatile_quads;
+layout(binding = 3) readonly buffer Tail
+{
+    vec4 data[];
+}
+tail;
+layout(binding = 4) writeonly buffer Output
+{
+    vec4 data[];
+}
+output_buffer;
+
+void main()
+{
+    vec2 pair = pairs.data[0];
+    vec4 quad = quads.data[0];
+    output_buffer.data[0] = vec4(pair, quad.x + quad.y, quad.z + quad.w);
+    output_buffer.data[1] = volatile_quads.data[0] + vec4(tail.data[0].z);
+}

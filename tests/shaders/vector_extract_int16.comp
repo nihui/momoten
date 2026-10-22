@@ -12,7 +12,7 @@ layout(set = 0, binding = 0, std430) buffer Data
 
 void main()
 {
-    uint base = gl_GlobalInvocationID.x * 7u;
+    uint base = gl_GlobalInvocationID.x * 9u;
     uint index = data.values[base];
 
     // Keep the extraction immediately inside the same-width bitcast. A short
@@ -23,4 +23,11 @@ void main()
     data.values[base + 4u] = uint(uint16_t(i16vec2(-1, -32768)[index & 1u]));
     data.values[base + 5u] = uint(uint16_t(i16vec3(-1, -32768, 2)[index % 3u]));
     data.values[base + 6u] = uint(uint16_t(i16vec4(-1, 0, -32768, 2)[index & 3u]));
+
+    u16vec2 unsigned_local = u16vec2(0, 32768);
+    unsigned_local[index & 1u] = uint16_t(65535u - index);
+    data.values[base + 7u] = uint(int(int16_t(unsigned_local[index & 1u])));
+    i16vec3 signed_local = i16vec3(-1, -32768, 2);
+    signed_local[index % 3u] = int16_t(-123 - int(index));
+    data.values[base + 8u] = uint(uint16_t(signed_local[index % 3u]));
 }
