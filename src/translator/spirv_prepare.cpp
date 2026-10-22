@@ -77,6 +77,7 @@ std::vector<uint32_t> specialize_and_optimize_spirv(
             diagnostic = "SPIR-V specialization/dead-code optimization failed";
         throw std::runtime_error(diagnostic);
     }
+    simplify_bounded_integer_loops(optimized);
     return optimized;
 }
 

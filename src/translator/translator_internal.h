@@ -34,6 +34,7 @@ std::vector<uint32_t> specialize_and_optimize_spirv(
     const uint32_t* words, size_t word_count, const TranslationOptions& options);
 
 bool spirv_contains_opcode(const std::vector<uint32_t>& words, Op opcode);
+void simplify_bounded_integer_loops(std::vector<uint32_t>& words);
 
 struct CoalescedBufferLoad
 {

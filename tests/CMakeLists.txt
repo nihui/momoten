@@ -186,7 +186,7 @@ function(momoten_add_spirv_analysis_test name translator_target prefix)
         LABELS "momoten;translator;${label}")
 endfunction()
 
-foreach(name buffer_loads)
+foreach(name integer_ranges buffer_loads)
     momoten_add_spirv_analysis_test(${name} momoten::translator momoten)
     if(TARGET momoten_amalgamated_translator)
         momoten_add_spirv_analysis_test(${name}
@@ -361,6 +361,7 @@ momoten_compile_test_shader(momoten_fp16_vector_load_test_spv fp16_vector_load.c
 momoten_compile_test_shader(momoten_coalesced_buffer_load_test_spv coalesced_buffer_load.comp vulkan1.1)
 momoten_compile_test_shader(momoten_coalesced_fp16_load_test_spv coalesced_fp16_load.comp vulkan1.1)
 momoten_compile_test_shader(momoten_pow_constant_base_test_spv pow_constant_base.comp vulkan1.0)
+momoten_compile_test_shader(momoten_integer_ranges_test_spv integer_ranges.comp vulkan1.0)
 
 add_custom_target(momoten-test-spv DEPENDS ${momoten_test_spv_files})
 
@@ -532,6 +533,9 @@ if(TARGET momoten_test_opencl)
     add_test(NAME momoten_opencl_workgroup_3d
         COMMAND momoten_opencl_test "${momoten_workgroup_3d_test_spv}"
             workgroup-3d)
+    add_test(NAME momoten_opencl_integer_ranges
+        COMMAND momoten_opencl_test "${momoten_integer_ranges_test_spv}"
+            integer-ranges)
     add_test(NAME momoten_opencl_vector_access
         COMMAND momoten_opencl_test "${momoten_vector_extract_test_spv}"
             vector-access)
@@ -571,6 +575,7 @@ if(TARGET momoten_test_opencl)
         momoten_opencl_atomic_packed momoten_opencl_scalar_16bit
         momoten_opencl_subgroup_basic momoten_opencl_integer_dot_product
         momoten_opencl_workgroup_split momoten_opencl_workgroup_3d
+        momoten_opencl_integer_ranges
         momoten_opencl_vector_access momoten_opencl_vector_access_fp64
         momoten_opencl_vector_extract_int16 momoten_opencl_buffer_vector_load
         momoten_opencl_buffer_vector_store momoten_opencl_fp16_vector_load

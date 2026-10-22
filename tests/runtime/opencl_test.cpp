@@ -1313,6 +1313,32 @@ static int run_pow_constant_base_kernel(cl_context context, cl_command_queue que
     return 0;
 }
 
+static int run_integer_ranges_kernel(cl_context context, cl_command_queue queue, cl_kernel kernel,
+                                     const momoten::TranslationResult& translated, cl_uint address_bits)
+{
+    if (translated.abi.buffers.size() != 1)
+        return fail("integer ranges fixture ABI", CL_INVALID_ARG_VALUE);
+
+    const cl_uint expected[] = {36, 52, 0xfffffffcu, 20, 1, 1, 1, 270, 33, 0xfffffff7u, 0xfffffffbu, 29, 13};
+    cl_uint output[17];
+    std::fill(output, output + 17, 0xdeadbeefu);
+    output[14] = 20; // Runtime bound, after the two-word descriptor prefix.
+    const OpenCLTestBuffer buffer = {output, sizeof(output), 2 * sizeof(cl_uint), true};
+    const cl_int ret = run_buffer_fixture(context, queue, kernel, translated, address_bits, &buffer, 1, 1);
+    int status = ret == CL_SUCCESS ? 0 : fail("integer ranges dispatch", ret);
+    if (ret == CL_SUCCESS)
+        for (size_t i = 0; i < 17; i++)
+        {
+            const cl_uint value = i >= 2 && i < 15 ? expected[i - 2] : 0xdeadbeefu;
+            if (output[i] != value)
+            {
+                fprintf(stderr, "opencl_test: integer ranges output[%zu]=%u expected=%u\n", i, output[i], value);
+                status = 1;
+            }
+        }
+    return status;
+}
+
 typedef int (*OpenCLKernelTestRunner)(
     cl_context, cl_command_queue, cl_kernel,
     const momoten::TranslationResult&, cl_uint);
@@ -1327,6 +1353,7 @@ enum OpenCLTestFeature
     OpenCLTestScalar16Bit,
     OpenCLTestSubgroupBasic,
     OpenCLTestIntegerDotProduct,
+    OpenCLTestIntegerRanges,
     OpenCLTestWorkgroupSplit,
     OpenCLTestWorkgroup3D,
     OpenCLTestVectorAccess,
@@ -1368,6 +1395,7 @@ static const OpenCLTestCase opencl_test_cases[] = {
     {"workgroup-split", OpenCLTestWorkgroupSplit, false, false, false,
      run_workgroup_split_kernel},
     {"workgroup-3d", OpenCLTestWorkgroup3D, false, false, false, 0},
+    {"integer-ranges", OpenCLTestIntegerRanges, false, false, false, run_integer_ranges_kernel},
     {"vector-access", OpenCLTestVectorAccess, false, false, false, run_vector_access_kernel},
     {"vector-access-fp64", OpenCLTestVectorAccess, false, true, false, run_vector_access_fp64_kernel},
     {"vector-extract-int16", OpenCLTestVectorExtractInt16, false, false, false, run_vector_extract_int16_kernel},
@@ -1403,7 +1431,7 @@ int main(int argc, char** argv)
     const OpenCLTestCase* test_case = find_opencl_test_case(native_vector_loads || native_vector_memory ? 3 : argc, argv);
     if (!test_case)
     {
-        fprintf(stderr, "opencl_test: expected SPIR-V input path and optional fp16, fp64, int16, atomic-packed, scalar-16bit, subgroup-basic, integer-dot-product, workgroup-split, workgroup-3d, vector-access, vector-access-fp64, vector-extract-int16, buffer-vector-load, buffer-vector-store, fp16-vector-load, coalesced-buffer-load, coalesced-fp16-load, pow-scalar, pow-vec2, pow-vec3, or pow-vec4 mode, followed optionally by native-vector-loads or native-vector-memory\n");
+        fprintf(stderr, "opencl_test: expected SPIR-V input path and optional fp16, fp64, int16, atomic-packed, scalar-16bit, subgroup-basic, integer-dot-product, integer-ranges, workgroup-split, workgroup-3d, vector-access, vector-access-fp64, vector-extract-int16, buffer-vector-load, buffer-vector-store, fp16-vector-load, coalesced-buffer-load, coalesced-fp16-load, pow-scalar, pow-vec2, pow-vec3, or pow-vec4 mode, followed optionally by native-vector-loads or native-vector-memory\n");
         return 1;
     }
 
