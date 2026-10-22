@@ -246,6 +246,11 @@ int main(int argc, char** argv)
     std::vector<cl_platform_id> platforms(count);
     if (clGetPlatformIDs(count, platforms.data(), 0) != CL_SUCCESS)
         return 1;
+    const momoten::IntegerDotProductBackend backends[] = {
+        momoten::IntegerDotProductArm,
+        momoten::IntegerDotProductArmAccumulate,
+        momoten::IntegerDotProductArmAccumulateSaturate,
+        momoten::IntegerDotProductQcom};
     const Data data;
     unsigned tested = 0;
     for (cl_platform_id platform : platforms)
@@ -263,9 +268,8 @@ int main(int argc, char** argv)
             char profile[32] = {};
             clGetDeviceInfo(device, CL_DEVICE_PROFILE, sizeof(profile), profile, 0);
             const bool int64 = strcmp(profile, "FULL_PROFILE") == 0 || has_extension(device, "cles_khr_int64");
-            for (int b = momoten::IntegerDotProductArm; b <= momoten::IntegerDotProductQcom; b++)
+            for (momoten::IntegerDotProductBackend backend : backends)
             {
-                const momoten::IntegerDotProductBackend backend = static_cast<momoten::IntegerDotProductBackend>(b);
                 if (native && !has_extension(device, momoten::integer_dot_product_extension(backend)))
                     continue;
                 for (bool packed : {false, true})

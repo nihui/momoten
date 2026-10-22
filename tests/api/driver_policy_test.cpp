@@ -8,6 +8,7 @@
 #include <algorithm>
 #include <cstdio>
 #include <cstring>
+#include <set>
 #include <string>
 
 namespace momoten_detail {
@@ -27,10 +28,27 @@ struct _cl_mem
 static bool vector_support;
 static bool khr_capabilities_available = true;
 static bool khr_acceleration_available = true;
-static bool rejected_backends[5] = {};
+static std::set<momoten::IntegerDotProductBackend> rejected_backends;
+static const momoten::IntegerDotProductBackend dot_backends[] = {
+    momoten::IntegerDotProductKhr,
+    momoten::IntegerDotProductArm,
+    momoten::IntegerDotProductArmAccumulate,
+    momoten::IntegerDotProductArmAccumulateSaturate,
+    momoten::IntegerDotProductQcom};
+
+enum ProbeFailure
+{
+    ProbeSuccess,
+    FailQueue,
+    FailInputBuffer,
+    FailOutputBuffer,
+    FailKernelArgument,
+    FailKernelEnqueue,
+    FailBufferRead
+};
 static int corrupted_result = -1;
 static int corrupted_backend = -1;
-static int probe_failure;
+static ProbeFailure probe_failure = ProbeSuccess;
 static int live_buffers;
 static int live_queues;
 static cl_mem probe_buffers[2];
@@ -107,14 +125,13 @@ static cl_int CL_API_CALL build_program(cl_program program, cl_uint, const cl_de
     if (program->source.find("momo_integer_dot_product_probe") == std::string::npos)
         return CL_BUILD_PROGRAM_FAILURE;
     dot_probe_source = program->source;
-    for (int i = 0; i < 5; i++)
+    for (momoten::IntegerDotProductBackend backend : dot_backends)
     {
-        const momoten::IntegerDotProductBackend backend = static_cast<momoten::IntegerDotProductBackend>(i);
         const std::string pragma = "#pragma OPENCL EXTENSION " + std::string(momoten::integer_dot_product_extension(backend)) + " : enable";
         if (program->source.find(pragma) != std::string::npos)
         {
             attempted_backends.push_back(backend);
-            return rejected_backends[i] ? CL_BUILD_PROGRAM_FAILURE : CL_SUCCESS;
+            return rejected_backends.count(backend) ? CL_BUILD_PROGRAM_FAILURE : CL_SUCCESS;
         }
     }
     return CL_BUILD_PROGRAM_FAILURE;
@@ -140,7 +157,7 @@ static cl_int CL_API_CALL release_kernel(cl_kernel)
 static cl_command_queue CL_API_CALL create_queue(cl_context, cl_device_id, cl_command_queue_properties, cl_int* error)
 {
     ++live_queues;
-    *error = probe_failure == 1 ? CL_OUT_OF_RESOURCES : CL_SUCCESS;
+    *error = probe_failure == FailQueue ? CL_OUT_OF_RESOURCES : CL_SUCCESS;
     return reinterpret_cast<cl_command_queue>(1);
 }
 
@@ -156,7 +173,7 @@ static cl_mem CL_API_CALL create_buffer(cl_context, cl_mem_flags, size_t bytes, 
     const uint32_t* words = static_cast<const uint32_t*>(data);
     buffer->words.assign(words, words + bytes / sizeof(uint32_t));
     ++live_buffers;
-    *error = probe_failure == 2 || (probe_failure == 3 && live_buffers == 2) ? CL_OUT_OF_RESOURCES : CL_SUCCESS;
+    *error = probe_failure == FailInputBuffer || (probe_failure == FailOutputBuffer && live_buffers == 2) ? CL_OUT_OF_RESOURCES : CL_SUCCESS;
     return buffer;
 }
 
@@ -169,7 +186,7 @@ static cl_int CL_API_CALL release_buffer(cl_mem buffer)
 
 static cl_int CL_API_CALL set_kernel_arg(cl_kernel, cl_uint index, size_t size, const void* value)
 {
-    if (index >= 2 || size != sizeof(cl_mem) || probe_failure == 4)
+    if (index >= 2 || size != sizeof(cl_mem) || probe_failure == FailKernelArgument)
         return CL_INVALID_ARG_VALUE;
     probe_buffers[index] = *static_cast<const cl_mem*>(value);
     return CL_SUCCESS;
@@ -177,7 +194,7 @@ static cl_int CL_API_CALL set_kernel_arg(cl_kernel, cl_uint index, size_t size, 
 
 static cl_int CL_API_CALL enqueue_kernel(cl_command_queue, cl_kernel, cl_uint dimensions, const size_t*, const size_t* global, const size_t*, cl_uint, const cl_event*, cl_event*)
 {
-    if (probe_failure == 5 || dimensions != 1 || *global * 4 != probe_buffers[0]->words.size() || *global * 6 != probe_buffers[1]->words.size())
+    if (probe_failure == FailKernelEnqueue || dimensions != 1 || *global * 4 != probe_buffers[0]->words.size() || *global * 6 != probe_buffers[1]->words.size())
         return CL_INVALID_WORK_GROUP_SIZE;
     for (size_t i = 0; i < *global; i++)
     {
@@ -212,19 +229,30 @@ static cl_int CL_API_CALL enqueue_kernel(cl_command_queue, cl_kernel, cl_uint di
 
 static cl_int CL_API_CALL read_buffer(cl_command_queue, cl_mem buffer, cl_bool, size_t offset, size_t bytes, void* output, cl_uint, const cl_event*, cl_event*)
 {
-    if (probe_failure == 6)
+    if (probe_failure == FailBufferRead)
         return CL_OUT_OF_RESOURCES;
     memcpy(output, reinterpret_cast<const char*>(buffer->words.data()) + offset, bytes);
     return CL_SUCCESS;
 }
 
+enum DotAcceleration
+{
+    AcceleratedUnsigned = 1u << 0,
+    AcceleratedSigned = 1u << 1,
+    AcceleratedMixed = 1u << 2,
+    AcceleratedSaturatingUnsigned = 1u << 3,
+    AcceleratedSaturatingSigned = 1u << 4,
+    AcceleratedSaturatingMixed = 1u << 5
+};
+
 static unsigned acceleration_mask(const momoten_detail::IntegerDotProductAccelerationProfile& a)
 {
-    return unsigned(a.unsigned_accelerated) | (unsigned(a.signed_accelerated) << 1)
-           | (unsigned(a.mixed_signedness_accelerated) << 2)
-           | (unsigned(a.accumulating_saturating_unsigned_accelerated) << 3)
-           | (unsigned(a.accumulating_saturating_signed_accelerated) << 4)
-           | (unsigned(a.accumulating_saturating_mixed_signedness_accelerated) << 5);
+    return (a.unsigned_accelerated ? AcceleratedUnsigned : 0)
+           | (a.signed_accelerated ? AcceleratedSigned : 0)
+           | (a.mixed_signedness_accelerated ? AcceleratedMixed : 0)
+           | (a.accumulating_saturating_unsigned_accelerated ? AcceleratedSaturatingUnsigned : 0)
+           | (a.accumulating_saturating_signed_accelerated ? AcceleratedSaturatingSigned : 0)
+           | (a.accumulating_saturating_mixed_signedness_accelerated ? AcceleratedSaturatingMixed : 0);
 }
 
 static int check_vendor_profile(const char* name, const char* extensions, bool supported, momoten::IntegerDotProductBackend backend, unsigned mask, const std::vector<momoten::IntegerDotProductBackend>& attempts)
@@ -290,38 +318,44 @@ static int check_vendor_profiles()
         || attempted_backends != std::vector<IntegerDotProductBackend>{IntegerDotProductKhr})
         return 1;
     khr_acceleration_available = true;
+    const unsigned arm_acceleration = AcceleratedUnsigned | AcceleratedSigned;
+    const unsigned arm_saturating_acceleration = arm_acceleration | AcceleratedSaturatingUnsigned | AcceleratedSaturatingSigned;
+    const unsigned qcom_acceleration = AcceleratedUnsigned | AcceleratedMixed | AcceleratedSaturatingMixed;
     int result = 0;
-    result |= check_vendor_profile("ARM dot", arm, true, IntegerDotProductArm, 3, {IntegerDotProductArm});
-    result |= check_vendor_profile("ARM accumulate only", acc, true, IntegerDotProductArmAccumulate, 3, {IntegerDotProductArmAccumulate});
-    result |= check_vendor_profile("ARM saturate only", sat, true, IntegerDotProductArmAccumulateSaturate, 27, {IntegerDotProductArmAccumulateSaturate});
-    result |= check_vendor_profile("QCOM signedness", qcom, true, IntegerDotProductQcom, 37, {IntegerDotProductQcom});
+    result |= check_vendor_profile("ARM dot", arm, true, IntegerDotProductArm, arm_acceleration, {IntegerDotProductArm});
+    result |= check_vendor_profile("ARM accumulate only", acc, true, IntegerDotProductArmAccumulate, arm_acceleration, {IntegerDotProductArmAccumulate});
+    result |= check_vendor_profile("ARM saturate only", sat, true, IntegerDotProductArmAccumulateSaturate, arm_saturating_acceleration, {IntegerDotProductArmAccumulateSaturate});
+    result |= check_vendor_profile("QCOM signedness", qcom, true, IntegerDotProductQcom, qcom_acceleration, {IntegerDotProductQcom});
     result |= check_vendor_profile("extension name boundaries", "cl_arm_integer_dot_product_int8_extra cl_qcom_dot_product8_extra", false, IntegerDotProductKhr, 0, {});
     result |= check_vendor_profile("INT16 is not INT8", "cl_arm_integer_dot_product_accumulate_int16", false, IntegerDotProductKhr, 0, {});
     khr_capabilities_available = false;
-    result |= check_vendor_profile("KHR query failure", all, true, IntegerDotProductArmAccumulateSaturate, 27, {IntegerDotProductArmAccumulateSaturate});
+    result |= check_vendor_profile("KHR query failure", all, true, IntegerDotProductArmAccumulateSaturate, arm_saturating_acceleration, {IntegerDotProductArmAccumulateSaturate});
     khr_capabilities_available = true;
-    rejected_backends[IntegerDotProductKhr] = true;
-    result |= check_vendor_profile("KHR compile failure", all, true, IntegerDotProductArmAccumulateSaturate, 27, {IntegerDotProductKhr, IntegerDotProductArmAccumulateSaturate});
+    rejected_backends.insert(IntegerDotProductKhr);
+    result |= check_vendor_profile("KHR compile failure", all, true, IntegerDotProductArmAccumulateSaturate, arm_saturating_acceleration, {IntegerDotProductKhr, IntegerDotProductArmAccumulateSaturate});
     corrupted_backend = IntegerDotProductArmAccumulateSaturate;
     corrupted_result = 5;
-    result |= check_vendor_profile("ARM saturate arithmetic failure", all, true, IntegerDotProductArm, 3, {IntegerDotProductKhr, IntegerDotProductArmAccumulateSaturate, IntegerDotProductArm});
+    result |= check_vendor_profile("ARM saturate arithmetic failure", all, true, IntegerDotProductArm, arm_acceleration, {IntegerDotProductKhr, IntegerDotProductArmAccumulateSaturate, IntegerDotProductArm});
     corrupted_backend = -1;
     corrupted_result = -1;
-    rejected_backends[IntegerDotProductArmAccumulateSaturate] = true;
-    result |= check_vendor_profile("ARM saturate compile failure", all, true, IntegerDotProductArm, 3, {IntegerDotProductKhr, IntegerDotProductArmAccumulateSaturate, IntegerDotProductArm});
-    rejected_backends[IntegerDotProductArm] = true;
-    result |= check_vendor_profile("ARM dot compile failure", all, true, IntegerDotProductArmAccumulate, 3, {IntegerDotProductKhr, IntegerDotProductArmAccumulateSaturate, IntegerDotProductArm, IntegerDotProductArmAccumulate});
-    rejected_backends[IntegerDotProductArmAccumulate] = true;
-    result |= check_vendor_profile("all ARM candidates fail", all, true, IntegerDotProductQcom, 37, {IntegerDotProductKhr, IntegerDotProductArmAccumulateSaturate, IntegerDotProductArm, IntegerDotProductArmAccumulate, IntegerDotProductQcom});
-    rejected_backends[IntegerDotProductQcom] = true;
+    rejected_backends.insert(IntegerDotProductArmAccumulateSaturate);
+    result |= check_vendor_profile("ARM saturate compile failure", all, true, IntegerDotProductArm, arm_acceleration, {IntegerDotProductKhr, IntegerDotProductArmAccumulateSaturate, IntegerDotProductArm});
+    rejected_backends.insert(IntegerDotProductArm);
+    result |= check_vendor_profile("ARM dot compile failure", all, true, IntegerDotProductArmAccumulate, arm_acceleration, {IntegerDotProductKhr, IntegerDotProductArmAccumulateSaturate, IntegerDotProductArm, IntegerDotProductArmAccumulate});
+    rejected_backends.insert(IntegerDotProductArmAccumulate);
+    result |= check_vendor_profile("all ARM candidates fail", all, true, IntegerDotProductQcom, qcom_acceleration, {IntegerDotProductKhr, IntegerDotProductArmAccumulateSaturate, IntegerDotProductArm, IntegerDotProductArmAccumulate, IntegerDotProductQcom});
+    rejected_backends.insert(IntegerDotProductQcom);
     result |= check_vendor_profile("all candidates fail", all, false, IntegerDotProductKhr, 0, {IntegerDotProductKhr, IntegerDotProductArmAccumulateSaturate, IntegerDotProductArm, IntegerDotProductArmAccumulate, IntegerDotProductQcom});
-    memset(rejected_backends, 0, sizeof(rejected_backends));
+    rejected_backends.clear();
     for (corrupted_result = 0; corrupted_result < 6; corrupted_result++)
         result |= check_vendor_profile("incorrect arithmetic", qcom, false, IntegerDotProductKhr, 0, {IntegerDotProductQcom});
     corrupted_result = -1;
-    for (probe_failure = 1; probe_failure <= 6; probe_failure++)
+    for (ProbeFailure failure : {FailQueue, FailInputBuffer, FailOutputBuffer, FailKernelArgument, FailKernelEnqueue, FailBufferRead})
+    {
+        probe_failure = failure;
         result |= check_vendor_profile("runtime probe failure", arm, false, IntegerDotProductKhr, 0, {IntegerDotProductArm});
-    probe_failure = 0;
+    }
+    probe_failure = ProbeSuccess;
     language_version = 0;
     expected_build_options = "";
     return result;

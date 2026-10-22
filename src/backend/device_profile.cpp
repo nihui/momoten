@@ -219,109 +219,6 @@ public:
         return success;
     }
 
-    bool vendor_integer_dot_product(momoten::IntegerDotProductBackend backend)
-    {
-        std::string source = "#pragma OPENCL EXTENSION " + std::string(momoten::integer_dot_product_extension(backend)) + " : enable\n";
-        source += momoten::integer_dot_product_helpers(backend);
-        source += "__kernel void momo_integer_dot_product_probe(__global const uint4* input, __global uint* output)\n"
-                  "{\n"
-                  "    size_t i = get_global_id(0);\n"
-                  "    uint4 v = input[i];\n"
-                  "    output += i * 6;\n"
-                  "    output[0] = as_uint(momo_dot_ss(v.x, v.y));\n"
-                  "    output[1] = momo_dot_uu(v.x, v.y);\n"
-                  "    output[2] = as_uint(momo_dot_su(v.x, v.y));\n"
-                  "    output[3] = as_uint(momo_dot_acc_sat_ss(v.x, v.y, as_int(v.z)));\n"
-                  "    output[4] = momo_dot_acc_sat_uu(v.x, v.y, v.z);\n"
-                  "    output[5] = as_uint(momo_dot_acc_sat_su(v.x, v.y, as_int(v.z)));\n"
-                  "}\n";
-        if (!build(source, "momo_integer_dot_product_probe"))
-            return false;
-
-        // Runtime inputs exercise negative bytes, asymmetric lanes, unsigned
-        // accumulators above INT_MAX and cancellation around both signed limits.
-        // This also rejects drivers implementing a different QCOM signedness.
-        static const uint32_t values[] = {0u, 1u, 0x7f7f7f7fu, 0x80808080u, 0xffffffffu, 0x01027ffeu, 0xff807f01u, 0x7fffffffu, 0x80000000u};
-        std::vector<uint32_t> input;
-        std::vector<uint32_t> expected;
-        for (uint32_t a : values)
-            for (uint32_t b : values)
-                for (uint32_t c : values)
-                {
-                    input.push_back(a);
-                    input.push_back(b);
-                    input.push_back(c);
-                    input.push_back(0);
-                    int64_t ss = 0, uu = 0, su = 0;
-                    for (uint32_t shift = 0; shift < 32; shift += 8)
-                    {
-                        const int64_t ua = (a >> shift) & 255u;
-                        const int64_t ub = (b >> shift) & 255u;
-                        const int64_t sa = ua < 128 ? ua : ua - 256;
-                        const int64_t sb = ub < 128 ? ub : ub - 256;
-                        ss += sa * sb;
-                        uu += ua * ub;
-                        su += sa * ub;
-                    }
-                    const int64_t signed_c = c < 0x80000000u ? int64_t(c) : int64_t(c) - 0x100000000LL;
-                    expected.push_back(static_cast<uint32_t>(ss));
-                    expected.push_back(static_cast<uint32_t>(uu));
-                    expected.push_back(static_cast<uint32_t>(su));
-                    expected.push_back(static_cast<uint32_t>(std::max<int64_t>(-2147483648LL, std::min<int64_t>(2147483647LL, ss + signed_c))));
-                    expected.push_back(static_cast<uint32_t>(std::min<int64_t>(4294967295LL, uu + c)));
-                    expected.push_back(static_cast<uint32_t>(std::max<int64_t>(-2147483648LL, std::min<int64_t>(2147483647LL, su + signed_c))));
-                }
-        std::vector<uint32_t> output(expected.size(), 0);
-        return run_buffer_probe(input.data(), input.size() * sizeof(uint32_t), output.data(), output.size() * sizeof(uint32_t), input.size() / 4)
-               && output == expected;
-    }
-
-    bool packed_fp16_vector_loads()
-    {
-        // Packed reads require alias-safe vector types with four-byte
-        // alignment. Check 64-bit and 128-bit reads and the implementation-
-        // defined uint2-to-half4 mapping with every 16-bit pattern per lane.
-        cl_device_type type = 0;
-        if (g_opencl.p_clGetDeviceInfo(device, CL_DEVICE_TYPE, sizeof(type), &type, 0) != CL_SUCCESS || !(type & CL_DEVICE_TYPE_GPU))
-            return false;
-        static const char source[] = "#pragma OPENCL EXTENSION cl_khr_fp16 : enable\n"
-                                     "#if !defined(__has_attribute)\n"
-                                     "#error Missing attribute support\n"
-                                     "#elif !__has_attribute(may_alias) || !__has_attribute(aligned)\n"
-                                     "#error Missing alias or alignment attributes\n"
-                                     "#endif\n"
-                                     "typedef uint2 momo_alias_uint2 __attribute__((may_alias, aligned(4)));\n"
-                                     "typedef uint4 momo_alias_uint4 __attribute__((may_alias, aligned(4)));\n"
-                                     "typedef char check_alignment[(__alignof__(momo_alias_uint2) == 4 && __alignof__(momo_alias_uint4) == 4) ? 1 : -1];\n"
-                                     "__kernel void momo_packed_half_probe(__global const half* input, __global half* output)\n"
-                                     "{\n"
-                                     "    size_t i = get_global_id(0);\n"
-                                     "    input += 2;\n"
-                                     "    uint2 narrow = ((__global const momo_alias_uint2*)input)[i];\n"
-                                     "    uint4 wide = ((__global const momo_alias_uint4*)input)[i / 2];\n"
-                                     "    uint2 grouped = (i & 1) ? wide.s23 : wide.s01;\n"
-                                     "    half4 value = as_half4(narrow);\n"
-                                     "    if (any(narrow != grouped)) value = (half4)(0.0f);\n"
-                                     "    vstore4(value.wzyx, i, output);\n"
-                                     "}\n";
-        if (!build(source, "momo_packed_half_probe"))
-            return false;
-
-        const size_t count = 65536;
-        std::vector<cl_ushort> input(count * 4 + 2, 0);
-        std::vector<cl_ushort> output(count * 4, 0);
-        for (size_t i = 0; i < count; i++)
-            for (size_t lane = 0; lane < 4; lane++)
-                input[i * 4 + lane + 2] = static_cast<cl_ushort>(i + lane * 16381);
-        if (!run_buffer_probe(input.data(), input.size() * sizeof(cl_ushort), output.data(), output.size() * sizeof(cl_ushort), count))
-            return false;
-        for (size_t i = 0; i < count; i++)
-            for (size_t lane = 0; lane < 4; lane++)
-                if (output[i * 4 + lane] != input[i * 4 + 3 - lane + 2])
-                    return false;
-        return true;
-    }
-
 private:
     OpenCLCapabilityProbe(const OpenCLCapabilityProbe&) = delete;
     OpenCLCapabilityProbe& operator=(const OpenCLCapabilityProbe&) = delete;
@@ -331,6 +228,52 @@ private:
     cl_context context;
     cl_kernel kernel;
 };
+
+static bool probe_packed_fp16_vector_loads(OpenCLCapabilityProbe& probe, cl_device_id device)
+{
+    // Packed reads require alias-safe vector types with four-byte
+    // alignment. Check 64-bit and 128-bit reads and the implementation-
+    // defined uint2-to-half4 mapping with every 16-bit pattern per lane.
+    cl_device_type type = 0;
+    if (g_opencl.p_clGetDeviceInfo(device, CL_DEVICE_TYPE, sizeof(type), &type, 0) != CL_SUCCESS || !(type & CL_DEVICE_TYPE_GPU))
+        return false;
+    static const char source[] = "#pragma OPENCL EXTENSION cl_khr_fp16 : enable\n"
+                                 "#if !defined(__has_attribute)\n"
+                                 "#error Missing attribute support\n"
+                                 "#elif !__has_attribute(may_alias) || !__has_attribute(aligned)\n"
+                                 "#error Missing alias or alignment attributes\n"
+                                 "#endif\n"
+                                 "typedef uint2 momo_alias_uint2 __attribute__((may_alias, aligned(4)));\n"
+                                 "typedef uint4 momo_alias_uint4 __attribute__((may_alias, aligned(4)));\n"
+                                 "typedef char check_alignment[(__alignof__(momo_alias_uint2) == 4 && __alignof__(momo_alias_uint4) == 4) ? 1 : -1];\n"
+                                 "__kernel void momo_packed_half_probe(__global const half* input, __global half* output)\n"
+                                 "{\n"
+                                 "    size_t i = get_global_id(0);\n"
+                                 "    input += 2;\n"
+                                 "    uint2 narrow = ((__global const momo_alias_uint2*)input)[i];\n"
+                                 "    uint4 wide = ((__global const momo_alias_uint4*)input)[i / 2];\n"
+                                 "    uint2 grouped = (i & 1) ? wide.s23 : wide.s01;\n"
+                                 "    half4 value = as_half4(narrow);\n"
+                                 "    if (any(narrow != grouped)) value = (half4)(0.0f);\n"
+                                 "    vstore4(value.wzyx, i, output);\n"
+                                 "}\n";
+    if (!probe.build(source, "momo_packed_half_probe"))
+        return false;
+
+    const size_t count = 65536;
+    std::vector<cl_ushort> input(count * 4 + 2, 0);
+    std::vector<cl_ushort> output(count * 4, 0);
+    for (size_t i = 0; i < count; i++)
+        for (size_t lane = 0; lane < 4; lane++)
+            input[i * 4 + lane + 2] = static_cast<cl_ushort>(i + lane * 16381);
+    if (!probe.run_buffer_probe(input.data(), input.size() * sizeof(cl_ushort), output.data(), output.size() * sizeof(cl_ushort), count))
+        return false;
+    for (size_t i = 0; i < count; i++)
+        for (size_t lane = 0; lane < 4; lane++)
+            if (output[i * 4 + lane] != input[i * 4 + 3 - lane + 2])
+                return false;
+    return true;
+}
 
 static uint32_t probe_native_subgroup_size(OpenCLCapabilityProbe& probe, cl_device_id device, const std::string& extensions, size_t max_workgroup_size, size_t max_work_item_size_x)
 {
@@ -475,6 +418,63 @@ static bool probe_khr_integer_dot_product(
     return profile.supported;
 }
 
+static bool probe_vendor_integer_dot_product(OpenCLCapabilityProbe& probe, momoten::IntegerDotProductBackend backend)
+{
+    std::string source = "#pragma OPENCL EXTENSION " + std::string(momoten::integer_dot_product_extension(backend)) + " : enable\n";
+    source += momoten::integer_dot_product_helpers(backend);
+    source += "__kernel void momo_integer_dot_product_probe(__global const uint4* input, __global uint* output)\n"
+              "{\n"
+              "    size_t i = get_global_id(0);\n"
+              "    uint4 v = input[i];\n"
+              "    output += i * 6;\n"
+              "    output[0] = as_uint(momo_dot_ss(v.x, v.y));\n"
+              "    output[1] = momo_dot_uu(v.x, v.y);\n"
+              "    output[2] = as_uint(momo_dot_su(v.x, v.y));\n"
+              "    output[3] = as_uint(momo_dot_acc_sat_ss(v.x, v.y, as_int(v.z)));\n"
+              "    output[4] = momo_dot_acc_sat_uu(v.x, v.y, v.z);\n"
+              "    output[5] = as_uint(momo_dot_acc_sat_su(v.x, v.y, as_int(v.z)));\n"
+              "}\n";
+    if (!probe.build(source, "momo_integer_dot_product_probe"))
+        return false;
+
+    // Runtime inputs exercise negative bytes, asymmetric lanes, unsigned
+    // accumulators above INT_MAX and cancellation around both signed limits.
+    // This also rejects drivers implementing a different QCOM signedness.
+    static const uint32_t values[] = {0u, 1u, 0x7f7f7f7fu, 0x80808080u, 0xffffffffu, 0x01027ffeu, 0xff807f01u, 0x7fffffffu, 0x80000000u};
+    std::vector<uint32_t> input;
+    std::vector<uint32_t> expected;
+    for (uint32_t a : values)
+        for (uint32_t b : values)
+            for (uint32_t c : values)
+            {
+                input.push_back(a);
+                input.push_back(b);
+                input.push_back(c);
+                input.push_back(0);
+                int64_t ss = 0, uu = 0, su = 0;
+                for (uint32_t shift = 0; shift < 32; shift += 8)
+                {
+                    const int64_t ua = (a >> shift) & 255u;
+                    const int64_t ub = (b >> shift) & 255u;
+                    const int64_t sa = ua < 128 ? ua : ua - 256;
+                    const int64_t sb = ub < 128 ? ub : ub - 256;
+                    ss += sa * sb;
+                    uu += ua * ub;
+                    su += sa * ub;
+                }
+                const int64_t signed_c = c < 0x80000000u ? int64_t(c) : int64_t(c) - 0x100000000LL;
+                expected.push_back(static_cast<uint32_t>(ss));
+                expected.push_back(static_cast<uint32_t>(uu));
+                expected.push_back(static_cast<uint32_t>(su));
+                expected.push_back(static_cast<uint32_t>(std::max<int64_t>(-2147483648LL, std::min<int64_t>(2147483647LL, ss + signed_c))));
+                expected.push_back(static_cast<uint32_t>(std::min<int64_t>(4294967295LL, uu + c)));
+                expected.push_back(static_cast<uint32_t>(std::max<int64_t>(-2147483648LL, std::min<int64_t>(2147483647LL, su + signed_c))));
+            }
+    std::vector<uint32_t> output(expected.size(), 0);
+    return probe.run_buffer_probe(input.data(), input.size() * sizeof(uint32_t), output.data(), output.size() * sizeof(uint32_t), input.size() / 4)
+           && output == expected;
+}
+
 static void probe_integer_dot_product(
     OpenCLCapabilityProbe& probe, cl_device_id device, const std::string& extensions,
     IntegerDotProductProfile& profile, const OpenCLDriverPolicy& policy)
@@ -493,7 +493,7 @@ static void probe_integer_dot_product(
     for (momoten::IntegerDotProductBackend backend : candidates)
     {
         if (!extension_string_contains(extensions, momoten::integer_dot_product_extension(backend))
-            || !probe.vendor_integer_dot_product(backend))
+            || !probe_vendor_integer_dot_product(probe, backend))
             continue;
         profile.supported = true;
         profile.backend = backend;
@@ -523,7 +523,7 @@ ShaderDeviceProfile probe_shader_device_profile(
     profile.byte_addressable_store = profile.compiler.version >= 110 || extension_string_contains(extensions, "cl_khr_byte_addressable_store");
     OpenCLCapabilityProbe probe(device, profile.compiler);
     profile.fp16 = extension_string_contains(extensions, "cl_khr_fp16");
-    profile.packed_fp16_vector_loads = profile.fp16 && probe.packed_fp16_vector_loads();
+    profile.packed_fp16_vector_loads = profile.fp16 && probe_packed_fp16_vector_loads(probe, device);
     profile.int64 = declares_int64(device, extensions);
 
     cl_device_fp_config double_config = 0;
