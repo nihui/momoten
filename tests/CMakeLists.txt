@@ -564,11 +564,14 @@ if(TARGET momoten_test_opencl)
             buffer-vector-load)
     foreach(prefix "" "fp16_")
         string(REPLACE "_" "-" mode "${prefix}buffer-read-write")
+        add_test(NAME momoten_opencl_${prefix}buffer_read_write_scalar
+            COMMAND momoten_opencl_test "${momoten_${prefix}buffer_read_write_test_spv}" ${mode} scalar-vector-memory)
         add_test(NAME momoten_opencl_${prefix}buffer_read_write
             COMMAND momoten_opencl_test "${momoten_${prefix}buffer_read_write_test_spv}" ${mode})
         add_test(NAME momoten_opencl_${prefix}buffer_read_write_native_stores
             COMMAND momoten_opencl_test "${momoten_${prefix}buffer_read_write_test_spv}" ${mode} native-vector-memory)
         set_tests_properties(momoten_opencl_${prefix}buffer_read_write
+            momoten_opencl_${prefix}buffer_read_write_scalar
             momoten_opencl_${prefix}buffer_read_write_native_stores PROPERTIES
             LABELS "momoten;runtime;direct-opencl"
             SKIP_RETURN_CODE 77)

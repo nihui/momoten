@@ -1149,7 +1149,7 @@ static int run_coalesced_load_kernel(cl_context context, cl_command_queue queue,
     return status;
 }
 
-template<typename T>
+template<typename T, int mismatch_status = 1>
 static int run_buffer_read_write_kernel(cl_context context, cl_command_queue queue, cl_kernel kernel,
                                         const momoten::TranslationResult& translated, cl_uint address_bits)
 {
@@ -1203,10 +1203,78 @@ static int run_buffer_read_write_kernel(cl_context context, cl_command_queue que
                     {
                         fprintf(stderr, "opencl_test: read=%u write=%u buffer=%zu word[%zu]=%08x expected=%08x\n",
                                 read_index, write_index, buffer, i, static_cast<unsigned>(data[buffer][i]), static_cast<unsigned>(expected[buffer][i]));
-                        return 1;
+                        return mismatch_status;
                     }
         }
     return 0;
+}
+
+static int check_cpu_buffer_read_write(cl_context context, cl_command_queue queue, cl_device_id device,
+                                       const momoten::TranslationResult& translated, cl_uint address_bits,
+                                       bool native_stores)
+{
+    cl_device_type device_type = 0;
+    cl_int ret = clGetDeviceInfo(device, CL_DEVICE_TYPE, sizeof(device_type), &device_type, 0);
+    if (ret != CL_SUCCESS)
+        return fail("buffer read/write device type", ret);
+    if (device_type != CL_DEVICE_TYPE_CPU)
+        return 0;
+
+    // The driver disables native vector memory operations on CPUs. Keep the
+    // extra native-path coverage where it works, but independently reproduce
+    // any CPU limitation with handwritten OpenCL before skipping that path.
+    // Build/API errors remain failures, as do all GPU or translator failures.
+    if (translated.abi.buffers.size() != 3 || translated.abi.push_constant_arg_index != 6)
+        return fail("native read/write probe ABI", CL_INVALID_ARG_VALUE);
+    for (size_t i = 0; i < 3; i++)
+        if (translated.abi.buffers[i].buffer_arg_index != i * 2 || translated.abi.buffers[i].offset_arg_index != i * 2 + 1)
+            return fail("native read/write probe buffer ABI", CL_INVALID_ARG_VALUE);
+
+    momoten::TranslationResult probe = translated;
+    probe.abi.entry_point = "momo_probe";
+    probe.source = std::string("typedef ") + (address_bits == 64 ? "ulong" : "uint") + " momo_probe_offset;\n";
+    probe.source += R"cl(
+__kernel void momo_probe(__global uchar *a, momo_probe_offset ao,
+                         __global uchar *b, momo_probe_offset bo,
+                         __global uchar *o, momo_probe_offset oo, uint r, uint w)
+{
+    __global float *scalars = (__global float *)(a + ao);
+    __global float *pairs = (__global float *)(b + bo);
+    __global uint *output = (__global uint *)(o + oo);
+)cl";
+    const char* inputs[] = {"scalars", "pairs"};
+    for (size_t input = 0; input < 2; input++)
+    {
+        const std::string name = inputs[input];
+        probe.source += "    {\n";
+        probe.source += "        float4 before = vload4(0, " + name + " + r * 4);\n";
+        if (input == 1 && native_stores)
+        {
+            probe.source += "        vstore2((float2)(1.0f, 2.0f), 0, " + name + " + w * 4);\n";
+            probe.source += "        vstore2((float2)(3.0f, 4.0f), 0, " + name + " + w * 4 + 2);\n";
+        }
+        else
+            for (size_t lane = 0; lane < 4; lane++)
+                probe.source += "        " + name + "[w * 4 + " + std::to_string(lane) + "] = " + std::to_string(lane + 1) + ".0f;\n";
+        probe.source += "        float4 after = vload4(0, " + name + " + r * 4);\n";
+        for (size_t lane = 0; lane < 4; lane++)
+        {
+            probe.source += "        output[" + std::to_string(input * 8 + lane) + "] = as_uint(before.s" + std::to_string(lane) + ");\n";
+            probe.source += "        output[" + std::to_string(input * 8 + 4 + lane) + "] = as_uint(after.s" + std::to_string(lane) + ");\n";
+        }
+        probe.source += "    }\n";
+    }
+    probe.source += "}\n";
+    cl_program program = 0;
+    cl_kernel kernel = 0;
+    if (build_test_kernel(context, device, probe, program, kernel))
+        return 1;
+    const int status = run_buffer_read_write_kernel<cl_uint, 77>(context, queue, kernel, probe, address_bits);
+    clReleaseKernel(kernel);
+    clReleaseProgram(program);
+    if (status == 77)
+        fprintf(stderr, "opencl_test: handwritten vload4 read/write probe returned incorrect values on this CPU; skipping forced native path (driver uses scalar memory operations)\n");
+    return status;
 }
 
 static int run_buffer_vector_load_kernel(cl_context context, cl_command_queue queue, cl_kernel kernel,
@@ -1536,10 +1604,11 @@ int main(int argc, char** argv)
 {
     const bool native_vector_loads = argc == 4 && strcmp(argv[3], "native-vector-loads") == 0;
     const bool native_vector_memory = argc == 4 && strcmp(argv[3], "native-vector-memory") == 0;
-    const OpenCLTestCase* test_case = find_opencl_test_case(native_vector_loads || native_vector_memory ? 3 : argc, argv);
+    const bool scalar_vector_memory = argc == 4 && strcmp(argv[3], "scalar-vector-memory") == 0;
+    const OpenCLTestCase* test_case = find_opencl_test_case(native_vector_loads || native_vector_memory || scalar_vector_memory ? 3 : argc, argv);
     if (!test_case)
     {
-        fprintf(stderr, "opencl_test: expected SPIR-V input path and optional fp16, fp64, int16, atomic-packed, scalar-16bit, subgroup-basic, integer-dot-product, integer-ranges, workgroup-split, workgroup-3d, vector-access, vector-access-fp64, vector-extract-int16, buffer-vector-load, buffer-vector-store, fp16-vector-load, coalesced-buffer-load, coalesced-fp16-load, buffer-read-write, fp16-buffer-read-write, pow-scalar, pow-vec2, pow-vec3, or pow-vec4 mode, followed optionally by native-vector-loads or native-vector-memory\n");
+        fprintf(stderr, "opencl_test: expected SPIR-V input path and optional fp16, fp64, int16, atomic-packed, scalar-16bit, subgroup-basic, integer-dot-product, integer-ranges, workgroup-split, workgroup-3d, vector-access, vector-access-fp64, vector-extract-int16, buffer-vector-load, buffer-vector-store, fp16-vector-load, coalesced-buffer-load, coalesced-fp16-load, buffer-read-write, fp16-buffer-read-write, pow-scalar, pow-vec2, pow-vec3, or pow-vec4 mode, followed optionally by native-vector-loads, native-vector-memory or scalar-vector-memory\n");
         return 1;
     }
 
@@ -1576,6 +1645,12 @@ int main(int argc, char** argv)
         options.native_buffer_vector_loads = true;
         options.native_buffer_vector_stores = true;
         options.packed_fp16_vector_loads = true;
+    }
+    if (scalar_vector_memory)
+    {
+        options.native_buffer_vector_loads = false;
+        options.native_buffer_vector_stores = false;
+        options.packed_fp16_vector_loads = false;
     }
     if (test_case->feature >= OpenCLTestPowScalar && test_case->feature <= OpenCLTestPowVec4)
     {
@@ -1642,8 +1717,11 @@ int main(int argc, char** argv)
             count++;
             position++;
         }
-        if (count != (test_case->feature == OpenCLTestBufferReadWrite ? 4u : 2u))
-            return fail("buffer read/write fixture must retain coalesced loads", CL_INVALID_VALUE);
+        size_t expected = test_case->feature == OpenCLTestBufferReadWrite ? 4u : 2u;
+        if (scalar_vector_memory)
+            expected = 0;
+        if (count != expected)
+            return fail("buffer read/write fixture load policy", CL_INVALID_VALUE);
     }
 
     if (translated.abi.int64 && !device_has_int64(device))
@@ -1727,6 +1805,18 @@ int main(int argc, char** argv)
     {
         clReleaseContext(context);
         return fail("clCreateCommandQueue", ret);
+    }
+
+    if (test_case->feature == OpenCLTestBufferReadWrite && options.native_buffer_vector_loads)
+    {
+        const int status = check_cpu_buffer_read_write(context, queue, device, translated, address_bits,
+                                                       options.native_buffer_vector_stores);
+        if (status)
+        {
+            clReleaseCommandQueue(queue);
+            clReleaseContext(context);
+            return status;
+        }
     }
 
     cl_program program = 0;
