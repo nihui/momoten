@@ -23,6 +23,7 @@ translator src/translator/opencl_prelude.cpp
 translator src/translator/opencl_integer_dot.cpp
 translator src/translator/opencl_subgroup.cpp
 translator src/translator/opencl_matrix.cpp
+translator src/translator/opencl_buffer_alias.cpp
 translator src/translator/opencl_memory.cpp
 translator src/translator/opencl_codegen.cpp
 

@@ -419,6 +419,7 @@ ShaderDeviceProfile probe_shader_device_profile(
 {
     ShaderDeviceProfile profile;
     profile.compiler = probe_opencl_compiler_profile(device);
+    profile.byte_addressable_store = profile.compiler.version >= 110 || extension_string_contains(extensions, "cl_khr_byte_addressable_store");
     OpenCLCapabilityProbe probe(device, profile.compiler);
     profile.fp16 = extension_string_contains(extensions, "cl_khr_fp16");
     profile.packed_fp16_vector_loads = profile.fp16 && probe.packed_fp16_vector_loads();
@@ -490,7 +491,7 @@ IntegerDotProductProfile::IntegerDotProductProfile()
 }
 
 ShaderDeviceProfile::ShaderDeviceProfile()
-    : fp16(false), packed_fp16_vector_loads(false), int64(false), fp64(false), float_controls2(true), denorm_preserve_widths(0), round_to_nearest_widths(0), signed_zero_inf_nan_preserve_widths(0), subgroup_mode(momoten::SubgroupModeSingleton), subgroup_size(1), subgroup_operations(VK_SUBGROUP_FEATURE_BASIC_BIT)
+    : byte_addressable_store(false), fp16(false), packed_fp16_vector_loads(false), int64(false), fp64(false), float_controls2(true), denorm_preserve_widths(0), round_to_nearest_widths(0), signed_zero_inf_nan_preserve_widths(0), subgroup_mode(momoten::SubgroupModeSingleton), subgroup_size(1), subgroup_operations(VK_SUBGROUP_FEATURE_BASIC_BIT)
 {
 }
 
@@ -505,6 +506,7 @@ void configure_translation_options(
     const ShaderDeviceProfile& physical = device->physical_device->shader_profile;
     const EnabledShaderProfile& enabled = device->enabled_shader_profile;
     options.address_bits = device->physical_device->address_bits;
+    options.byte_addressable_store = physical.byte_addressable_store;
     options.native_buffer_vector_loads = (device->physical_device->opencl_device_type & CL_DEVICE_TYPE_GPU) != 0;
     options.native_buffer_vector_stores = options.native_buffer_vector_loads;
     const cl_uint offset_alignment = device->physical_device->mem_base_alignment_bits / 8;

@@ -1,0 +1,72 @@
+// Copyright 2026 nihui
+// SPDX-License-Identifier: Apache-2.0
+
+#version 450
+layout(local_size_x = 1) in;
+layout(binding = 0, std430) buffer Matrices { mat4 data[]; } matrices;
+layout(binding = 1, std430) buffer Scalars { float data[]; } scalars;
+layout(binding = 2, std430) buffer Output { uint data[]; } output_buffer;
+layout(binding = 3, std430) readonly buffer Input { float data[]; } input_buffer;
+layout(push_constant) uniform Parameters { uint column; uint lane; } p;
+
+void main()
+{
+    uint column = p.column & 3u;
+    uint lane = p.lane & 3u;
+    uvec4 value = uvec4(10u, 20u, 30u, 40u);
+    uint sum = 0u;
+    for (uint i = 0u; i < 4u; ++i, value[lane] = i)
+    {
+        if (i == 1u)
+            continue;
+        sum += i;
+    }
+    output_buffer.data[0] = value[lane];
+    output_buffer.data[1] = sum;
+
+    for (uint i = 0u; i < 4u; ++i, value[lane] = i)
+    {
+        if (i == 2u)
+            break;
+    }
+    output_buffer.data[2] = value[lane];
+
+    sum = 0u;
+    for (uint i = 0u; i < 4u; scalars.data[4u + i++] = 3.0)
+    {
+        if (i == 1u)
+            continue;
+        sum += i;
+    }
+    output_buffer.data[3] = sum;
+
+    sum = 0u;
+    for (uint i = 0u; i < 4u; i = uint(scalars.data[i]))
+    {
+        if (i == 1u)
+            continue;
+        sum += i;
+    }
+    output_buffer.data[4] = sum;
+
+    sum = 0u;
+    for (uint i = 0u, base = 0u; i < 4u;
+         sum += uint(input_buffer.data[base]) + uint(input_buffer.data[base + 1u])
+                + uint(input_buffer.data[base + 2u]) + uint(input_buffer.data[base + 3u]), base += 4u, ++i)
+    {
+        if (i == 1u)
+            continue;
+    }
+    output_buffer.data[9] = sum;
+
+    output_buffer.data[5] = floatBitsToUint(matrices.data[0][1][2]);
+    output_buffer.data[6] = floatBitsToUint(matrices.data[1][column][lane]);
+    matrices.data[0][1][2] = 7.0;
+    matrices.data[1][column][lane] = 9.0;
+    output_buffer.data[7] = floatBitsToUint(matrices.data[0][1][2]);
+    output_buffer.data[8] = floatBitsToUint(matrices.data[1][column][lane]);
+
+    // Whole matrices and columns use the same address calculation as lanes.
+    matrices.data[2] = matrices.data[1];
+    matrices.data[2][column] = matrices.data[0][column];
+}

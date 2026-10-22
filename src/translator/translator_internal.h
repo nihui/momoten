@@ -104,7 +104,19 @@ private:
         uint32_t index;
     };
 
+    struct BufferAccessChain
+    {
+        uint32_t base;
+        std::vector<uint32_t> indices;
+    };
+
     bool emit_memory_instruction(const Instruction& instruction, const uint32_t* ops);
+    void require_statement_continue();
+    void track_aliased_buffer_access(const Instruction& instruction, const uint32_t* ops);
+    std::string aliased_buffer_address(uint32_t pointer);
+    std::string aliased_scalar_load(const SPIRType& type, const std::string& address, uint32_t offset);
+    void emit_aliased_scalar_store(const SPIRType& type, const std::string& address, uint32_t offset,
+                                   const std::string& value, const std::string& temporary);
     void track_private_vector_access(const Instruction& instruction, const uint32_t* ops);
     bool emit_private_vector_access(const Instruction& instruction, const uint32_t* ops);
     bool emit_coalesced_buffer_load(const Instruction& instruction, const uint32_t* ops);
@@ -150,6 +162,7 @@ private:
     std::set<uint32_t> storage_block_types;
     std::map<uint32_t, CoalescedBufferLoad> coalesced_buffer_loads;
     std::map<uint32_t, PrivateVectorAccess> private_vector_accesses;
+    std::map<uint32_t, BufferAccessChain> buffer_access_chains;
 };
 
 } // namespace momoten

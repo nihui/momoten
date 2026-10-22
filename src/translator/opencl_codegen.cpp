@@ -134,6 +134,12 @@ void CompilerOpenCL::emit_header()
         statement("#pragma OPENCL EXTENSION cl_khr_global_int32_base_atomics : enable");
     if (requires_fp16)
         statement("#pragma OPENCL EXTENSION cl_khr_fp16 : enable");
+    if (translation_options.byte_addressable_store)
+    {
+        statement("#if defined(cl_khr_byte_addressable_store) && (!defined(__OPENCL_C_VERSION__) || __OPENCL_C_VERSION__ < 110)");
+        statement("#pragma OPENCL EXTENSION cl_khr_byte_addressable_store : enable");
+        statement("#endif");
+    }
     if (requires_fp64)
     {
         statement("#if !defined(__opencl_c_fp64)");

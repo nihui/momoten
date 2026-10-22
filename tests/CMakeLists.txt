@@ -361,12 +361,28 @@ momoten_compile_test_shader(momoten_fp16_vector_load_test_spv fp16_vector_load.c
 momoten_compile_test_shader(momoten_coalesced_buffer_load_test_spv coalesced_buffer_load.comp vulkan1.1)
 momoten_compile_test_shader(momoten_coalesced_fp16_load_test_spv coalesced_fp16_load.comp vulkan1.1)
 momoten_compile_test_shader(momoten_buffer_alias_test_spv buffer_alias.comp vulkan1.1)
+momoten_compile_test_shader(momoten_memory_lowering_test_spv memory_lowering.comp vulkan1.1)
 momoten_compile_test_shader(momoten_buffer_read_write_test_spv buffer_read_write.comp vulkan1.1)
 momoten_compile_test_shader(momoten_fp16_buffer_read_write_test_spv fp16_buffer_read_write.comp vulkan1.1)
 momoten_compile_test_shader(momoten_pow_constant_base_test_spv pow_constant_base.comp vulkan1.0)
 momoten_compile_test_shader(momoten_integer_ranges_test_spv integer_ranges.comp vulkan1.0)
 
 add_custom_target(momoten-test-spv DEPENDS ${momoten_test_spv_files})
+
+function(momoten_add_memory_lowering_test target translator)
+    add_executable(${target} translator/memory_lowering_test.cpp)
+    target_compile_features(${target} PRIVATE cxx_std_11)
+    target_link_libraries(${target} PRIVATE ${translator} momoten::headers SPIRV-Tools-static)
+    add_dependencies(${target} momoten-test-spv)
+    add_test(NAME ${target} COMMAND ${target}
+        "${momoten_memory_lowering_test_spv}" "${momoten_fp16_buffer_read_write_test_spv}" "${momoten_fp64_test_spv}")
+    set_tests_properties(${target} PROPERTIES LABELS "momoten;translator;memory")
+endfunction()
+
+momoten_add_memory_lowering_test(momoten_memory_lowering_test momoten::translator)
+if(TARGET momoten_amalgamated_translator)
+    momoten_add_memory_lowering_test(momoten_amalgamated_memory_lowering_test momoten_amalgamated_translator)
+endif()
 
 add_executable(momoten_translator_test translator/translator_test.cpp)
 target_compile_features(momoten_translator_test PRIVATE cxx_std_11)
@@ -443,6 +459,17 @@ if(DEFINED NCNN_MOMOTEN_CLANG AND NOT DEFINED MOMOTEN_CLANG)
 endif()
 find_program(MOMOTEN_CLANG clang)
 if(MOMOTEN_CLANG)
+    add_test(NAME momoten_memory_lowering_syntax
+        COMMAND "${CMAKE_COMMAND}"
+            -DTEST=$<TARGET_FILE:momoten_memory_lowering_test>
+            -DCLANG=${MOMOTEN_CLANG}
+            -DSPV=${momoten_memory_lowering_test_spv}
+            -DFP16_SPV=${momoten_fp16_buffer_read_write_test_spv}
+            -DFP64_SPV=${momoten_fp64_test_spv}
+            -DOUTPUT_DIR=${CMAKE_CURRENT_BINARY_DIR}/memory-lowering
+            -P "${CMAKE_CURRENT_SOURCE_DIR}/translator/memory_lowering_test.cmake")
+    set_tests_properties(momoten_memory_lowering_syntax PROPERTIES
+        LABELS "momoten;translator;opencl-1.0")
     # Keep syntax regressions active in runtime-only CI without installing a CLI.
     if(TARGET momoten_spv_to_clc)
         set(momoten_syntax_translator momoten_spv_to_clc)
@@ -586,11 +613,23 @@ if(TARGET momoten_test_opencl)
         endforeach()
     endforeach()
     foreach(mode scalar-vector-memory native-vector-loads native-vector-memory)
+        add_test(NAME momoten_opencl_memory_lowering_${mode}
+            COMMAND momoten_opencl_test "${momoten_memory_lowering_test_spv}" memory-lowering ${mode})
+        set_tests_properties(momoten_opencl_memory_lowering_${mode} PROPERTIES
+            LABELS "momoten;runtime;direct-opencl" SKIP_RETURN_CODE 77)
         add_test(NAME momoten_opencl_fp16_buffer_alias_${mode}
             COMMAND momoten_opencl_test "${momoten_fp16_buffer_read_write_test_spv}" fp16-buffer-alias ${mode})
         set_tests_properties(momoten_opencl_fp16_buffer_alias_${mode} PROPERTIES
             LABELS "momoten;runtime;direct-opencl" SKIP_RETURN_CODE 77)
     endforeach()
+    add_test(NAME momoten_opencl_fp64_buffer_alias
+        COMMAND momoten_opencl_test "${momoten_fp64_test_spv}" fp64-buffer-alias)
+    set_tests_properties(momoten_opencl_fp64_buffer_alias PROPERTIES
+        LABELS "momoten;runtime;direct-opencl" SKIP_RETURN_CODE 77)
+    add_test(NAME momoten_opencl_memory_lowering_copied
+        COMMAND momoten_opencl_test "${momoten_memory_lowering_test_spv}" memory-lowering-copied native-vector-memory)
+    set_tests_properties(momoten_opencl_memory_lowering_copied PROPERTIES
+        LABELS "momoten;runtime;direct-opencl" SKIP_RETURN_CODE 77)
     foreach(width scalar vec2 vec3 vec4)
         add_test(NAME momoten_opencl_pow_${width}
             COMMAND momoten_opencl_test "${momoten_pow_constant_base_test_spv}"

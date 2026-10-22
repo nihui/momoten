@@ -161,6 +161,7 @@ static int check(const char* name, const LoadFixture& fixture, unsigned expected
     momoten::TranslationOptions options;
     options.native_buffer_vector_loads = fixture.native;
     options.packed_fp16_vector_loads = fixture.packed_half;
+    options.byte_addressable_store = fixture.width == 16;
     const auto groups = momoten::plan_coalesced_buffer_loads(words.data(), words.size(), options);
     if (groups.size() != expected)
     {

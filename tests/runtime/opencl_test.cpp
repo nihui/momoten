@@ -3,6 +3,7 @@
 
 #include "momoten/spv_to_clc.h"
 #include "subgroup_validation.h"
+#include "../spirv_test_helpers.h"
 
 #include <CL/cl.h>
 #include <CL/cl_ext.h>
@@ -13,22 +14,9 @@
 #include <string.h>
 
 #include <algorithm>
-#include <fstream>
 #include <string>
 #include <vector>
 
-static bool read_spirv(const char* path, std::vector<uint32_t>& words)
-{
-    std::ifstream stream(path, std::ios::binary | std::ios::ate);
-    if (!stream)
-        return false;
-    const std::streamoff size = stream.tellg();
-    if (size < 0 || size % 4 != 0)
-        return false;
-    words.resize(static_cast<size_t>(size) / 4);
-    stream.seekg(0, std::ios::beg);
-    return words.empty() || static_cast<bool>(stream.read(reinterpret_cast<char*>(words.data()), size));
-}
 
 static int fail(const char* operation, cl_int error)
 {
@@ -1149,6 +1137,62 @@ static int run_coalesced_load_kernel(cl_context context, cl_command_queue queue,
     return status;
 }
 
+static int run_memory_lowering_kernel(cl_context context, cl_command_queue queue, cl_kernel kernel,
+                                      const momoten::TranslationResult& translated, cl_uint address_bits)
+{
+    if (translated.abi.buffers.size() != 4 || translated.abi.push_constant_size != 8)
+        return fail("memory lowering fixture ABI", CL_INVALID_ARG_VALUE);
+    for (cl_uint column = 0; column < 4; column++)
+        for (cl_uint lane = 0; lane < 4; lane++)
+        {
+            float matrices[50];
+            float scalars[10];
+            float input[17];
+            cl_uint output[12];
+            std::fill(matrices, matrices + 50, -99.f);
+            std::fill(scalars, scalars + 10, -99.f);
+            std::fill(output, output + 12, 0xdeadbeefu);
+            for (size_t i = 0; i < 48; i++)
+                matrices[i + 1] = static_cast<float>(i + 1);
+            for (size_t i = 0; i < 4; i++)
+                scalars[i + 1] = static_cast<float>(i + 1);
+            for (size_t i = 0; i < 17; i++)
+                input[i] = static_cast<float>(i);
+            float expected_matrices[50];
+            float expected_scalars[10];
+            memcpy(expected_matrices, matrices, sizeof(matrices));
+            memcpy(expected_scalars, scalars, sizeof(scalars));
+            cl_uint expected_output[] = {0xdeadbeefu, 4, 5, 2, 5, 5, 0, 0, 0x40e00000u, 0x41100000u, 136, 0xdeadbeefu};
+            memcpy(expected_output + 6, matrices + 1 + 6, sizeof(float));
+            memcpy(expected_output + 7, matrices + 1 + 16 + column * 4 + lane, sizeof(float));
+            expected_matrices[1 + 6] = 7.f;
+            expected_matrices[1 + 16 + column * 4 + lane] = 9.f;
+            memcpy(expected_matrices + 1 + 32, expected_matrices + 1 + 16, 16 * sizeof(float));
+            memcpy(expected_matrices + 1 + 32 + column * 4, expected_matrices + 1 + column * 4, 4 * sizeof(float));
+            std::fill(expected_scalars + 5, expected_scalars + 9, 3.f);
+            cl_int ret = clSetKernelArg(kernel, translated.abi.push_constant_arg_index, sizeof(column), &column);
+            if (ret == CL_SUCCESS)
+                ret = clSetKernelArg(kernel, translated.abi.push_constant_arg_index + 1, sizeof(lane), &lane);
+            OpenCLTestBuffer buffers[] = {
+                {matrices, sizeof(matrices), 4, true},
+                {scalars, sizeof(scalars), 4, true},
+                {output, sizeof(output), 4, true},
+                {input, sizeof(input), 4, false}};
+            if (ret == CL_SUCCESS)
+                ret = run_buffer_fixture(context, queue, kernel, translated, address_bits, buffers, 4, 1);
+            if (ret != CL_SUCCESS)
+                return fail("memory lowering dispatch", ret);
+            if (memcmp(matrices, expected_matrices, sizeof(matrices))
+                || memcmp(scalars, expected_scalars, sizeof(scalars))
+                || memcmp(output, expected_output, sizeof(output)))
+            {
+                fprintf(stderr, "opencl_test: memory lowering mismatch column=%u lane=%u\n", column, lane);
+                return 1;
+            }
+        }
+    return 0;
+}
+
 template<typename T, int mismatch_status = 1>
 static int run_buffer_read_write_kernel(cl_context context, cl_command_queue queue, cl_kernel kernel,
                                         const momoten::TranslationResult& translated, cl_uint address_bits)
@@ -1284,31 +1328,6 @@ static int run_buffer_alias_kernel(cl_context context, cl_command_queue queue, c
     return 0;
 }
 
-static bool decorate_aliased_buffers(std::vector<uint32_t>& words, uint32_t bindings)
-{
-    // OpDecorate Binding identifies the four views independently of IDs/names.
-    std::vector<uint32_t> decorations;
-    size_t insertion = words.size();
-    for (size_t offset = 5; offset < words.size(); offset += words[offset] >> 16)
-    {
-        const uint32_t count = words[offset] >> 16;
-        const uint32_t opcode = words[offset] & 0xffffu;
-        if (!count || count > words.size() - offset)
-            return false;
-        if (opcode == 71 && count == 4 && words[offset + 2] == 33 && words[offset + 3] < bindings)
-        {
-            decorations.push_back((3u << 16) | 71u); // OpDecorate
-            decorations.push_back(words[offset + 1]);
-            decorations.push_back(20u); // Aliased
-        }
-        if (opcode >= 19 && opcode <= 39 && insertion == words.size())
-            insertion = offset;
-    }
-    if (decorations.size() != bindings * 3 || insertion == words.size())
-        return false;
-    words.insert(words.begin() + insertion, decorations.begin(), decorations.end());
-    return true;
-}
 
 static int check_cpu_buffer_read_write(cl_context context, cl_command_queue queue, cl_device_id device,
                                        const momoten::TranslationResult& translated, cl_uint address_bits,
@@ -1641,6 +1660,9 @@ enum OpenCLTestFeature
     OpenCLTestBufferAlias,
     OpenCLTestBufferAliasReverse,
     OpenCLTestFp16BufferAlias,
+    OpenCLTestFp64BufferAlias,
+    OpenCLTestMemoryLowering,
+    OpenCLTestMemoryLoweringCopied,
     OpenCLTestPowScalar,
     OpenCLTestPowVec2,
     OpenCLTestPowVec3,
@@ -1682,8 +1704,11 @@ static const OpenCLTestCase opencl_test_cases[] = {
     {"coalesced-buffer-load", OpenCLTestCoalescedBufferLoad, false, false, false, run_coalesced_load_kernel},
     {"coalesced-fp16-load", OpenCLTestCoalescedFp16Load, true, false, false, run_coalesced_load_kernel},
     {"fp16-buffer-alias", OpenCLTestFp16BufferAlias, true, false, false, run_buffer_read_write_kernel<cl_ushort>},
+    {"fp64-buffer-alias", OpenCLTestFp64BufferAlias, false, true, false, run_fp64_kernel},
     {"buffer-alias-reverse", OpenCLTestBufferAliasReverse, false, false, false, run_buffer_alias_kernel},
     {"buffer-alias", OpenCLTestBufferAlias, false, false, false, run_buffer_alias_kernel},
+    {"memory-lowering", OpenCLTestMemoryLowering, false, false, false, run_memory_lowering_kernel},
+    {"memory-lowering-copied", OpenCLTestMemoryLoweringCopied, false, false, false, run_memory_lowering_kernel},
     {"buffer-read-write", OpenCLTestBufferReadWrite, false, false, false, run_buffer_read_write_kernel<cl_uint>},
     {"fp16-buffer-read-write", OpenCLTestFp16BufferReadWrite, true, false, false, run_buffer_read_write_kernel<cl_ushort>},
     {"buffer-vector-store", OpenCLTestBufferVectorStore, false, false, false, run_buffer_vector_store_kernel},
@@ -1715,7 +1740,10 @@ int main(int argc, char** argv)
     const OpenCLTestCase* test_case = find_opencl_test_case(native_vector_loads || native_vector_memory || scalar_vector_memory ? 3 : argc, argv);
     if (!test_case)
     {
-        fprintf(stderr, "opencl_test: expected SPIR-V input path and optional fp16, fp64, int16, atomic-packed, scalar-16bit, subgroup-basic, integer-dot-product, integer-ranges, workgroup-split, workgroup-3d, vector-access, vector-access-fp64, vector-extract-int16, buffer-vector-load, buffer-vector-store, fp16-vector-load, coalesced-buffer-load, coalesced-fp16-load, buffer-read-write, fp16-buffer-read-write, buffer-alias, buffer-alias-reverse, fp16-buffer-alias, pow-scalar, pow-vec2, pow-vec3, or pow-vec4 mode, followed optionally by native-vector-loads, native-vector-memory or scalar-vector-memory\n");
+        fprintf(stderr, "opencl_test: expected SPIR-V input path and optional mode:");
+        for (size_t i = 1; i < sizeof(opencl_test_cases) / sizeof(opencl_test_cases[0]); i++)
+            fprintf(stderr, " %s", opencl_test_cases[i].mode);
+        fprintf(stderr, "\nfollowed optionally by native-vector-loads, native-vector-memory or scalar-vector-memory\n");
         return 1;
     }
 
@@ -1742,11 +1770,24 @@ int main(int argc, char** argv)
     if ((test_case->feature == OpenCLTestBufferAlias || test_case->feature == OpenCLTestBufferAliasReverse) && !decorate_aliased_buffers(words, 4))
         return fail("aliased buffer decorations", CL_INVALID_VALUE);
 
-    if (test_case->feature == OpenCLTestFp16BufferAlias && !decorate_aliased_buffers(words, 2))
-        return fail("aliased fp16 buffer decorations", CL_INVALID_VALUE);
+    const bool memory_lowering = test_case->feature == OpenCLTestMemoryLowering || test_case->feature == OpenCLTestMemoryLoweringCopied;
+    if ((test_case->feature == OpenCLTestFp16BufferAlias || test_case->feature == OpenCLTestFp64BufferAlias || memory_lowering)
+        && !decorate_aliased_buffers(words, 2))
+        return fail("aliased buffer decorations", CL_INVALID_VALUE);
+    if (test_case->feature == OpenCLTestMemoryLoweringCopied)
+        copy_access_chain_pointers(words);
 
     momoten::TranslationOptions options;
     options.address_bits = address_bits;
+    char language_version[128] = {};
+    unsigned language_major = 0;
+    unsigned language_minor = 0;
+    clGetDeviceInfo(device, 0x103d /* CL_DEVICE_OPENCL_C_VERSION */, sizeof(language_version), language_version, 0);
+    sscanf(language_version, "OpenCL C %u.%u", &language_major, &language_minor);
+    options.byte_addressable_store = language_major > 1 || (language_major == 1 && language_minor >= 1)
+                                     || device_has_extension(device, "cl_khr_byte_addressable_store");
+    if (memory_lowering || test_case->feature == OpenCLTestFp64BufferAlias)
+        options.byte_addressable_store = false;
     if (test_case->feature == OpenCLTestBufferAliasReverse)
     {
         const uint32_t value = 1;

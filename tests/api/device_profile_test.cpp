@@ -270,6 +270,19 @@ static int check_compiler(const char* name, uint32_t version, const char* option
     return check_profile(name, "cl_khr_subgroups cl_khr_subgroup_non_uniform_vote", mode, 64);
 }
 
+static int check_byte_stores(const char* version, const char* extensions, bool expected)
+{
+    language_version = version;
+    const momoten_detail::ShaderDeviceProfile profile = momoten_detail::probe_shader_device_profile(
+        reinterpret_cast<cl_device_id>(1), extensions, 128, 128, momoten_detail::OpenCLDriverPolicy());
+    if (profile.byte_addressable_store != expected)
+    {
+        fprintf(stderr, "device_profile_test: byte stores: %s, %s\n", version, extensions);
+        return 1;
+    }
+    return 0;
+}
+
 int main()
 {
     momoten_detail::g_opencl.p_clGetDeviceInfo = get_device_info;
@@ -349,6 +362,12 @@ int main()
     result |= check_compiler("failed version list read falls back to version string", 200, "-cl-std=CL2.0");
     versions_read_failure = false;
     language_versions.clear();
+    result |= check_byte_stores("OpenCL C 1.0", "", false);
+    result |= check_byte_stores("OpenCL C 1.0", "cl_khr_byte_addressable_store_extra", false);
+    result |= check_byte_stores("OpenCL C 1.0", "cl_khr_byte_addressable_store", true);
+    result |= check_byte_stores("OpenCL C 1.1", "", true);
+    result |= check_byte_stores("OpenCL C 3.0", "", true);
+    language_version = "OpenCL C 2.0";
     result |= check_compiler("OpenCL C 2.0 without version list", 200, "-cl-std=CL2.0");
     language_version = "OpenCL C 3.0";
     result |= check_compiler("OpenCL C 3.0 without version list", 300, "-cl-std=CL3.0");
@@ -409,5 +428,12 @@ int main()
     momoten_detail::configure_translation_options(&device, options);
     if (options.packed_fp16_vector_loads)
         result = 1;
+    for (bool supported : {false, true})
+    {
+        physical.shader_profile.byte_addressable_store = supported;
+        momoten_detail::configure_translation_options(&device, options);
+        if (options.byte_addressable_store != supported)
+            result = 1;
+    }
     return result;
 }

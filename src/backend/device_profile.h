@@ -49,6 +49,7 @@ struct IntegerDotProductProfile
 struct ShaderDeviceProfile
 {
     OpenCLCompilerProfile compiler;
+    bool byte_addressable_store;
     bool fp16;
     bool packed_fp16_vector_loads;
     bool int64;

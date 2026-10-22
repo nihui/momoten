@@ -12,6 +12,8 @@ bool CompilerOpenCL::emit_memory_instruction(const Instruction& instruction, con
     const Op opcode = static_cast<Op>(instruction.op);
     if (opcode == OpAccessChain || opcode == OpInBoundsAccessChain)
         track_private_vector_access(instruction, ops);
+    if (opcode == OpAccessChain || opcode == OpInBoundsAccessChain || opcode == OpCopyObject)
+        track_aliased_buffer_access(instruction, ops);
     if ((opcode == OpLoad || opcode == OpStore) && emit_private_vector_access(instruction, ops))
         return true;
 
@@ -25,6 +27,18 @@ bool CompilerOpenCL::emit_memory_instruction(const Instruction& instruction, con
         return true;
 
     return false;
+}
+
+void CompilerOpenCL::require_statement_continue()
+{
+    // SPIRV-Cross normally joins a continue block into the for-loop update
+    // expression. Declarations and control flow must instead stay in the body,
+    // including on branches that reach it through an explicit continue.
+    if (current_continue_block && !current_continue_block->complex_continue)
+    {
+        get<SPIRBlock>(current_continue_block->self).complex_continue = true;
+        force_recompile();
+    }
 }
 
 bool CompilerOpenCL::prepare_access_chain_for_scalar_access(std::string& expression, const SPIRType& scalar_type,
@@ -131,6 +145,7 @@ bool CompilerOpenCL::emit_private_vector_access(const Instruction& instruction, 
             statement(vector, ".", components[constant->scalar()], " = ", value, ";");
         else
         {
+            require_statement_continue();
             // A conditional component store neither takes the vector's address
             // nor reads its other lanes, which may still be uninitialized.
             for (uint32_t i = 0; i < vector_type.vecsize; i++)
@@ -141,93 +156,6 @@ bool CompilerOpenCL::emit_private_vector_access(const Instruction& instruction, 
                 end_scope();
             }
         }
-        register_write(pointer);
-    }
-    return true;
-}
-
-bool CompilerOpenCL::emit_aliased_buffer_access(const Instruction& instruction, const uint32_t* ops)
-{
-    const bool load = instruction.op == OpLoad;
-    const uint32_t pointer = ops[load ? 2 : 0];
-    const SPIRVariable* backing = maybe_get_backing_variable(pointer);
-    if (!backing || resource_indices.count(backing->self) == 0 || !has_decoration(backing->self, DecorationAliased))
-        return false;
-    const SPIRType& type = load ? get<SPIRType>(ops[0]) : expression_type(ops[1]);
-    if (!type.array.empty())
-        throw std::runtime_error("aliased storage-buffer array accesses are not supported");
-    if (type.pointer || (type.width != 16 && type.width != 32 && type.width != 64) || type.vecsize > 4)
-        throw std::runtime_error("aliased storage-buffer access has an unsupported value type");
-
-    flush_variable_declaration(pointer);
-    std::string lvalue = to_dereferenced_expression(pointer, !load);
-    size_t byte_offset = 0;
-    // OpenCL cannot take the address of a vector lane. Address its containing
-    // vector instead, including lanes of a matrix column.
-    const size_t dot = lvalue.rfind('.');
-    if (type.vecsize == 1 && type.columns == 1 && dot != std::string::npos && dot + 2 == lvalue.size())
-    {
-        const size_t lane = std::string("xyzw").find(lvalue[dot + 1]);
-        if (lane != std::string::npos)
-        {
-            byte_offset = lane * type.width / 8;
-            lvalue.resize(dot);
-        }
-    }
-
-    // Aliased descriptors may view the same bytes through unrelated SPIR-V
-    // types. Character accesses preserve that contract in OpenCL C without
-    // relying on compiler-specific may_alias support or typed volatile casts.
-    // Copy only the value's bytes, never neighboring lanes or descriptor tails.
-    const std::string temporary = "momo_aliased_" + std::to_string(ops[1]);
-    if (load)
-        statement(type_to_glsl(type), " ", temporary, ";");
-    else
-    {
-        flush_variable_declaration(ops[1]);
-        const std::string value = to_expression(ops[1]);
-        if (uses_workgroup_storage)
-            statement("if (momo_active != 0)");
-        begin_scope();
-        statement(type_to_glsl(type), " ", temporary, " = ", value, ";");
-    }
-    SPIRType scalar_type = type;
-    scalar_type.vecsize = scalar_type.columns = 1;
-    const uint32_t bytes = type.width / 8;
-    const std::string byte_type = "uchar" + std::to_string(bytes);
-    static const char components[] = "xyzw";
-    for (uint32_t column = 0; column < type.columns; column++)
-        for (uint32_t lane = 0; lane < type.vecsize; lane++)
-        {
-            std::string scalar = temporary;
-            if (type.columns > 1)
-                scalar += ".c[" + std::to_string(column) + "]";
-            if (type.vecsize > 1)
-                scalar += "." + std::string(1, components[lane]);
-            std::string expression = "(" + byte_type + ")(";
-            const std::string packed = temporary + "_bytes_" + std::to_string(column) + "_" + std::to_string(lane);
-            if (!load)
-                statement(byte_type, " ", packed, " = as_", byte_type, "(", scalar, ");");
-            for (uint32_t i = 0; i < bytes; i++)
-            {
-                const std::string global = "((volatile __global " + std::string(load ? "const " : "") + "uchar *)&(" + lvalue + "))[" + std::to_string(byte_offset + (column * type.vecsize + lane) * bytes + i) + "]";
-                if (load)
-                    expression += (i ? ", " : "") + global;
-                else
-                    statement(global, " = ", packed, ".s", i, ";");
-            }
-            if (load)
-                statement(scalar, " = as_", type_to_glsl(scalar_type), "(", expression, "));");
-        }
-    if (load)
-    {
-        emit_op(ops[0], ops[1], temporary, false);
-        register_read(ops[1], pointer, false);
-        inherit_expression_dependencies(ops[1], pointer);
-    }
-    else
-    {
-        end_scope();
         register_write(pointer);
     }
     return true;
@@ -246,6 +174,7 @@ bool CompilerOpenCL::emit_coalesced_buffer_load(const Instruction& instruction, 
     const std::string temporary = "momo_buffer_load_" + std::to_string(load.first_result);
     if (load.first_result == ops[1])
     {
+        require_statement_continue();
         flush_variable_declaration(ops[2]);
         const std::string lvalue = to_dereferenced_expression(ops[2], false);
         // Float reads retain their access type. Packed half reads use a
@@ -421,6 +350,7 @@ bool CompilerOpenCL::emit_storage_buffer_store(const Instruction& instruction, c
     element_type.vecsize = 1;
     if (uses_workgroup_storage)
     {
+        require_statement_continue();
         statement("if (momo_active != 0)");
         begin_scope();
     }
@@ -450,6 +380,7 @@ void CompilerOpenCL::emit_store_statement(uint32_t lhs_expression, uint32_t rhs_
     const bool guarded_store = uses_workgroup_storage && resource_store;
     if (guarded_store)
     {
+        require_statement_continue();
         statement("if (momo_active != 0)");
         begin_scope();
     }

@@ -148,6 +148,9 @@ struct TranslationOptions
     // component mapping. Requires native vector loads and storage-buffer byte
     // offsets aligned to 4 bytes.
     bool packed_fp16_vector_loads;
+    // OpenCL C 1.1 or cl_khr_byte_addressable_store. Needed for narrow
+    // aliased stores; 32/64-bit stores remain valid without this feature.
+    bool byte_addressable_store;
     std::vector<SpecializationValue> specializations;
 
     TranslationOptions();

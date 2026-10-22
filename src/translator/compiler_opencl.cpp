@@ -44,7 +44,7 @@ KernelABI::KernelABI()
 }
 
 TranslationOptions::TranslationOptions()
-    : entry_point("main"), address_bits(32), override_local_size(false), workgroup_mode(WorkgroupModeDirect), subgroup_mode(SubgroupModeSingleton), subgroup_size(1), integer_dot_product(false), integer_dot_product_input_4x8bit(false), integer_dot_product_input_4x8bit_packed(false), integer_dot_product_split_packed_acc_sat(false), integer_dot_product_swap_mixed_acc_sat(false), native_buffer_vector_loads(false), native_buffer_vector_stores(false), packed_fp16_vector_loads(false)
+    : entry_point("main"), address_bits(32), override_local_size(false), workgroup_mode(WorkgroupModeDirect), subgroup_mode(SubgroupModeSingleton), subgroup_size(1), integer_dot_product(false), integer_dot_product_input_4x8bit(false), integer_dot_product_input_4x8bit_packed(false), integer_dot_product_split_packed_acc_sat(false), integer_dot_product_swap_mixed_acc_sat(false), native_buffer_vector_loads(false), native_buffer_vector_stores(false), packed_fp16_vector_loads(false), byte_addressable_store(false)
 {
     local_size[0] = 1;
     local_size[1] = 1;
