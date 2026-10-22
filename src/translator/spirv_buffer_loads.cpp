@@ -262,6 +262,8 @@ bool BufferLoadPlanner::candidate(const BufferLoadInstruction& d, size_t positio
     const SPIRVariable* variable = maybe_get<SPIRVariable>(access[2]);
     if (!variable || (variable->storage != StorageClassStorageBuffer && variable->storage != StorageClassUniform))
         return false;
+    if (has_decoration(access[2], DecorationAliased))
+        return false;
     const SPIRType& block = get_variable_data_type(*variable);
     int64_t member = -1;
     if (block.basetype != SPIRType::Struct || block.member_types.size() != 1 || !constant(access[3], member) || member != 0)

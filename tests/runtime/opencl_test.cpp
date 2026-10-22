@@ -1209,6 +1209,107 @@ static int run_buffer_read_write_kernel(cl_context context, cl_command_queue que
     return 0;
 }
 
+static int run_buffer_alias_kernel(cl_context context, cl_command_queue queue, cl_kernel kernel,
+                                   const momoten::TranslationResult& translated, cl_uint address_bits)
+{
+    if (translated.abi.buffers.size() != 5 || translated.abi.push_constant_size != 12)
+        return fail("buffer alias fixture ABI", CL_INVALID_ARG_VALUE);
+    const cl_uint initial[] = {0xbeef, 0x00000001, 0x80000000, 0x7fc01234, 0xff800000,
+                               0x40000000, 0x40400000, 0x40800000, 0x40a00000, 0xbeef};
+    const cl_uint stored[] = {0x3f800000, 0x40000000, 0x40400000, 0x40800000};
+    for (cl_uint kind = 0; kind < 4; kind++)
+        for (cl_uint read = 0; read < 2; read++)
+            for (cl_uint write = 0; write < 2; write++)
+            {
+                cl_uint data[10];
+                cl_uint output[34];
+                cl_uint expected[10];
+                cl_uint expected_output[34];
+                memcpy(data, initial, sizeof(data));
+                memcpy(expected, initial, sizeof(expected));
+                memcpy(expected + 1 + write * 4, stored, sizeof(stored));
+                std::fill(output, output + 34, 0xdead);
+                std::fill(expected_output, expected_output + 34, 0xdead);
+                for (size_t view = 0; view < 4; view++)
+                {
+                    memcpy(expected_output + 1 + view * 4, initial + 1 + read * 4, sizeof(stored));
+                    memcpy(expected_output + 17 + view * 4, expected + 1 + read * 4, sizeof(stored));
+                }
+                cl_int ret = CL_SUCCESS;
+                cl_mem memory = clCreateBuffer(context, CL_MEM_READ_WRITE | CL_MEM_COPY_HOST_PTR, sizeof(data), data, &ret);
+                if (!memory)
+                    return fail("alias input buffer", ret);
+                cl_mem result = clCreateBuffer(context, CL_MEM_READ_WRITE | CL_MEM_COPY_HOST_PTR, sizeof(output), output, &ret);
+                if (!result)
+                {
+                    clReleaseMemObject(memory);
+                    return fail("alias output buffer", ret);
+                }
+                for (size_t i = 0; ret == CL_SUCCESS && i < translated.abi.buffers.size(); i++)
+                {
+                    const momoten::BufferArgument& argument = translated.abi.buffers[i];
+                    const cl_mem buffer = argument.binding == 4 ? result : memory;
+                    ret = clSetKernelArg(kernel, argument.buffer_arg_index, sizeof(buffer), &buffer);
+                    if (ret == CL_SUCCESS && address_bits == 64)
+                    {
+                        const cl_ulong offset = 4;
+                        ret = clSetKernelArg(kernel, argument.offset_arg_index, sizeof(offset), &offset);
+                    }
+                    else if (ret == CL_SUCCESS)
+                    {
+                        const cl_uint offset = 4;
+                        ret = clSetKernelArg(kernel, argument.offset_arg_index, sizeof(offset), &offset);
+                    }
+                }
+                const cl_uint parameters[] = {read, write, kind};
+                for (size_t i = 0; ret == CL_SUCCESS && i < 3; i++)
+                    ret = clSetKernelArg(kernel, translated.abi.push_constant_arg_index + i, sizeof(cl_uint), parameters + i);
+                const size_t size = 1;
+                if (ret == CL_SUCCESS)
+                    ret = clEnqueueNDRangeKernel(queue, kernel, 1, 0, &size, &size, 0, 0, 0);
+                if (ret == CL_SUCCESS)
+                    ret = clEnqueueReadBuffer(queue, memory, CL_TRUE, 0, sizeof(data), data, 0, 0, 0);
+                if (ret == CL_SUCCESS)
+                    ret = clEnqueueReadBuffer(queue, result, CL_TRUE, 0, sizeof(output), output, 0, 0, 0);
+                clReleaseMemObject(result);
+                clReleaseMemObject(memory);
+                if (ret != CL_SUCCESS)
+                    return fail("buffer alias dispatch", ret);
+                if (memcmp(data, expected, sizeof(data)) != 0 || memcmp(output, expected_output, sizeof(output)) != 0)
+                {
+                    fprintf(stderr, "opencl_test: alias mismatch kind=%u read=%u write=%u\n", kind, read, write);
+                    return 1;
+                }
+            }
+    return 0;
+}
+
+static bool decorate_aliased_buffers(std::vector<uint32_t>& words, uint32_t bindings)
+{
+    // OpDecorate Binding identifies the four views independently of IDs/names.
+    std::vector<uint32_t> decorations;
+    size_t insertion = words.size();
+    for (size_t offset = 5; offset < words.size(); offset += words[offset] >> 16)
+    {
+        const uint32_t count = words[offset] >> 16;
+        const uint32_t opcode = words[offset] & 0xffffu;
+        if (!count || count > words.size() - offset)
+            return false;
+        if (opcode == 71 && count == 4 && words[offset + 2] == 33 && words[offset + 3] < bindings)
+        {
+            decorations.push_back((3u << 16) | 71u); // OpDecorate
+            decorations.push_back(words[offset + 1]);
+            decorations.push_back(20u); // Aliased
+        }
+        if (opcode >= 19 && opcode <= 39 && insertion == words.size())
+            insertion = offset;
+    }
+    if (decorations.size() != bindings * 3 || insertion == words.size())
+        return false;
+    words.insert(words.begin() + insertion, decorations.begin(), decorations.end());
+    return true;
+}
+
 static int check_cpu_buffer_read_write(cl_context context, cl_command_queue queue, cl_device_id device,
                                        const momoten::TranslationResult& translated, cl_uint address_bits,
                                        bool native_stores)
@@ -1537,6 +1638,9 @@ enum OpenCLTestFeature
     OpenCLTestCoalescedFp16Load,
     OpenCLTestBufferReadWrite,
     OpenCLTestFp16BufferReadWrite,
+    OpenCLTestBufferAlias,
+    OpenCLTestBufferAliasReverse,
+    OpenCLTestFp16BufferAlias,
     OpenCLTestPowScalar,
     OpenCLTestPowVec2,
     OpenCLTestPowVec3,
@@ -1577,6 +1681,9 @@ static const OpenCLTestCase opencl_test_cases[] = {
     {"fp16-vector-load", OpenCLTestFp16VectorLoad, true, false, false, run_fp16_vector_load_kernel},
     {"coalesced-buffer-load", OpenCLTestCoalescedBufferLoad, false, false, false, run_coalesced_load_kernel},
     {"coalesced-fp16-load", OpenCLTestCoalescedFp16Load, true, false, false, run_coalesced_load_kernel},
+    {"fp16-buffer-alias", OpenCLTestFp16BufferAlias, true, false, false, run_buffer_read_write_kernel<cl_ushort>},
+    {"buffer-alias-reverse", OpenCLTestBufferAliasReverse, false, false, false, run_buffer_alias_kernel},
+    {"buffer-alias", OpenCLTestBufferAlias, false, false, false, run_buffer_alias_kernel},
     {"buffer-read-write", OpenCLTestBufferReadWrite, false, false, false, run_buffer_read_write_kernel<cl_uint>},
     {"fp16-buffer-read-write", OpenCLTestFp16BufferReadWrite, true, false, false, run_buffer_read_write_kernel<cl_ushort>},
     {"buffer-vector-store", OpenCLTestBufferVectorStore, false, false, false, run_buffer_vector_store_kernel},
@@ -1608,7 +1715,7 @@ int main(int argc, char** argv)
     const OpenCLTestCase* test_case = find_opencl_test_case(native_vector_loads || native_vector_memory || scalar_vector_memory ? 3 : argc, argv);
     if (!test_case)
     {
-        fprintf(stderr, "opencl_test: expected SPIR-V input path and optional fp16, fp64, int16, atomic-packed, scalar-16bit, subgroup-basic, integer-dot-product, integer-ranges, workgroup-split, workgroup-3d, vector-access, vector-access-fp64, vector-extract-int16, buffer-vector-load, buffer-vector-store, fp16-vector-load, coalesced-buffer-load, coalesced-fp16-load, buffer-read-write, fp16-buffer-read-write, pow-scalar, pow-vec2, pow-vec3, or pow-vec4 mode, followed optionally by native-vector-loads, native-vector-memory or scalar-vector-memory\n");
+        fprintf(stderr, "opencl_test: expected SPIR-V input path and optional fp16, fp64, int16, atomic-packed, scalar-16bit, subgroup-basic, integer-dot-product, integer-ranges, workgroup-split, workgroup-3d, vector-access, vector-access-fp64, vector-extract-int16, buffer-vector-load, buffer-vector-store, fp16-vector-load, coalesced-buffer-load, coalesced-fp16-load, buffer-read-write, fp16-buffer-read-write, buffer-alias, buffer-alias-reverse, fp16-buffer-alias, pow-scalar, pow-vec2, pow-vec3, or pow-vec4 mode, followed optionally by native-vector-loads, native-vector-memory or scalar-vector-memory\n");
         return 1;
     }
 
@@ -1632,13 +1739,28 @@ int main(int argc, char** argv)
         return 1;
     }
 
+    if ((test_case->feature == OpenCLTestBufferAlias || test_case->feature == OpenCLTestBufferAliasReverse) && !decorate_aliased_buffers(words, 4))
+        return fail("aliased buffer decorations", CL_INVALID_VALUE);
+
+    if (test_case->feature == OpenCLTestFp16BufferAlias && !decorate_aliased_buffers(words, 2))
+        return fail("aliased fp16 buffer decorations", CL_INVALID_VALUE);
+
     momoten::TranslationOptions options;
     options.address_bits = address_bits;
+    if (test_case->feature == OpenCLTestBufferAliasReverse)
+    {
+        const uint32_t value = 1;
+        momoten::SpecializationValue specialization;
+        specialization.constant_id = 0;
+        specialization.data.resize(sizeof(value));
+        memcpy(specialization.data.data(), &value, sizeof(value));
+        options.specializations.push_back(specialization);
+    }
     options.native_buffer_vector_loads = native_vector_loads || native_vector_memory || test_case->feature == OpenCLTestBufferVectorLoad;
     options.native_buffer_vector_stores = native_vector_memory || test_case->feature == OpenCLTestBufferVectorStore;
-    if (test_case->feature == OpenCLTestCoalescedBufferLoad || test_case->feature == OpenCLTestBufferReadWrite || test_case->feature == OpenCLTestFp16BufferReadWrite)
+    if (test_case->feature == OpenCLTestCoalescedBufferLoad || test_case->feature == OpenCLTestBufferReadWrite || test_case->feature == OpenCLTestFp16BufferReadWrite || test_case->feature == OpenCLTestFp16BufferAlias)
         options.native_buffer_vector_loads = true;
-    if (test_case->feature == OpenCLTestFp16BufferReadWrite)
+    if (test_case->feature == OpenCLTestFp16BufferReadWrite || test_case->feature == OpenCLTestFp16BufferAlias)
         options.packed_fp16_vector_loads = true;
     if (test_case->feature == OpenCLTestFp16VectorLoad || test_case->feature == OpenCLTestCoalescedFp16Load)
     {

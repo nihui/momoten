@@ -246,6 +246,13 @@ int main()
     f = LoadFixture();
     f.decorations = "OpDecorate %input Volatile\n";
     failures += check("volatile buffer", f, 0);
+    f.decorations = "OpDecorate %input Aliased\nOpDecorate %output Aliased\n";
+    failures += check("aliased buffer", f, 0);
+    f.scalar = "OpTypeFloat 16";
+    f.width = 16;
+    f.lanes = 4;
+    failures += check("aliased packed half buffer", f, 0);
+    f = LoadFixture();
     f.decorations = "OpMemberDecorate %block 0 Coherent\n";
     failures += check("coherent block member", f, 0);
     f = LoadFixture();

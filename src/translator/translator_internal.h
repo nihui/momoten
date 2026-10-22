@@ -108,6 +108,7 @@ private:
     void track_private_vector_access(const Instruction& instruction, const uint32_t* ops);
     bool emit_private_vector_access(const Instruction& instruction, const uint32_t* ops);
     bool emit_coalesced_buffer_load(const Instruction& instruction, const uint32_t* ops);
+    bool emit_aliased_buffer_access(const Instruction& instruction, const uint32_t* ops);
     bool emit_storage_buffer_load(const Instruction& instruction, const uint32_t* ops);
     bool emit_storage_buffer_store(const Instruction& instruction, const uint32_t* ops);
     void emit_fp64_vector_helpers();
