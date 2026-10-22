@@ -34,6 +34,39 @@ static bool bound_range(const std::shared_ptr<Buffer>& buffer,
     return true;
 }
 
+static size_t fill_repartitioned_workgroup(const size_t global[3], const size_t axis_limits[3],
+                                           size_t capacity, bool powers_of_two, size_t local[3])
+{
+    std::fill(local, local + 3, 1);
+    // Cover nearby rows with a narrow x span before extending z or x.
+    // Every dimension divides the grid exactly, without padded invocations.
+    const size_t order[] = {0, 1, 2, 0};
+    for (size_t i = 0; i < 4; i++)
+    {
+        const size_t d = order[i];
+        const size_t extent = global[d] / local[d];
+        size_t limit = std::min(capacity, axis_limits[d] / local[d]);
+        limit = std::min(limit, extent);
+        if (i == 0)
+            limit = std::min(limit, static_cast<size_t>(4));
+        size_t factor = 1;
+        if (powers_of_two)
+        {
+            while (factor <= limit / 2 && extent % (factor * 2) == 0)
+                factor *= 2;
+        }
+        else
+        {
+            factor = limit;
+            while (extent % factor != 0)
+                factor--;
+        }
+        local[d] *= factor;
+        capacity /= factor;
+    }
+    return local[0] * local[1] * local[2];
+}
+
 ReplayState::ReplayState(VkDevice value)
     : device(value)
 {
@@ -174,46 +207,19 @@ cl_int replay_dispatch(ReplayState& state, const RecordedCommand& command)
             global_size[d] = static_cast<size_t>(pipeline->abi.local_size[d]) * command.group_count[d];
             local_size[d] = 1;
         }
-        size_t remaining = pipeline->opencl_workgroup_limit;
-        if (remaining == 0)
+        const size_t capacity = pipeline->opencl_workgroup_limit;
+        if (capacity == 0)
             return CL_INVALID_WORK_GROUP_SIZE;
-        // Cover nearby rows with a narrow x span before extending z or x.
-        // Every physical dimension divides the original global grid exactly,
-        // so repartitioning introduces no padding or inactive invocations.
-        const size_t order[4] = {0, 1, 2, 0};
-        for (size_t i = 0; i < 4; i++)
+        const size_t filled = fill_repartitioned_workgroup(global_size, device->physical_device->max_work_item_sizes,
+                                                           capacity, true, local_size);
+        if (filled < capacity)
         {
-            const size_t d = order[i];
-            size_t limit = std::min(remaining, device->physical_device->max_work_item_sizes[d] / local_size[d]);
-            if (i == 0)
-                limit = std::min(limit, static_cast<size_t>(4));
-            size_t factor = 1;
-            while (factor <= limit / 2 && global_size[d] % (local_size[d] * factor * 2) == 0)
-                factor *= 2;
-            local_size[d] *= factor;
-            remaining /= factor;
-        }
-        if (local_size[0] * local_size[1] * local_size[2] < pipeline->opencl_workgroup_limit)
-        {
-            // Retain a full power-of-two group and its established shape.
-            // Otherwise also consider odd divisors, choosing that shape only
-            // when it fills more lanes under the same kernel/device limits.
-            size_t candidate[3] = {1, 1, 1};
-            size_t capacity = pipeline->opencl_workgroup_limit;
-            for (size_t i = 0; i < 4; i++)
-            {
-                const size_t d = order[i];
-                const size_t extent = global_size[d] / candidate[d];
-                size_t factor = std::min(capacity, device->physical_device->max_work_item_sizes[d] / candidate[d]);
-                factor = std::min(factor, extent);
-                if (i == 0)
-                    factor = std::min(factor, static_cast<size_t>(4));
-                while (extent % factor != 0)
-                    factor--;
-                candidate[d] *= factor;
-                capacity /= factor;
-            }
-            if (candidate[0] * candidate[1] * candidate[2] > local_size[0] * local_size[1] * local_size[2])
+            // Keep established full power-of-two shapes. Consider odd divisors
+            // only when they fill more lanes under the same device limits.
+            size_t candidate[3];
+            if (fill_repartitioned_workgroup(global_size, device->physical_device->max_work_item_sizes,
+                                             capacity, false, candidate)
+                > filled)
                 std::copy(candidate, candidate + 3, local_size);
         }
     }
