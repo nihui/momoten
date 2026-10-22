@@ -103,6 +103,21 @@ add_test(NAME momoten_driver_policy COMMAND momoten_driver_policy_test)
 set_tests_properties(momoten_driver_policy PROPERTIES
     LABELS "momoten;api;profile;integer-dot")
 
+add_executable(momoten_replay_completion_test
+    api/replay_completion_test.cpp
+    "${CMAKE_CURRENT_SOURCE_DIR}/../src/backend/device_profile.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/../src/backend/replay.cpp")
+target_compile_features(momoten_replay_completion_test PRIVATE cxx_std_11)
+target_compile_definitions(momoten_replay_completion_test PRIVATE
+    CL_TARGET_OPENCL_VERSION=100)
+target_include_directories(momoten_replay_completion_test PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}/../src")
+target_link_libraries(momoten_replay_completion_test PRIVATE
+    momoten::translator momoten_opencl_headers momoten_vulkan_headers)
+add_test(NAME momoten_replay_completion COMMAND momoten_replay_completion_test)
+set_tests_properties(momoten_replay_completion PROPERTIES
+    LABELS "momoten;api;replay")
+
 add_executable(momoten_device_profile_test
     api/device_profile_test.cpp
     "${CMAKE_CURRENT_SOURCE_DIR}/../src/backend/driver_policy.cpp"
