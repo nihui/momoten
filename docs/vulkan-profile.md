@@ -44,8 +44,9 @@ The translator accepts Vulkan GLCompute SPIR-V and emits conservative OpenCL C
 - optional global 32-bit compare-exchange with
   `cl_khr_global_int32_base_atomics`;
 - optional `VK_KHR_shader_integer_dot_product` through
-  `cl_khr_integer_dot_product`, including packed and unpacked 4x8-bit native
-  forms and exact OpenCL C 1.0 software lowering for 32-bit vector forms.
+  `cl_khr_integer_dot_product`, ARM INT8 dot-product extensions or
+  `cl_qcom_dot_product8`, including packed and unpacked 4x8-bit forms and
+  exact OpenCL C 1.0 software lowering for 32-bit vector forms.
 
 Creation entry points validate their Vulkan structure type, supported `pNext`
 chain, flags, layers, queue parameters and object-specific fields. Custom
@@ -60,15 +61,41 @@ The core `shaderInt64` feature is reported for OpenCL `FULL_PROFILE` devices, fo
 
 When `cl_khr_fp64` is present and `CL_DEVICE_DOUBLE_FP_CONFIG` is nonzero, the implementation reports the core `shaderFloat64` feature. The translator accepts SPIR-V `Float64` scalar, vec2, vec3 and vec4 arithmetic in its restricted compute profile; matrix operations and fp64 atomics remain outside the profile. Double storage-buffer values are read and written through layout-identical `ulong` bit patterns with `as_double` and `as_ulong`, avoiding typed global-pointer aliasing while preserving the Vulkan buffer representation. OpenCL C 3.0 implementations with `__opencl_c_fp64` use the core feature directly, while older language modes retain a guarded `cl_khr_fp64` pragma. fp64 programs currently use the standard `-cl-opt-disable` build option because some online compilers are unstable when optimizing long double-precision arithmetic chains; this is a conservative functional baseline rather than an acceleration claim.
 
-`VK_KHR_shader_integer_dot_product` is exposed only after the selected OpenCL
-device reports packed 4x8-bit support and successfully compiles every required
-signed, unsigned, mixed-signedness and accumulating-saturating builtin. The
-Vulkan 8-bit and packed 4x8-bit acceleration properties mirror the two OpenCL
-acceleration-property queries; they are never inferred merely from extension
-support. Vulkan 16-, 32- and 64-bit acceleration properties remain false. The
-translator still accepts 32-bit vector dot-product instructions and implements
-their Vulkan result and saturation semantics in OpenCL C 1.0, but does not
-advertise that software path as accelerated.
+`VK_KHR_shader_integer_dot_product` prefers the KHR backend when packed 4x8-bit
+support is reported and every required builtin compiles. Its acceleration
+properties mirror the OpenCL queries, subject to driver workarounds.
+
+If that path is unavailable, the driver tries ARM saturating accumulation,
+ARM plain dot, ARM ordinary accumulation, then QCOM. Each candidate must
+compile and pass a runtime check of signed, unsigned and mixed dot products
+and their accumulating-saturating forms. The probe and translator share the
+same helpers. Failure advances to the next candidate; failure of every
+candidate leaves the Vulkan feature disabled.
+
+Vendor backends support both packed words and four-byte vectors. Packed words
+are reinterpreted in registers, without enabling Vulkan `shaderInt8` or 8-bit
+storage. Acceleration is reported for direct native mappings only:
+
+| Backend | Signed | Unsigned | Mixed | Signed saturating | Unsigned saturating | Mixed saturating |
+| --- | --- | --- | --- | --- | --- | --- |
+| ARM plain / ordinary accumulation | yes | yes | no | no | no | no |
+| ARM saturating accumulation | yes | yes | no | yes | yes | no |
+| QCOM | no | yes | yes | no | no | yes |
+
+The table applies to both the 8-bit and packed 4x8-bit property groups.
+All six operations remain functionally supported. ARM mixed dot and QCOM
+signed dot use exact bias corrections before final saturation. QCOM unsigned
+saturation uses a zero-accumulator native dot followed by unsigned `add_sat`,
+because its native accumulator saturates to the signed 32-bit range. Ordinary
+addition after a dot retains modulo-2^32 behavior and is never replaced with
+saturating accumulation.
+
+The native signatures are defined in the [ARM extension specification](https://registry.khronos.org/OpenCL/extensions/arm/cl_arm_integer_dot_product.txt)
+and [Qualcomm programming guide, section 9.5.1](https://docs.qualcomm.com/bundle/publicresource/80-NB295-11_REV_C_Qualcomm_Snapdragon_Mobile_Platform_Opencl_General_Programming_and_Optimization.pdf).
+`cl_arm_integer_dot_product_accumulate_int16` is not selected for the current
+8-bit profile. Vulkan 16-, 32- and 64-bit acceleration properties remain false.
+The translator still supports 32-bit vector dot-product instructions through
+exact software lowering.
 
 This distinction matters to ncnn: its packed int8 shaders select the integer
 dot-product branch only when

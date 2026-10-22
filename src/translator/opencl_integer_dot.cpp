@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 #include "translator_internal.h"
+#include "integer_dot_product.h"
 
 #include <stdexcept>
 
@@ -9,6 +10,9 @@ namespace momoten {
 
 void CompilerOpenCL::emit_integer_dot_product_helpers()
 {
+    if (translation_options.integer_dot_product_backend != IntegerDotProductKhr)
+        statement(integer_dot_product_helpers(translation_options.integer_dot_product_backend));
+
     // DotProductInputAll includes 32-bit vectors even though OpenCL's native
     // extension only accelerates 4x8-bit inputs. Accumulate exact magnitudes
     // in three uint limbs so saturating operations remain correct without
@@ -207,17 +211,40 @@ bool CompilerOpenCL::emit_integer_dot_product_instruction(
 
     std::string first;
     std::string second;
-    std::string expression;
-    SPIRType::BaseType native_result_base = unsigned_dot ? SPIRType::UInt : SPIRType::Int;
+    const SPIRType::BaseType native_result_base = unsigned_dot ? SPIRType::UInt : SPIRType::Int;
+    const bool vector_4x8bit = first_type.width == 8 && first_type.vecsize == 4;
     if (packed)
     {
-        if (!translation_options.integer_dot_product_input_4x8bit_packed || first_type.vecsize != 1 || second_type.vecsize != 1 || first_type.width != 32 || (first_type.basetype != SPIRType::Int && first_type.basetype != SPIRType::UInt) || (second_type.basetype != SPIRType::Int && second_type.basetype != SPIRType::UInt))
+        if (!translation_options.integer_dot_product_input_4x8bit_packed || first_type.vecsize != 1 || first_type.width != 32 || (first_type.basetype != SPIRType::Int && first_type.basetype != SPIRType::UInt) || (second_type.basetype != SPIRType::Int && second_type.basetype != SPIRType::UInt))
             throw std::runtime_error("packed integer dot product requires two scalar 32-bit integer operands and native packed 4x8 support");
-
         first = integer_expression_as(ops[2], SPIRType::UInt);
         second = integer_expression_as(ops[3], SPIRType::UInt);
-        const bool split_accumulation = accumulating && translation_options.integer_dot_product_split_packed_acc_sat;
-        const char* function = 0;
+    }
+    else if (vector_4x8bit)
+    {
+        if (!translation_options.integer_dot_product_input_4x8bit)
+            throw std::runtime_error("4x8-bit vector integer dot product is unavailable in the OpenCL device profile");
+        first = integer_expression_as(ops[2], unsigned_dot ? SPIRType::UByte : SPIRType::SByte);
+        second = integer_expression_as(ops[3], signed_dot ? SPIRType::SByte : SPIRType::UByte);
+    }
+
+    std::string function;
+    SPIRType::BaseType expression_base = native_result_base;
+    const bool vendor_backend = translation_options.integer_dot_product_backend != IntegerDotProductKhr;
+    const bool split_accumulation = !vendor_backend && packed && accumulating && translation_options.integer_dot_product_split_packed_acc_sat;
+    if (vendor_backend && (packed || vector_4x8bit))
+    {
+        if (!packed)
+        {
+            first = "as_uint(" + first + ")";
+            second = "as_uint(" + second + ")";
+        }
+        const char* suffix = signed_dot ? "ss" : unsigned_dot ? "uu"
+                                                              : "su";
+        function = std::string(accumulating ? "momo_dot_acc_sat_" : "momo_dot_") + suffix;
+    }
+    else if (packed)
+    {
         if (!accumulating || split_accumulation)
             function = signed_dot ? "dot_4x8packed_ss_int" : unsigned_dot ? "dot_4x8packed_uu_uint"
                                                                           : "dot_4x8packed_su_int";
@@ -231,33 +258,12 @@ bool CompilerOpenCL::emit_integer_dot_product_instruction(
             function = "dot_acc_sat_4x8packed_us_int";
             first.swap(second);
         }
-        expression = std::string(function) + "(" + first + ", " + second;
-        if (accumulating && !split_accumulation)
-            expression += ", " + integer_expression_as(ops[4], native_result_base);
-        expression += ")";
-        if (split_accumulation)
-        {
-            // Four 8-bit products fit in 32 bits for every signedness, so a
-            // native dot followed by add_sat preserves saturating semantics.
-            expression = "add_sat(" + expression + ", " + integer_expression_as(ops[4], native_result_base) + ")";
-        }
-        expression = convert_result(expression, native_result_base);
     }
-    else if (first_type.width == 8 && first_type.vecsize == 4)
+    else if (vector_4x8bit)
     {
-        if (!translation_options.integer_dot_product_input_4x8bit)
-            throw std::runtime_error("4x8-bit vector integer dot product is unavailable in the OpenCL device profile");
-        first = integer_expression_as(
-            ops[2], unsigned_dot ? SPIRType::UByte : SPIRType::SByte);
-        second = integer_expression_as(
-            ops[3], signed_dot ? SPIRType::SByte : SPIRType::UByte);
         if (accumulating && mixed_dot && translation_options.integer_dot_product_swap_mixed_acc_sat)
             first.swap(second);
-        expression = std::string(accumulating ? "dot_acc_sat(" : "dot(") + first + ", " + second;
-        if (accumulating)
-            expression += ", " + integer_expression_as(ops[4], unsigned_dot ? SPIRType::UInt : SPIRType::Int);
-        expression += ")";
-        expression = convert_result(expression, native_result_base);
+        function = accumulating ? "dot_acc_sat" : "dot";
     }
     else if (first_type.width == 32 && first_type.vecsize >= 2 && first_type.vecsize <= 4)
     {
@@ -266,25 +272,33 @@ bool CompilerOpenCL::emit_integer_dot_product_instruction(
         second = integer_expression_as(
             ops[3], signed_dot ? SPIRType::Int : SPIRType::UInt);
         const std::string suffix = std::to_string(first_type.vecsize);
-        std::string function;
         if (!accumulating)
             function = signed_dot ? "momo_sdot32_" : unsigned_dot ? "momo_udot32_"
                                                                   : "momo_sudot32_";
         else
             function = signed_dot ? "momo_sdot_acc_sat32_" : unsigned_dot ? "momo_udot_acc_sat32_"
                                                                           : "momo_sudot_acc_sat32_";
-        expression = function + suffix + "(" + first + ", " + second;
-        if (accumulating)
-            expression += ", " + integer_expression_as(ops[4], unsigned_dot ? SPIRType::UInt : SPIRType::Int);
-        expression += ")";
+        function += suffix;
         // Non-saturating software helpers return the modulo-2^32 bit pattern.
-        expression = convert_result(expression,
-                                    accumulating ? native_result_base : SPIRType::UInt);
+        if (!accumulating)
+            expression_base = SPIRType::UInt;
     }
     else
     {
         throw std::runtime_error("integer dot-product operand type is outside the enabled Vulkan shader arithmetic profile");
     }
+
+    std::string expression = function + "(" + first + ", " + second;
+    if (accumulating && !split_accumulation)
+        expression += ", " + integer_expression_as(ops[4], native_result_base);
+    expression += ")";
+    if (split_accumulation)
+    {
+        // Four 8-bit products fit in 32 bits for every signedness, so a
+        // native dot followed by add_sat preserves saturating semantics.
+        expression = "add_sat(" + expression + ", " + integer_expression_as(ops[4], native_result_base) + ")";
+    }
+    expression = convert_result(expression, expression_base);
 
     bool forward = should_forward(ops[2]) && should_forward(ops[3]);
     if (accumulating)

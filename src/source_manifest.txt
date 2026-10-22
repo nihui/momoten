@@ -9,6 +9,8 @@
 # dependencies; amalgamation expands them at each include site.
 
 translator include/momoten/spv_to_clc.h
+translator src/translator/integer_dot_product.h
+translator src/translator/integer_dot_product.cpp
 translator src/translator/translator_internal.h
 translator src/translator/opencl_source.h
 translator src/translator/opencl_source.cpp

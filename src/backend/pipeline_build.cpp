@@ -57,6 +57,8 @@ static void dump_pipeline_artifacts(const std::shared_ptr<ShaderModule>& module,
     hash = fnv1a64(&options.packed_fp16_vector_loads, sizeof(options.packed_fp16_vector_loads), hash);
     hash = fnv1a64(&options.integer_dot_product,
                    sizeof(options.integer_dot_product), hash);
+    hash = fnv1a64(&options.integer_dot_product_backend,
+                   sizeof(options.integer_dot_product_backend), hash);
     hash = fnv1a64(&options.integer_dot_product_input_4x8bit,
                    sizeof(options.integer_dot_product_input_4x8bit), hash);
     hash = fnv1a64(&options.integer_dot_product_input_4x8bit_packed,
@@ -105,6 +107,7 @@ static void dump_pipeline_artifacts(const std::shared_ptr<ShaderModule>& module,
         << "int64=" << translated.abi.int64 << '\n'
         << "fp64=" << translated.abi.fp64 << '\n'
         << "integer_dot_product=" << translated.abi.integer_dot_product << '\n'
+        << "integer_dot_product_backend=" << options.integer_dot_product_backend << '\n'
         << "float_controls2=" << translated.abi.float_controls2 << '\n'
         << "fast_math_flags=" << translated.abi.floating_point.fast_math_flags << '\n'
         << "floating_point_widths=" << translated.abi.floating_point.widths << '\n'
