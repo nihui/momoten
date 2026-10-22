@@ -430,10 +430,10 @@ static int check_profile(const char* name, const char* vendor, const char* drive
     return 0;
 }
 
-static int check_copy_policy(const char* vendor, const char* driver, bool use_kernel)
+static int check_copy_policy(const char* vendor, const char* driver, bool use_kernel, bool copy_completion = false)
 {
     const momoten_detail::OpenCLDriverPolicy policy = momoten_detail::opencl_driver_policy(vendor, driver);
-    if (policy.use_buffer_copy_kernel != use_kernel || policy.split_packed_dot_acc_sat || policy.swap_mixed_dot_acc_sat)
+    if (policy.use_buffer_copy_kernel != use_kernel || policy.use_copy_completion_event != copy_completion || policy.split_packed_dot_acc_sat || policy.swap_mixed_dot_acc_sat)
     {
         fprintf(stderr, "driver_policy_test: incorrect copy policy for %s / %s\n", vendor, driver);
         return 1;
@@ -531,6 +531,10 @@ int main()
            || check_copy_policy("Imagination Technologies", "1.10@5130912", true)
            || check_copy_policy("Imagination Technologies", "1.11@5425693", true)
            || check_copy_policy("Imagination Technologies", "1.11@5425694", false)
+           || check_copy_policy("Imagination Technologies", "1.13@5776728", false, true)
+           || check_copy_policy("Imagination Technologies", "1.13@5776729", false)
+           || check_copy_policy("Imagination Technologies", "1.13@5776728-custom", false)
+           || check_copy_policy("another vendor", "1.13@5776728", false)
            || check_copy_policy("another vendor", "1.11@5425693", false)
            || check_copy_policy("", "", false);
 }

@@ -16,6 +16,7 @@ struct OpenCLDriverPolicy
     bool split_packed_dot_acc_sat = false;
     bool swap_mixed_dot_acc_sat = false;
     bool use_buffer_copy_kernel = false;
+    bool use_copy_completion_event = false;
 };
 
 OpenCLDriverPolicy opencl_driver_policy(const std::string& vendor, const std::string& driver);

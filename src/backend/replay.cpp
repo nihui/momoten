@@ -265,6 +265,22 @@ cl_int finish_replay(ReplayState& state, cl_event& event)
 
     // One event covers the entire submission, including mapped readbacks and
     // empty submissions. Intermediate commands need no explicit events.
+    VkDevice device = state.device;
+    if (device->physical_device->driver_policy.use_copy_completion_event)
+    {
+        if (!device->completion_buffer)
+        {
+            cl_uint initial[2] = {};
+            cl_int ret = CL_SUCCESS;
+            cl_mem buffer = momoten_detail::g_opencl.p_clCreateBuffer(device->context, CL_MEM_READ_WRITE | CL_MEM_COPY_HOST_PTR, sizeof(initial), initial, &ret);
+            if (!buffer)
+                return ret == CL_SUCCESS ? CL_MEM_OBJECT_ALLOCATION_FAILURE : ret;
+            device->completion_buffer = buffer;
+        }
+        // Non-overlapping regions of one private buffer provide an in-order
+        // completion event without a blocking wait or a host readback lifetime.
+        return momoten_detail::g_opencl.p_clEnqueueCopyBuffer(device->command_queue, device->completion_buffer, device->completion_buffer, 0, sizeof(cl_uint), sizeof(cl_uint), 0, 0, &event);
+    }
     return momoten_detail::g_opencl.p_clEnqueueMarker(
         state.device->command_queue, &event);
 }

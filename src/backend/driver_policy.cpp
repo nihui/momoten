@@ -32,6 +32,9 @@ OpenCLDriverPolicy opencl_driver_policy(const std::string& vendor, const std::st
         // Copy events remain running after clFlush until a blocking wait.
         // A kernel copy allows submissions and fences to progress asynchronously.
         policy.use_buffer_copy_kernel = driver == "1.10@5130912" || driver == "1.11@5425693";
+        // Marker events stay submitted after clFlush on this revision, while
+        // native copy events complete asynchronously in queue order.
+        policy.use_copy_completion_event = driver == "1.13@5776728";
     }
     return policy;
 }
