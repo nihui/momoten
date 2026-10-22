@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 #include "translator_internal.h"
+#include "integer_dot_product.h"
 
 #include <iomanip>
 #include <sstream>
@@ -147,7 +148,7 @@ void CompilerOpenCL::emit_header()
         statement("#endif");
     }
     if (requires_integer_dot_product)
-        statement("#pragma OPENCL EXTENSION cl_khr_integer_dot_product : enable");
+        statement("#pragma OPENCL EXTENSION ", integer_dot_product_extension(translation_options.integer_dot_product_backend), " : enable");
     if (translation_options.subgroup_mode == SubgroupModeNative)
     {
         statement("#pragma OPENCL EXTENSION cl_khr_subgroups : enable");

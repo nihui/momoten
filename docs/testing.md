@@ -35,6 +35,17 @@ explicitly supplied and never changes the driver's link dependencies.
 
 The fp16 fixture reproduces ncnn's packed-half workgroup representation with `uint64_t`, validates `ushort4`/`ulong` bitcasts, and exercises the width conversion required by OpenCL `select` for a half-vector result. The fp64 fixture checks capability reflection, guarded extension setup, scalar/vector lowering, `ulong` storage-buffer bitcasts and numerical execution through an actual OpenCL compiler. The integer dot-product fixture covers packed 4x8-bit signed, unsigned and mixed-signedness operations, their accumulating-saturating variants, and 32-bit vector modulo/saturating corner cases. The driver test also enables Vulkan features and executes translated SPIR-V through public Vulkan entry points. Device acceleration properties are tested independently from functional extension support.
 
+The vendor integer-dot tests translate packed and unpacked SPIR-V for all
+backends. The OpenCL execution test runs the ARM and QCOM lowerings against
+specification-based builtin emulation, covering every byte pair, asymmetric
+lanes, saturation boundaries, cancellation, ordinary wrapping addition and
+both address widths. This validates generated code even on CPU OpenCL;
+it does not substitute for native driver coverage. A separate native test
+uses only extensions advertised by the selected devices and skips when none
+is available. Device-profile tests cover KHR/ARM/QCOM priority, compile and
+execution failures, per-operation acceleration flags and resource cleanup.
+
+
 Shader fixtures are registered through the `momoten_compile_test_shader`
 CMake helper. Direct-OpenCL runtime modes are described by one test-case table,
 which keeps device requirements and dispatch callbacks together. The workgroup-split fixture forces a logical `8x16x3` workgroup through a smaller physical OpenCL workgroup and validates reconstructed 3D invocation, workgroup and emulated BASIC subgroup built-ins.

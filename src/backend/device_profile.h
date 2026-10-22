@@ -38,6 +38,7 @@ struct IntegerDotProductAccelerationProfile
 struct IntegerDotProductProfile
 {
     bool supported;
+    momoten::IntegerDotProductBackend backend;
     bool input_4x8bit;
     bool input_4x8bit_packed;
     IntegerDotProductAccelerationProfile acceleration_8bit;

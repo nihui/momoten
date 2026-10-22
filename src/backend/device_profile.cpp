@@ -3,6 +3,7 @@
 
 #include "device_profile.h"
 #include "objects.h"
+#include "../translator/integer_dot_product.h"
 
 #include <algorithm>
 #include <cstdio>
@@ -194,6 +195,87 @@ public:
         return kernel;
     }
 
+    bool run_buffer_probe(const void* input, size_t input_bytes, void* output, size_t output_bytes, size_t count)
+    {
+        cl_int ret = CL_SUCCESS;
+        cl_command_queue queue = g_opencl.p_clCreateCommandQueue(context, device, 0, &ret);
+        cl_mem buffers[2] = {};
+        if (queue && ret == CL_SUCCESS)
+            buffers[0] = g_opencl.p_clCreateBuffer(context, CL_MEM_READ_ONLY | CL_MEM_COPY_HOST_PTR, input_bytes, const_cast<void*>(input), &ret);
+        if (buffers[0] && ret == CL_SUCCESS)
+            buffers[1] = g_opencl.p_clCreateBuffer(context, CL_MEM_READ_WRITE | CL_MEM_COPY_HOST_PTR, output_bytes, output, &ret);
+        bool success = queue && buffers[0] && buffers[1] && ret == CL_SUCCESS;
+        for (cl_uint i = 0; success && i < 2; i++)
+            success = g_opencl.p_clSetKernelArg(kernel, i, sizeof(cl_mem), &buffers[i]) == CL_SUCCESS;
+        if (success)
+            success = g_opencl.p_clEnqueueNDRangeKernel(queue, kernel, 1, 0, &count, 0, 0, 0, 0) == CL_SUCCESS;
+        if (success)
+            success = g_opencl.p_clEnqueueReadBuffer(queue, buffers[1], CL_TRUE, 0, output_bytes, output, 0, 0, 0) == CL_SUCCESS;
+        for (size_t i = 0; i < 2; i++)
+            if (buffers[i])
+                g_opencl.p_clReleaseMemObject(buffers[i]);
+        if (queue)
+            g_opencl.p_clReleaseCommandQueue(queue);
+        return success;
+    }
+
+    bool vendor_integer_dot_product(momoten::IntegerDotProductBackend backend)
+    {
+        std::string source = "#pragma OPENCL EXTENSION " + std::string(momoten::integer_dot_product_extension(backend)) + " : enable\n";
+        source += momoten::integer_dot_product_helpers(backend);
+        source += "__kernel void momo_integer_dot_product_probe(__global const uint4* input, __global uint* output)\n"
+                  "{\n"
+                  "    size_t i = get_global_id(0);\n"
+                  "    uint4 v = input[i];\n"
+                  "    output += i * 6;\n"
+                  "    output[0] = as_uint(momo_dot_ss(v.x, v.y));\n"
+                  "    output[1] = momo_dot_uu(v.x, v.y);\n"
+                  "    output[2] = as_uint(momo_dot_su(v.x, v.y));\n"
+                  "    output[3] = as_uint(momo_dot_acc_sat_ss(v.x, v.y, as_int(v.z)));\n"
+                  "    output[4] = momo_dot_acc_sat_uu(v.x, v.y, v.z);\n"
+                  "    output[5] = as_uint(momo_dot_acc_sat_su(v.x, v.y, as_int(v.z)));\n"
+                  "}\n";
+        if (!build(source, "momo_integer_dot_product_probe"))
+            return false;
+
+        // Runtime inputs exercise negative bytes, asymmetric lanes, unsigned
+        // accumulators above INT_MAX and cancellation around both signed limits.
+        // This also rejects drivers implementing a different QCOM signedness.
+        static const uint32_t values[] = {0u, 1u, 0x7f7f7f7fu, 0x80808080u, 0xffffffffu, 0x01027ffeu, 0xff807f01u, 0x7fffffffu, 0x80000000u};
+        std::vector<uint32_t> input;
+        std::vector<uint32_t> expected;
+        for (uint32_t a : values)
+            for (uint32_t b : values)
+                for (uint32_t c : values)
+                {
+                    input.push_back(a);
+                    input.push_back(b);
+                    input.push_back(c);
+                    input.push_back(0);
+                    int64_t ss = 0, uu = 0, su = 0;
+                    for (uint32_t shift = 0; shift < 32; shift += 8)
+                    {
+                        const int64_t ua = (a >> shift) & 255u;
+                        const int64_t ub = (b >> shift) & 255u;
+                        const int64_t sa = ua < 128 ? ua : ua - 256;
+                        const int64_t sb = ub < 128 ? ub : ub - 256;
+                        ss += sa * sb;
+                        uu += ua * ub;
+                        su += sa * ub;
+                    }
+                    const int64_t signed_c = c < 0x80000000u ? int64_t(c) : int64_t(c) - 0x100000000LL;
+                    expected.push_back(static_cast<uint32_t>(ss));
+                    expected.push_back(static_cast<uint32_t>(uu));
+                    expected.push_back(static_cast<uint32_t>(su));
+                    expected.push_back(static_cast<uint32_t>(std::max<int64_t>(-2147483648LL, std::min<int64_t>(2147483647LL, ss + signed_c))));
+                    expected.push_back(static_cast<uint32_t>(std::min<int64_t>(4294967295LL, uu + c)));
+                    expected.push_back(static_cast<uint32_t>(std::max<int64_t>(-2147483648LL, std::min<int64_t>(2147483647LL, su + signed_c))));
+                }
+        std::vector<uint32_t> output(expected.size(), 0);
+        return run_buffer_probe(input.data(), input.size() * sizeof(uint32_t), output.data(), output.size() * sizeof(uint32_t), input.size() / 4)
+               && output == expected;
+    }
+
     bool packed_fp16_vector_loads()
     {
         // Packed reads require alias-safe vector types with four-byte
@@ -231,27 +313,7 @@ public:
         for (size_t i = 0; i < count; i++)
             for (size_t lane = 0; lane < 4; lane++)
                 input[i * 4 + lane + 2] = static_cast<cl_ushort>(i + lane * 16381);
-        const size_t bytes = output.size() * sizeof(cl_ushort);
-        cl_int ret = CL_SUCCESS;
-        cl_command_queue queue = g_opencl.p_clCreateCommandQueue(context, device, 0, &ret);
-        cl_mem buffers[2] = {};
-        if (queue && ret == CL_SUCCESS)
-            buffers[0] = g_opencl.p_clCreateBuffer(context, CL_MEM_READ_ONLY | CL_MEM_COPY_HOST_PTR, input.size() * sizeof(cl_ushort), input.data(), &ret);
-        if (buffers[0] && ret == CL_SUCCESS)
-            buffers[1] = g_opencl.p_clCreateBuffer(context, CL_MEM_READ_WRITE | CL_MEM_COPY_HOST_PTR, bytes, output.data(), &ret);
-        bool success = queue && buffers[0] && buffers[1] && ret == CL_SUCCESS;
-        for (cl_uint i = 0; success && i < 2; i++)
-            success = g_opencl.p_clSetKernelArg(kernel, i, sizeof(cl_mem), &buffers[i]) == CL_SUCCESS;
-        if (success)
-            success = g_opencl.p_clEnqueueNDRangeKernel(queue, kernel, 1, 0, &count, 0, 0, 0, 0) == CL_SUCCESS;
-        if (success)
-            success = g_opencl.p_clEnqueueReadBuffer(queue, buffers[1], CL_TRUE, 0, bytes, output.data(), 0, 0, 0) == CL_SUCCESS;
-        for (size_t i = 0; i < 2; i++)
-            if (buffers[i])
-                g_opencl.p_clReleaseMemObject(buffers[i]);
-        if (queue)
-            g_opencl.p_clReleaseCommandQueue(queue);
-        if (!success)
+        if (!run_buffer_probe(input.data(), input.size() * sizeof(cl_ushort), output.data(), output.size() * sizeof(cl_ushort), count))
             return false;
         for (size_t i = 0; i < count; i++)
             for (size_t lane = 0; lane < 4; lane++)
@@ -314,7 +376,7 @@ static uint32_t probe_emulated_subgroup_size(OpenCLCapabilityProbe& probe, cl_de
     return logical_size;
 }
 
-static bool probe_integer_dot_product(
+static bool probe_khr_integer_dot_product(
     OpenCLCapabilityProbe& probe, cl_device_id device, const std::string& extensions,
     momoten_detail::IntegerDotProductProfile& profile, const OpenCLDriverPolicy& policy)
 {
@@ -413,6 +475,45 @@ static bool probe_integer_dot_product(
     return profile.supported;
 }
 
+static void probe_integer_dot_product(
+    OpenCLCapabilityProbe& probe, cl_device_id device, const std::string& extensions,
+    IntegerDotProductProfile& profile, const OpenCLDriverPolicy& policy)
+{
+    if (probe_khr_integer_dot_product(probe, device, extensions, profile, policy))
+        return;
+
+    // A saturating ARM builtin with a zero accumulator also implements plain
+    // dot, so one extension covers both operations without extra requirements.
+    const momoten::IntegerDotProductBackend candidates[] = {
+        momoten::IntegerDotProductArmAccumulateSaturate,
+        momoten::IntegerDotProductArm,
+        momoten::IntegerDotProductArmAccumulate,
+        momoten::IntegerDotProductQcom};
+    profile = IntegerDotProductProfile();
+    for (momoten::IntegerDotProductBackend backend : candidates)
+    {
+        if (!extension_string_contains(extensions, momoten::integer_dot_product_extension(backend))
+            || !probe.vendor_integer_dot_product(backend))
+            continue;
+        profile.supported = true;
+        profile.backend = backend;
+        profile.input_4x8bit = true;
+        profile.input_4x8bit_packed = true;
+        IntegerDotProductAccelerationProfile& acceleration = profile.acceleration_4x8bit_packed;
+        // Vendor extensions expose specialized instructions but have no KHR
+        // acceleration query. Report only direct native mappings, leaving
+        // corrected or split operations conservative even when they use dots.
+        acceleration.unsigned_accelerated = true;
+        acceleration.signed_accelerated = backend != momoten::IntegerDotProductQcom;
+        acceleration.mixed_signedness_accelerated = backend == momoten::IntegerDotProductQcom;
+        acceleration.accumulating_saturating_signed_accelerated = backend == momoten::IntegerDotProductArmAccumulateSaturate;
+        acceleration.accumulating_saturating_unsigned_accelerated = backend == momoten::IntegerDotProductArmAccumulateSaturate;
+        acceleration.accumulating_saturating_mixed_signedness_accelerated = backend == momoten::IntegerDotProductQcom;
+        profile.acceleration_8bit = acceleration;
+        return;
+    }
+}
+
 ShaderDeviceProfile probe_shader_device_profile(
     cl_device_id device, const std::string& extensions,
     size_t max_workgroup_size, size_t max_work_item_size_x, const OpenCLDriverPolicy& policy)
@@ -486,7 +587,7 @@ IntegerDotProductAccelerationProfile::IntegerDotProductAccelerationProfile()
 }
 
 IntegerDotProductProfile::IntegerDotProductProfile()
-    : supported(false), input_4x8bit(false), input_4x8bit_packed(false)
+    : supported(false), backend(momoten::IntegerDotProductKhr), input_4x8bit(false), input_4x8bit_packed(false)
 {
 }
 
@@ -514,10 +615,11 @@ void configure_translation_options(
     options.subgroup_mode = physical.subgroup_mode;
     options.subgroup_size = physical.subgroup_size;
     options.integer_dot_product = enabled.integer_dot_product;
+    options.integer_dot_product_backend = enabled.integer_dot_product ? physical.integer_dot_product.backend : momoten::IntegerDotProductKhr;
     options.integer_dot_product_input_4x8bit = enabled.integer_dot_product && physical.integer_dot_product.input_4x8bit;
     options.integer_dot_product_input_4x8bit_packed = enabled.integer_dot_product && physical.integer_dot_product.input_4x8bit_packed;
-    options.integer_dot_product_split_packed_acc_sat = enabled.integer_dot_product && device->physical_device->driver_policy.split_packed_dot_acc_sat;
-    options.integer_dot_product_swap_mixed_acc_sat = enabled.integer_dot_product && device->physical_device->driver_policy.swap_mixed_dot_acc_sat;
+    options.integer_dot_product_split_packed_acc_sat = enabled.integer_dot_product && physical.integer_dot_product.backend == momoten::IntegerDotProductKhr && device->physical_device->driver_policy.split_packed_dot_acc_sat;
+    options.integer_dot_product_swap_mixed_acc_sat = enabled.integer_dot_product && physical.integer_dot_product.backend == momoten::IntegerDotProductKhr && device->physical_device->driver_policy.swap_mixed_dot_acc_sat;
 }
 
 bool resolve_workgroup_invocations(

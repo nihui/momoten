@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 #include "translator_internal.h"
+#include "integer_dot_product.h"
 #include "opencl_source.h"
 
 #include <algorithm>
@@ -44,7 +45,7 @@ KernelABI::KernelABI()
 }
 
 TranslationOptions::TranslationOptions()
-    : entry_point("main"), address_bits(32), override_local_size(false), workgroup_mode(WorkgroupModeDirect), subgroup_mode(SubgroupModeSingleton), subgroup_size(1), integer_dot_product(false), integer_dot_product_input_4x8bit(false), integer_dot_product_input_4x8bit_packed(false), integer_dot_product_split_packed_acc_sat(false), integer_dot_product_swap_mixed_acc_sat(false), native_buffer_vector_loads(false), native_buffer_vector_stores(false), packed_fp16_vector_loads(false), byte_addressable_store(false)
+    : entry_point("main"), address_bits(32), override_local_size(false), workgroup_mode(WorkgroupModeDirect), subgroup_mode(SubgroupModeSingleton), subgroup_size(1), integer_dot_product(false), integer_dot_product_backend(IntegerDotProductKhr), integer_dot_product_input_4x8bit(false), integer_dot_product_input_4x8bit_packed(false), integer_dot_product_split_packed_acc_sat(false), integer_dot_product_swap_mixed_acc_sat(false), native_buffer_vector_loads(false), native_buffer_vector_stores(false), packed_fp16_vector_loads(false), byte_addressable_store(false)
 {
     local_size[0] = 1;
     local_size[1] = 1;
@@ -99,7 +100,7 @@ void CompilerOpenCL::prepare(KernelABI& abi)
     if (requires_fp64)
         abi.required_extensions.push_back("cl_khr_fp64");
     if (requires_integer_dot_product)
-        abi.required_extensions.push_back("cl_khr_integer_dot_product");
+        abi.required_extensions.push_back(integer_dot_product_extension(translation_options.integer_dot_product_backend));
     if (translation_options.subgroup_mode == SubgroupModeNative)
     {
         abi.required_extensions.push_back("cl_khr_subgroups");

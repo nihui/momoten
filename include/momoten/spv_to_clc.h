@@ -47,6 +47,15 @@ enum WorkgroupMode
     WorkgroupModeRepartitioned = 2
 };
 
+enum IntegerDotProductBackend
+{
+    IntegerDotProductKhr = 0,
+    IntegerDotProductArm,
+    IntegerDotProductArmAccumulate,
+    IntegerDotProductArmAccumulateSaturate,
+    IntegerDotProductQcom
+};
+
 struct SpecializationValue
 {
     uint32_t constant_id;
@@ -126,9 +135,9 @@ struct TranslationOptions
     WorkgroupMode workgroup_mode;
     SubgroupMode subgroup_mode;
     uint32_t subgroup_size;
-    // The driver enables these only after querying cl_khr_integer_dot_product
-    // capabilities and compiling the corresponding OpenCL C builtins.
+    // The driver selects a verified backend, preferring KHR to ARM and QCOM.
     bool integer_dot_product;
+    IntegerDotProductBackend integer_dot_product_backend;
     bool integer_dot_product_input_4x8bit;
     bool integer_dot_product_input_4x8bit_packed;
     // Lower packed saturating dot as a native dot followed by add_sat.

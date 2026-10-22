@@ -9,6 +9,7 @@ set_tests_properties(momoten_version_configuration PROPERTIES
 
 add_executable(momoten_driver_version_test
     api/driver_version_test.cpp
+    "${CMAKE_CURRENT_SOURCE_DIR}/../src/translator/integer_dot_product.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/../src/instance.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/../src/backend/driver_policy.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/../src/backend/device_profile.cpp")
@@ -116,6 +117,21 @@ target_link_libraries(momoten_device_profile_test PRIVATE
 add_test(NAME momoten_device_profile COMMAND momoten_device_profile_test)
 set_tests_properties(momoten_device_profile PROPERTIES
     LABELS "momoten;api;profile;subgroup;compiler")
+
+function(momoten_add_integer_dot_test target_name translator_target test_name)
+    add_executable(${target_name} translator/integer_dot_product_test.cpp)
+    target_compile_features(${target_name} PRIVATE cxx_std_11)
+    target_link_libraries(${target_name} PRIVATE ${translator_target} momoten::headers SPIRV-Tools-static)
+    add_test(NAME ${test_name} COMMAND ${target_name})
+    set_tests_properties(${test_name} PROPERTIES LABELS "momoten;translator;integer-dot")
+endfunction()
+
+momoten_add_integer_dot_test(momoten_integer_dot_product_test
+    momoten::translator momoten_integer_dot_product)
+if(TARGET momoten_amalgamated_translator)
+    momoten_add_integer_dot_test(momoten_amalgamated_integer_dot_product_test
+        momoten_amalgamated_translator momoten_amalgamated_integer_dot_product)
+endif()
 
 function(momoten_add_float_controls_test target_name translator_target test_name)
     add_executable(${target_name}
@@ -532,6 +548,17 @@ if(MOMOTEN_CLANG)
 endif()
 
 if(TARGET momoten_test_opencl)
+    add_executable(momoten_vendor_integer_dot_product_test runtime/vendor_integer_dot_product_test.cpp)
+    target_compile_features(momoten_vendor_integer_dot_product_test PRIVATE cxx_std_11)
+    target_compile_definitions(momoten_vendor_integer_dot_product_test PRIVATE CL_TARGET_OPENCL_VERSION=100)
+    target_include_directories(momoten_vendor_integer_dot_product_test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/../src")
+    target_link_libraries(momoten_vendor_integer_dot_product_test PRIVATE
+        momoten::translator momoten_test_opencl SPIRV-Tools-static)
+    add_test(NAME momoten_vendor_integer_dot_product_emulated COMMAND momoten_vendor_integer_dot_product_test)
+    add_test(NAME momoten_vendor_integer_dot_product_native COMMAND momoten_vendor_integer_dot_product_test native)
+    set_tests_properties(momoten_vendor_integer_dot_product_emulated momoten_vendor_integer_dot_product_native
+        PROPERTIES SKIP_RETURN_CODE 77 LABELS "momoten;opencl;integer-dot")
+
     add_executable(momoten_opencl_test runtime/opencl_test.cpp)
     target_compile_features(momoten_opencl_test PRIVATE cxx_std_11)
     target_compile_definitions(momoten_opencl_test PRIVATE CL_TARGET_OPENCL_VERSION=100)
