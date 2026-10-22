@@ -193,6 +193,29 @@ cl_int replay_dispatch(ReplayState& state, const RecordedCommand& command)
             local_size[d] *= factor;
             remaining /= factor;
         }
+        if (local_size[0] * local_size[1] * local_size[2] < pipeline->opencl_workgroup_limit)
+        {
+            // Retain a full power-of-two group and its established shape.
+            // Otherwise also consider odd divisors, choosing that shape only
+            // when it fills more lanes under the same kernel/device limits.
+            size_t candidate[3] = {1, 1, 1};
+            size_t capacity = pipeline->opencl_workgroup_limit;
+            for (size_t i = 0; i < 4; i++)
+            {
+                const size_t d = order[i];
+                const size_t extent = global_size[d] / candidate[d];
+                size_t factor = std::min(capacity, device->physical_device->max_work_item_sizes[d] / candidate[d]);
+                factor = std::min(factor, extent);
+                if (i == 0)
+                    factor = std::min(factor, static_cast<size_t>(4));
+                while (extent % factor != 0)
+                    factor--;
+                candidate[d] *= factor;
+                capacity /= factor;
+            }
+            if (candidate[0] * candidate[1] * candidate[2] > local_size[0] * local_size[1] * local_size[2])
+                std::copy(candidate, candidate + 3, local_size);
+        }
     }
     else
     {

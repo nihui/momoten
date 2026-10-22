@@ -47,6 +47,7 @@ struct TestCase
 {
     std::string name;
     uint32_t logical_size[3];
+    uint32_t group_count[3];
     size_t device_limit;
     size_t profile_limit;
     size_t dimension_limits[3];
@@ -79,6 +80,9 @@ struct TestCase
         logical_size[0] = expected_local_size[0] = 4;
         logical_size[1] = expected_local_size[1] = 3;
         logical_size[2] = expected_local_size[2] = 2;
+        group_count[0] = 3;
+        group_count[1] = 2;
+        group_count[2] = 4;
         expected_global_size[0] = 12;
         expected_global_size[1] = 6;
         expected_global_size[2] = 8;
@@ -655,9 +659,8 @@ static int run_case(const TestCase& test)
         command.type = RecordedCommand::Dispatch;
         command.pipeline = pipeline;
         command.descriptors[0].buffer = buffer;
-        command.group_count[0] = 3;
-        command.group_count[1] = 2;
-        command.group_count[2] = 4;
+        for (size_t d = 0; d < 3; d++)
+            command.group_count[d] = test.group_count[d];
         ReplayState replay(&device);
         const cl_int replay_result = replay_dispatch(replay, command);
         status |= require(test, replay_result == CL_SUCCESS && state.enqueue_calls == 1 && state.argument_calls == 2, "dispatch replay failed or did not enqueue exactly one kernel");
@@ -752,11 +755,36 @@ int main()
     status |= run_case(test);
     test.name = "GPU repartition respects a z dimension limit";
     test.dimension_limits[2] = 1;
+    test.expected_local_size[1] = 3;
     test.expected_local_size[2] = 1;
     status |= run_case(test);
     test.name = "GPU repartition rejects a kernel with zero capacity";
     test.kernel_limits[0] = 0;
     test.expect_failure(1, 1, 1);
+    status |= run_case(test);
+
+    test = TestCase("GPU odd global grid uses non-power-of-two groups");
+    test.gpu = true;
+    test.logical_size[0] = test.logical_size[1] = 7;
+    test.logical_size[2] = 1;
+    test.group_count[0] = test.group_count[1] = 9;
+    test.group_count[2] = 1;
+    test.kernel_limits[0] = test.kernel_limits[1] = 32;
+    test.expected_mode = momoten::WorkgroupModeRepartitioned;
+    test.expected_local_size[0] = 3;
+    test.expected_local_size[1] = 9;
+    test.expected_local_size[2] = 1;
+    test.expected_global_size[0] = test.expected_global_size[1] = 63;
+    test.expected_global_size[2] = 1;
+    test.expected_program_calls = test.expected_build_calls = test.expected_kernel_calls = 2;
+    status |= run_case(test);
+    test.name = "GPU odd global grid respects dimension limits";
+    test.dimension_limits[1] = 7;
+    test.expected_local_size[1] = 7;
+    status |= run_case(test);
+    test.name = "GPU odd global grid respects a prime kernel limit";
+    test.kernel_limits[0] = test.kernel_limits[1] = 17;
+    test.expected_local_size[1] = 3;
     status |= run_case(test);
 
     test = TestCase("GPU native subgroups keep virtual chunks");
