@@ -40,7 +40,11 @@ enum WorkgroupMode
     WorkgroupModeDirect = 0,
     // Flatten independent invocations and reconstruct their Vulkan coordinates.
     // The driver may split one logical workgroup across physical workgroups.
-    WorkgroupModeVirtual = 1
+    WorkgroupModeVirtual = 1,
+    // Preserve the global invocation grid while reconstructing logical local
+    // coordinates. Physical workgroups may use a different rectangular shape.
+    // Requires independent invocations and singleton or emulated subgroups.
+    WorkgroupModeRepartitioned = 2
 };
 
 struct SpecializationValue
@@ -117,8 +121,8 @@ struct TranslationOptions
     uint32_t address_bits;
     uint32_t local_size[3];
     bool override_local_size;
-    // Direct workgroups are preferred. Virtual workgroups require a shader
-    // without workgroup storage or synchronization barriers.
+    // Direct workgroups are preferred. Virtual and repartitioned workgroups
+    // require a shader without workgroup storage or synchronization barriers.
     WorkgroupMode workgroup_mode;
     SubgroupMode subgroup_mode;
     uint32_t subgroup_size;

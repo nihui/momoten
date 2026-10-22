@@ -63,7 +63,7 @@ void CompilerOpenCL::prepare(KernelABI& abi)
 {
     if (translation_options.address_bits != 32 && translation_options.address_bits != 64)
         throw std::runtime_error("OpenCL address bits must be 32 or 64");
-    if (translation_options.workgroup_mode != WorkgroupModeDirect && translation_options.workgroup_mode != WorkgroupModeVirtual)
+    if (translation_options.workgroup_mode != WorkgroupModeDirect && translation_options.workgroup_mode != WorkgroupModeVirtual && translation_options.workgroup_mode != WorkgroupModeRepartitioned)
         throw std::runtime_error("invalid OpenCL workgroup translation mode");
     if (translation_options.subgroup_mode != SubgroupModeSingleton && translation_options.subgroup_mode != SubgroupModeNative && translation_options.subgroup_mode != SubgroupModeEmulatedBasic)
         throw std::runtime_error("invalid Vulkan subgroup translation mode");
@@ -86,8 +86,10 @@ void CompilerOpenCL::prepare(KernelABI& abi)
 
     localize_workgroup_variables();
     workgroup_splittable = workgroup_splittable && !uses_workgroup_storage;
-    if (translation_options.workgroup_mode == WorkgroupModeVirtual && !workgroup_splittable)
-        throw std::runtime_error("virtual workgroups require a shader without workgroup storage or synchronization barriers");
+    if (translation_options.workgroup_mode != WorkgroupModeDirect && !workgroup_splittable)
+        throw std::runtime_error("independent workgroups require a shader without workgroup storage or synchronization barriers");
+    if (translation_options.workgroup_mode == WorkgroupModeRepartitioned && translation_options.subgroup_mode == SubgroupModeNative)
+        throw std::runtime_error("repartitioned workgroups cannot preserve native subgroup membership");
 
     reflect_resources(abi);
     if (requires_global_int32_atomics)

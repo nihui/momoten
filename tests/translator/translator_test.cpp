@@ -157,6 +157,11 @@ int main(int argc, char** argv)
                    "virtual workgroup rejection was not diagnostic"))
         return 1;
 
+    virtual_options.workgroup_mode = momoten::WorkgroupModeRepartitioned;
+    if (require(!momoten::translate_spirv_to_opencl_c(words.data(), words.size(), virtual_options, virtual_rejected),
+                "workgroup storage and barriers were accepted in repartitioned mode"))
+        return 1;
+
     std::vector<uint32_t> invalid = words;
     invalid[0] = 0;
     momoten::TranslationResult rejected;
@@ -188,7 +193,7 @@ int main(int argc, char** argv)
         || require(atomic_result.abi.workgroup_splittable,
                    "independent-work-item kernel was not marked splittable")
         || require(atomic_result.abi.workgroup_mode == momoten::WorkgroupModeDirect
-                       && atomic_result.source.find("reqd_work_group_size(1, 1, 1)") != std::string::npos
+                       && atomic_result.source.find("reqd_work_group_size") == std::string::npos
                        && atomic_result.source.find("momo_virtual_local_invocation_index") == std::string::npos,
                    "splittable kernel did not retain the default direct ABI")
         || require(atomic_result.abi.required_extensions.size() == 1 && atomic_result.abi.required_extensions[0] == "cl_khr_global_int32_base_atomics",
@@ -493,9 +498,9 @@ int main(int argc, char** argv)
                    "direct 3D workgroup mode or split capability was not reflected")
         || require(direct_result.abi.local_size[0] == 8 && direct_result.abi.local_size[1] == 4 && direct_result.abi.local_size[2] == 2,
                    "direct 3D workgroup shape was not reflected")
-        || require(direct_result.source.find("reqd_work_group_size(8, 4, 2)") != std::string::npos
+        || require(direct_result.source.find("reqd_work_group_size") == std::string::npos
                        && direct_result.source.find("momo_virtual_local_invocation_index") == std::string::npos,
-                   "direct 3D kernel did not retain its fixed workgroup shape")
+                   "independent direct 3D kernel constrained the compiler's workgroup limit")
         || require(direct_result.source.find("get_local_id(2)") != std::string::npos && direct_result.source.find("get_global_id(2)") != std::string::npos && direct_result.source.find("get_group_id(2)") != std::string::npos && direct_result.source.find("get_num_groups(2)") != std::string::npos,
                    "direct 3D coordinates did not use native OpenCL builtins"))
         return 1;
@@ -510,6 +515,17 @@ int main(int argc, char** argv)
                    "small 3D virtual workgroup ABI was not reflected")
         || require(virtual_result.source.find("reqd_work_group_size") == std::string::npos && virtual_result.source.find("momo_virtual_local_invocation_index") != std::string::npos,
                    "explicit virtual 3D kernel retained a fixed physical shape"))
+        return 1;
+
+    direct_options.workgroup_mode = momoten::WorkgroupModeRepartitioned;
+    if (require(momoten::translate_spirv_to_opencl_c(workgroup_3d.data(), workgroup_3d.size(), direct_options, virtual_result),
+                "independent 3D workgroup was rejected in repartitioned mode")
+        || require(virtual_result.abi.workgroup_mode == momoten::WorkgroupModeRepartitioned && virtual_result.abi.workgroup_splittable,
+                   "repartitioned workgroup mode was not reflected"))
+        return 1;
+    direct_options.subgroup_mode = momoten::SubgroupModeNative;
+    if (require(!momoten::translate_spirv_to_opencl_c(workgroup_3d.data(), workgroup_3d.size(), direct_options, virtual_result),
+                "repartitioning changed native subgroup membership"))
         return 1;
 
     std::vector<uint32_t> fp64;

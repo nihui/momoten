@@ -83,6 +83,14 @@ void CompilerOpenCL::emit_entry_point_declarations()
         statement("const uint3 momo_virtual_num_workgroups = (uint3)((uint)(get_num_groups(0) / (size_t)momo_workgroup_chunk_count), (uint)get_num_groups(1), (uint)get_num_groups(2));");
         statement("const uint3 momo_virtual_global_invocation_id = momo_virtual_workgroup_id * (uint3)(", local_size[0], "u, ", local_size[1], "u, ", local_size[2], "u) + momo_virtual_local_invocation_id;");
     }
+    if (translation_options.workgroup_mode == WorkgroupModeRepartitioned)
+    {
+        statement("const uint3 momo_virtual_global_invocation_id = (uint3)((uint)get_global_id(0), (uint)get_global_id(1), (uint)get_global_id(2));");
+        statement("const uint3 momo_virtual_local_invocation_id = (uint3)((uint)(get_global_id(0) % ", local_size[0], "u), (uint)(get_global_id(1) % ", local_size[1], "u), (uint)(get_global_id(2) % ", local_size[2], "u));");
+        statement("const uint momo_virtual_local_invocation_index = momo_virtual_local_invocation_id.x + ", local_size[0], "u * (momo_virtual_local_invocation_id.y + ", local_size[1], "u * momo_virtual_local_invocation_id.z);");
+        statement("const uint3 momo_virtual_workgroup_id = (uint3)((uint)(get_global_id(0) / ", local_size[0], "u), (uint)(get_global_id(1) / ", local_size[1], "u), (uint)(get_global_id(2) / ", local_size[2], "u));");
+        statement("const uint3 momo_virtual_num_workgroups = (uint3)((uint)(get_global_size(0) / ", local_size[0], "u), (uint)(get_global_size(1) / ", local_size[1], "u), (uint)(get_global_size(2) / ", local_size[2], "u));");
+    }
     if (uses_workgroup_storage)
         statement("volatile int momo_active = 1;");
 }
@@ -303,7 +311,7 @@ void CompilerOpenCL::emit_header()
     }
     statement("");
 
-    if (translation_options.workgroup_mode == WorkgroupModeVirtual)
+    if (translation_options.workgroup_mode != WorkgroupModeDirect)
     {
         statement("#define gl_NumWorkGroups momo_virtual_num_workgroups");
         statement("#define gl_WorkGroupID momo_virtual_workgroup_id");

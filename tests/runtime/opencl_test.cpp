@@ -616,7 +616,8 @@ static int run_integer_dot_product_kernel(
 static int run_workgroup_kernel(cl_context context, cl_command_queue queue, cl_kernel kernel,
                                 const momoten::TranslationResult& translated,
                                 cl_uint address_bits, size_t max_physical_size,
-                                std::vector<uint32_t>* captured_output = 0)
+                                std::vector<uint32_t>* captured_output = 0,
+                                const size_t* repartitioned_local_size = 0)
 {
     if (!translated.abi.workgroup_splittable || translated.abi.buffers.size() != 1
         || translated.abi.subgroup_mode != momoten::SubgroupModeEmulatedBasic
@@ -652,7 +653,7 @@ static int run_workgroup_kernel(cl_context context, cl_command_queue queue, cl_k
     const bool virtual_workgroup = translated.abi.workgroup_mode == momoten::WorkgroupModeVirtual;
     for (size_t d = 0; d < 3; d++)
     {
-        const size_t expected = virtual_workgroup ? 0 : translated.abi.local_size[d];
+        const size_t expected = virtual_workgroup || translated.abi.workgroup_splittable ? 0 : translated.abi.local_size[d];
         if (compile_size[d] != expected)
         {
             fprintf(stderr, "opencl_test: compiled workgroup size[%zu]=%zu expected=%zu\n", d, compile_size[d], expected);
@@ -686,6 +687,21 @@ static int run_workgroup_kernel(cl_context context, cl_command_queue queue, cl_k
         local_size[2] = 1;
         chunk_count = 1 + (logical_size - 1) / physical_size;
     }
+    else if (translated.abi.workgroup_mode == momoten::WorkgroupModeRepartitioned)
+    {
+        if (!repartitioned_local_size)
+            return fail("missing repartitioned workgroup shape", CL_INVALID_WORK_GROUP_SIZE);
+        size_t physical_count = 1;
+        for (size_t d = 0; d < 3; d++)
+        {
+            local_size[d] = repartitioned_local_size[d];
+            if (local_size[d] == 0 || local_size[d] > dimension_limits[d])
+                return fail("invalid repartitioned workgroup dimension", CL_INVALID_WORK_ITEM_SIZE);
+            physical_count *= local_size[d];
+        }
+        if (physical_count > kernel_limit || physical_count > device_limit)
+            return fail("invalid repartitioned workgroup size", CL_INVALID_WORK_GROUP_SIZE);
+    }
     else if (logical_size > kernel_limit || logical_size > device_limit
              || local_size[0] > dimension_limits[0] || local_size[1] > dimension_limits[1] || local_size[2] > dimension_limits[2])
     {
@@ -711,7 +727,10 @@ static int run_workgroup_kernel(cl_context context, cl_command_queue queue, cl_k
     if (ret == CL_SUCCESS)
         ret = clSetKernelArg(kernel, argument.offset_arg_index, scalar_size, offset);
 
-    const size_t global_size[3] = {group_count[0] * chunk_count * local_size[0], group_count[1] * local_size[1], group_count[2] * local_size[2]};
+    size_t global_size[3] = {group_count[0] * chunk_count * local_size[0], group_count[1] * local_size[1], group_count[2] * local_size[2]};
+    if (translated.abi.workgroup_mode == momoten::WorkgroupModeRepartitioned)
+        for (size_t d = 0; d < 3; d++)
+            global_size[d] = group_count[d] * translated.abi.local_size[d];
     if (ret == CL_SUCCESS)
         ret = clEnqueueNDRangeKernel(queue, kernel, 3, 0, global_size, local_size, 0, 0, 0);
     if (ret == CL_SUCCESS)
@@ -828,6 +847,31 @@ static int run_workgroup_3d_modes(cl_context context, cl_command_queue queue, cl
         fprintf(stderr, "opencl_test: direct and virtual 3D workgroup coordinates or subgroup results differ\n");
         status = 1;
     }
+    if (status != 0)
+        return status;
+    virtual_options.workgroup_mode = momoten::WorkgroupModeRepartitioned;
+    if (!momoten::translate_spirv_to_opencl_c(words.data(), words.size(), virtual_options, virtual_translated))
+    {
+        fprintf(stderr, "opencl_test: repartitioned translation failed: %s\n", virtual_translated.diagnostics.c_str());
+        return 1;
+    }
+    if (build_test_kernel(context, device, virtual_translated, virtual_program, virtual_kernel))
+        return 1;
+    // Cross logical workgroup boundaries along each dimension, including an
+    // odd physical dimension. Logical coordinates and emulated subgroup
+    // election must stay identical to the original 8x4x2 workgroups.
+    const size_t shapes[][3] = {{4, 2, 2}, {2, 12, 1}, {1, 3, 4}, {16, 1, 1}};
+    for (size_t i = 0; i < sizeof(shapes) / sizeof(shapes[0]) && status == 0; i++)
+    {
+        status = run_workgroup_kernel(context, queue, virtual_kernel, virtual_translated, address_bits, 32, &virtual_output, shapes[i]);
+        if (status == 0 && direct_output != virtual_output)
+        {
+            fprintf(stderr, "opencl_test: repartitioned coordinates or subgroup results differ\n");
+            status = 1;
+        }
+    }
+    clReleaseKernel(virtual_kernel);
+    clReleaseProgram(virtual_program);
     return status;
 }
 

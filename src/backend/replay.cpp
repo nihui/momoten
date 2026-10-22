@@ -163,6 +163,37 @@ cl_int replay_dispatch(ReplayState& state, const RecordedCommand& command)
         global_size[1] = command.group_count[1];
         global_size[2] = command.group_count[2];
     }
+    else if (pipeline->abi.workgroup_mode == momoten::WorkgroupModeRepartitioned)
+    {
+        for (size_t d = 0; d < 3; d++)
+        {
+            if (device->physical_device->max_work_item_sizes[d] == 0)
+                return CL_INVALID_WORK_ITEM_SIZE;
+            if (command.group_count[d] != 0 && pipeline->abi.local_size[d] > SIZE_MAX / command.group_count[d])
+                return CL_INVALID_GLOBAL_WORK_SIZE;
+            global_size[d] = static_cast<size_t>(pipeline->abi.local_size[d]) * command.group_count[d];
+            local_size[d] = 1;
+        }
+        size_t remaining = pipeline->opencl_workgroup_limit;
+        if (remaining == 0)
+            return CL_INVALID_WORK_GROUP_SIZE;
+        // Cover nearby rows with a narrow x span before extending z or x.
+        // Every physical dimension divides the original global grid exactly,
+        // so repartitioning introduces no padding or inactive invocations.
+        const size_t order[4] = {0, 1, 2, 0};
+        for (size_t i = 0; i < 4; i++)
+        {
+            const size_t d = order[i];
+            size_t limit = std::min(remaining, device->physical_device->max_work_item_sizes[d] / local_size[d]);
+            if (i == 0)
+                limit = std::min(limit, static_cast<size_t>(4));
+            size_t factor = 1;
+            while (factor <= limit / 2 && global_size[d] % (local_size[d] * factor * 2) == 0)
+                factor *= 2;
+            local_size[d] *= factor;
+            remaining /= factor;
+        }
+    }
     else
     {
         for (size_t d = 0; d < 3; d++)

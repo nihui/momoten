@@ -15,6 +15,21 @@
 
 namespace momoten_detail {
 
+static const char* workgroup_mode_name(momoten::WorkgroupMode mode)
+{
+    switch (mode)
+    {
+    case momoten::WorkgroupModeDirect:
+        return "direct";
+    case momoten::WorkgroupModeVirtual:
+        return "virtual";
+    case momoten::WorkgroupModeRepartitioned:
+        return "repartitioned";
+    default:
+        return "unknown";
+    }
+}
+
 static void dump_pipeline_artifacts(const std::shared_ptr<ShaderModule>& module,
                                     const momoten::TranslationOptions& options,
                                     const momoten::TranslationResult& translated)
@@ -99,7 +114,7 @@ static void dump_pipeline_artifacts(const std::shared_ptr<ShaderModule>& module,
         << "requires_builtin_accuracy=" << translated.abi.floating_point.requires_builtin_accuracy << '\n'
         << "opencl_build_options=" << opencl_build_options(translated.abi, module->device->physical_device->shader_profile) << '\n'
         << "workgroup_splittable=" << translated.abi.workgroup_splittable << '\n'
-        << "workgroup_mode=" << (translated.abi.workgroup_mode == momoten::WorkgroupModeVirtual ? "virtual" : "direct") << '\n'
+        << "workgroup_mode=" << workgroup_mode_name(translated.abi.workgroup_mode) << '\n'
         << "push_constant_arg=" << translated.abi.push_constant_arg_index << '\n'
         << "push_constant_size=" << translated.abi.push_constant_size << '\n';
     if (!translated.diagnostics.empty())
@@ -130,9 +145,16 @@ static void dump_pipeline_artifacts(const std::shared_ptr<ShaderModule>& module,
             base.str().c_str());
 }
 
+static momoten::WorkgroupMode independent_workgroup_mode(VkDevice device, const momoten::TranslationOptions& options)
+{
+    if ((device->physical_device->opencl_device_type & CL_DEVICE_TYPE_GPU) && options.subgroup_mode != momoten::SubgroupModeNative)
+        return momoten::WorkgroupModeRepartitioned;
+    return momoten::WorkgroupModeVirtual;
+}
+
 static VkResult build_pipeline_kernel(VkDevice device, const momoten::TranslationResult& translated,
                                       size_t requested_workgroup_size, const std::shared_ptr<PipelineLayout>& layout,
-                                      std::shared_ptr<Pipeline>& pipeline, bool& retry_virtual)
+                                      std::shared_ptr<Pipeline>& pipeline, bool& retry_independent)
 {
     // A failed candidate owns and releases its OpenCL objects before a retry.
     std::shared_ptr<Pipeline> candidate(new Pipeline());
@@ -140,7 +162,7 @@ static VkResult build_pipeline_kernel(VkDevice device, const momoten::Translatio
     candidate->layout = layout;
     candidate->abi = translated.abi;
     const bool can_retry = translated.abi.workgroup_splittable && translated.abi.workgroup_mode == momoten::WorkgroupModeDirect;
-    retry_virtual = false;
+    retry_independent = false;
 
     cl_int ret = CL_SUCCESS;
     const std::string build_options = opencl_build_options(translated.abi, device->physical_device->shader_profile);
@@ -155,8 +177,8 @@ static VkResult build_pipeline_kernel(VkDevice device, const momoten::Translatio
         // Some OpenCL compilers report register exhaustion for a required
         // workgroup as a resource or host-memory error. A splittable shader
         // can retry once without that requirement after releasing this program.
-        retry_virtual = can_retry && (ret == CL_BUILD_PROGRAM_FAILURE || ret == CL_OUT_OF_RESOURCES || ret == CL_OUT_OF_HOST_MEMORY);
-        if (!retry_virtual || debug_enabled())
+        retry_independent = can_retry && (ret == CL_BUILD_PROGRAM_FAILURE || ret == CL_OUT_OF_RESOURCES || ret == CL_OUT_OF_HOST_MEMORY);
+        if (!retry_independent || debug_enabled())
         {
             log_error("clBuildProgram", ret);
             print_program_build_log(candidate->program, device->physical_device->device);
@@ -185,6 +207,9 @@ static VkResult build_pipeline_kernel(VkDevice device, const momoten::Translatio
     for (size_t d = 0; d < 3; d++)
         candidate->opencl_local_size[d] = translated.abi.local_size[d];
     candidate->workgroup_chunk_count = 1;
+    candidate->opencl_workgroup_limit = std::min(std::min(kernel_workgroup_size, device->physical_device->max_compute_workgroup_invocations), device->physical_device->max_workgroup_size);
+    if (translated.abi.workgroup_mode == momoten::WorkgroupModeRepartitioned && candidate->opencl_workgroup_limit == 0)
+        return VK_ERROR_FEATURE_NOT_PRESENT;
     if (translated.abi.workgroup_mode == momoten::WorkgroupModeVirtual)
     {
         const size_t physical_limit = std::min(std::min(kernel_workgroup_size, device->physical_device->max_compute_workgroup_invocations), device->physical_device->max_work_item_sizes[0]);
@@ -211,8 +236,8 @@ static VkResult build_pipeline_kernel(VkDevice device, const momoten::Translatio
     const bool workgroup_too_large = translated.abi.workgroup_mode == momoten::WorkgroupModeDirect && requested_workgroup_size > kernel_workgroup_size;
     if (workgroup_too_large || kernel_local_memory > device->physical_device->local_memory)
     {
-        retry_virtual = can_retry;
-        if (!retry_virtual || debug_enabled())
+        retry_independent = can_retry;
+        if (!retry_independent || debug_enabled())
             fprintf(stderr, "[momoten] built kernel exceeds OpenCL limits: requested workgroup=%zu (%u,%u,%u), kernel maximum=%zu, kernel local memory=%llu, device local memory=%llu\n",
                     requested_workgroup_size, translated.abi.local_size[0], translated.abi.local_size[1], translated.abi.local_size[2], kernel_workgroup_size,
                     static_cast<unsigned long long>(kernel_local_memory), static_cast<unsigned long long>(device->physical_device->local_memory));
@@ -225,8 +250,8 @@ static VkResult build_pipeline_kernel(VkDevice device, const momoten::Translatio
             return VK_ERROR_FEATURE_NOT_PRESENT;
         if (kernel_subgroup_size != translated.abi.subgroup_size)
         {
-            retry_virtual = can_retry;
-            if (!retry_virtual || debug_enabled())
+            retry_independent = can_retry;
+            if (!retry_independent || debug_enabled())
                 fprintf(stderr, "[momoten] native OpenCL subgroup size does not match the advertised Vulkan subgroup size\n");
             return VK_ERROR_FEATURE_NOT_PRESENT;
         }
@@ -293,7 +318,7 @@ VkResult build_compute_pipelines(
             }
         }
 
-        // Direct and virtual sources have distinct cache keys. Only a shader
+        // Direct and independent sources have distinct cache keys. Only a shader
         // proven splittable may retry, and the mode changes at most once.
         for (;;)
         {
@@ -320,7 +345,7 @@ VkResult build_compute_pipelines(
                     fprintf(stderr, "[momoten] non-splittable workgroup is unsupported: %s\n", workgroup_diagnostic.c_str());
                     return VK_ERROR_FEATURE_NOT_PRESENT;
                 }
-                options.workgroup_mode = momoten::WorkgroupModeVirtual;
+                options.workgroup_mode = independent_workgroup_mode(device, options);
                 continue;
             }
 
@@ -362,13 +387,13 @@ VkResult build_compute_pipelines(
             }
 
             std::shared_ptr<Pipeline> pipeline;
-            bool retry_virtual = false;
-            const VkResult result = build_pipeline_kernel(device, translated, requested_workgroup_size, layout, pipeline, retry_virtual);
-            if (retry_virtual)
+            bool retry_independent = false;
+            const VkResult result = build_pipeline_kernel(device, translated, requested_workgroup_size, layout, pipeline, retry_independent);
+            if (retry_independent)
             {
                 if (debug_enabled())
-                    fprintf(stderr, "[momoten] retrying the logical workgroup with virtual OpenCL workgroups\n");
-                options.workgroup_mode = momoten::WorkgroupModeVirtual;
+                    fprintf(stderr, "[momoten] retrying with an independent OpenCL workgroup layout\n");
+                options.workgroup_mode = independent_workgroup_mode(device, options);
                 continue;
             }
             if (result != VK_SUCCESS)

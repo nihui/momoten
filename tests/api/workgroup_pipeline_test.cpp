@@ -52,6 +52,7 @@ struct TestCase
     size_t dimension_limits[3];
     cl_ulong local_memory_limit;
     bool barrier;
+    bool gpu;
     bool native_subgroups;
     uint32_t emulated_subgroup_size;
     size_t kernel_limits[2];
@@ -73,7 +74,7 @@ struct TestCase
     size_t expected_subgroup_calls;
 
     explicit TestCase(const char* name_)
-        : name(name_), device_limit(1024), profile_limit(256), local_memory_limit(65536), barrier(false), native_subgroups(false), emulated_subgroup_size(0), succeeds(true), expected_mode(momoten::WorkgroupModeDirect), expected_chunks(1), expected_program_calls(1), expected_build_calls(1), expected_kernel_calls(1), expected_subgroup_calls(0)
+        : name(name_), device_limit(1024), profile_limit(256), local_memory_limit(65536), barrier(false), gpu(false), native_subgroups(false), emulated_subgroup_size(0), succeeds(true), expected_mode(momoten::WorkgroupModeDirect), expected_chunks(1), expected_program_calls(1), expected_build_calls(1), expected_kernel_calls(1), expected_subgroup_calls(0)
     {
         logical_size[0] = expected_local_size[0] = 4;
         logical_size[1] = expected_local_size[1] = 3;
@@ -569,6 +570,7 @@ static int run_case(const TestCase& test)
     physical.address_bits = 64;
     physical.max_parameter_size = 1024;
     physical.max_workgroup_size = test.device_limit;
+    physical.opencl_device_type = test.gpu ? CL_DEVICE_TYPE_GPU : CL_DEVICE_TYPE_CPU;
     physical.max_compute_workgroup_invocations = test.profile_limit;
     physical.local_memory = test.local_memory_limit;
     for (size_t d = 0; d < 3; d++)
@@ -635,7 +637,8 @@ static int run_case(const TestCase& test)
         for (size_t d = 0; d < 3; d++)
         {
             status |= require(test, pipeline->abi.local_size[d] == test.logical_size[d], "logical workgroup size changed during fallback");
-            status |= require(test, pipeline->opencl_local_size[d] == test.expected_local_size[d], "incorrect physical local size");
+            if (test.expected_mode != momoten::WorkgroupModeRepartitioned)
+                status |= require(test, pipeline->opencl_local_size[d] == test.expected_local_size[d], "incorrect physical local size");
         }
 
         std::shared_ptr<DeviceMemory> memory(new DeviceMemory());
@@ -730,6 +733,44 @@ int main()
     test.kernel_limits[0] = test.kernel_limits[1] = 8;
     test.expect_virtual(8, 3, 72, 2);
     status |= run_case(test);
+    test = TestCase("GPU repartition preserves the global grid after a kernel limit retry");
+    test.gpu = true;
+    test.emulated_subgroup_size = 128;
+    test.kernel_limits[0] = test.kernel_limits[1] = 8;
+    test.expected_mode = momoten::WorkgroupModeRepartitioned;
+    test.expected_local_size[0] = 4;
+    test.expected_local_size[1] = 2;
+    test.expected_local_size[2] = 1;
+    test.expected_program_calls = test.expected_build_calls = test.expected_kernel_calls = 2;
+    status |= run_case(test);
+    test.name = "GPU repartition respects an x dimension limit";
+    test.dimension_limits[0] = 2;
+    test.expected_local_size[0] = 2;
+    test.expected_local_size[1] = 2;
+    test.expected_local_size[2] = 2;
+    test.expected_program_calls = test.expected_build_calls = test.expected_kernel_calls = 1;
+    status |= run_case(test);
+    test.name = "GPU repartition respects a z dimension limit";
+    test.dimension_limits[2] = 1;
+    test.expected_local_size[2] = 1;
+    status |= run_case(test);
+    test.name = "GPU repartition rejects a kernel with zero capacity";
+    test.kernel_limits[0] = 0;
+    test.expect_failure(1, 1, 1);
+    status |= run_case(test);
+
+    test = TestCase("GPU native subgroups keep virtual chunks");
+    test.gpu = true;
+    test.native_subgroups = true;
+    test.kernel_limits[0] = test.kernel_limits[1] = 8;
+    test.expected_subgroup_calls = 1;
+    test.expect_virtual(8, 3, 72, 2);
+    status |= run_case(test);
+    test = TestCase("GPU barrier keeps the original workgroup");
+    test.gpu = true;
+    test.barrier = true;
+    status |= run_case(test);
+
     test = TestCase("built kernel local memory requires one virtual retry");
     test.kernel_local_memory[0] = test.local_memory_limit + 1;
     test.expect_virtual(24, 1, 72, 2);
