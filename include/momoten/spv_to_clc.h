@@ -40,7 +40,11 @@ enum WorkgroupMode
     WorkgroupModeDirect = 0,
     // Flatten independent invocations and reconstruct their Vulkan coordinates.
     // The driver may split one logical workgroup across physical workgroups.
-    WorkgroupModeVirtual = 1
+    WorkgroupModeVirtual = 1,
+    // Preserve the global invocation grid while reconstructing logical local
+    // coordinates. Physical workgroups may use a different rectangular shape.
+    // Requires independent invocations and singleton or emulated subgroups.
+    WorkgroupModeRepartitioned = 2
 };
 
 struct SpecializationValue
@@ -117,8 +121,8 @@ struct TranslationOptions
     uint32_t address_bits;
     uint32_t local_size[3];
     bool override_local_size;
-    // Direct workgroups are preferred. Virtual workgroups require a shader
-    // without workgroup storage or synchronization barriers.
+    // Direct workgroups are preferred. Virtual and repartitioned workgroups
+    // require a shader without workgroup storage or synchronization barriers.
     WorkgroupMode workgroup_mode;
     SubgroupMode subgroup_mode;
     uint32_t subgroup_size;
@@ -131,6 +135,22 @@ struct TranslationOptions
     bool integer_dot_product_split_packed_acc_sat;
     // Use unsigned x signed inputs for native mixed 8-bit saturating dot.
     bool integer_dot_product_swap_mixed_acc_sat;
+    // Use native vector loads for complete, non-volatile storage-buffer vectors.
+    // Also combine proven-contiguous scalar/vector loads into 128-bit reads
+    // within a basic block, without widening the set of bytes accessed.
+    // Keep disabled for CPU OpenCL compilers that speculate widened tail accesses.
+    bool native_buffer_vector_loads;
+    // Use native stores only for complete, non-volatile vec2/vec4 values.
+    // CPU backends retain scalar stores to avoid widened tail writes.
+    bool native_buffer_vector_stores;
+    // Read complete half4 values through may_alias integer vectors after
+    // verifying the compiler attributes, four-byte alignment and uint2-to-half4
+    // component mapping. Requires native vector loads and storage-buffer byte
+    // offsets aligned to 4 bytes.
+    bool packed_fp16_vector_loads;
+    // OpenCL C 1.1 or cl_khr_byte_addressable_store. Needed for narrow
+    // aliased stores; 32/64-bit stores remain valid without this feature.
+    bool byte_addressable_store;
     std::vector<SpecializationValue> specializations;
 
     TranslationOptions();

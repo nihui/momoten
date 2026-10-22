@@ -144,6 +144,7 @@ struct Pipeline
     cl_kernel kernel;
     momoten::KernelABI abi;
     size_t opencl_local_size[3];
+    size_t opencl_workgroup_limit;
     size_t workgroup_chunk_count;
 };
 

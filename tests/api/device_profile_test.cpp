@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 #include "backend/device_profile.h"
+#include "backend/objects.h"
 
 #include <cstdio>
 #include <cstring>
@@ -15,6 +16,11 @@ OpenCLApi g_opencl = {};
 struct _cl_program
 {
     std::string source;
+};
+
+struct _cl_mem
+{
+    std::vector<cl_ushort> data;
 };
 
 static bool native_build;
@@ -41,6 +47,11 @@ static bool barrier_build = true;
 static bool complete_native_source;
 static bool versions_size_invalid;
 static bool versions_read_failure;
+static cl_device_type device_type = CL_DEVICE_TYPE_CPU;
+static int probe_failure;
+static int live_queues;
+static int live_buffers;
+static cl_mem probe_buffers[2];
 
 struct NameVersion
 {
@@ -64,6 +75,8 @@ static cl_int write_info(const void* value, size_t size, size_t capacity, void* 
 
 static cl_int CL_API_CALL get_device_info(cl_device_id, cl_device_info parameter, size_t capacity, void* output, size_t* output_size)
 {
+    if (parameter == CL_DEVICE_TYPE)
+        return write_info(&device_type, sizeof(device_type), capacity, output, output_size);
     if (parameter == CL_DEVICE_PROFILE && !device_profile.empty())
         return write_info(device_profile.c_str(), device_profile.size() + 1, capacity, output, output_size);
     if (parameter == 0x103d && !language_version.empty()) // CL_DEVICE_OPENCL_C_VERSION
@@ -158,6 +171,76 @@ static cl_int CL_API_CALL get_workgroup_info(cl_kernel, cl_device_id, cl_kernel_
     return preferred_result;
 }
 
+static cl_command_queue CL_API_CALL create_queue(cl_context, cl_device_id, cl_command_queue_properties, cl_int* error)
+{
+    ++live_queues;
+    *error = probe_failure == 1 ? CL_OUT_OF_RESOURCES : CL_SUCCESS;
+    return reinterpret_cast<cl_command_queue>(1);
+}
+
+static cl_int CL_API_CALL release_queue(cl_command_queue)
+{
+    --live_queues;
+    return CL_SUCCESS;
+}
+
+static cl_mem CL_API_CALL create_buffer(cl_context, cl_mem_flags, size_t bytes, void* input, cl_int* error)
+{
+    cl_mem buffer = new _cl_mem;
+    const cl_ushort* data = static_cast<const cl_ushort*>(input);
+    buffer->data.assign(data, data + bytes / sizeof(cl_ushort));
+    ++live_buffers;
+    *error = probe_failure == 2 || (probe_failure == 3 && live_buffers == 2) ? CL_OUT_OF_RESOURCES : CL_SUCCESS;
+    return buffer;
+}
+
+static cl_int CL_API_CALL release_buffer(cl_mem buffer)
+{
+    delete buffer;
+    --live_buffers;
+    return CL_SUCCESS;
+}
+
+static cl_int CL_API_CALL set_kernel_arg(cl_kernel, cl_uint index, size_t bytes, const void* value)
+{
+    if (index >= 2 || bytes != sizeof(cl_mem))
+        return CL_INVALID_ARG_VALUE;
+    probe_buffers[index] = *static_cast<const cl_mem*>(value);
+    return probe_failure == 4 ? CL_INVALID_ARG_VALUE : CL_SUCCESS;
+}
+
+static cl_int CL_API_CALL enqueue_kernel(cl_command_queue, cl_kernel, cl_uint dimensions, const size_t*, const size_t* global, const size_t*, cl_uint, const cl_event*, cl_event*)
+{
+    if (probe_failure == 5 || dimensions != 1 || *global * 4 + 2 != probe_buffers[0]->data.size())
+        return CL_INVALID_WORK_GROUP_SIZE;
+    for (size_t i = 0; i < *global; i++)
+        for (size_t lane = 0; lane < 4; lane++)
+            probe_buffers[1]->data[i * 4 + lane] = probe_buffers[0]->data[i * 4 + 3 - lane + 2];
+    if (probe_failure == 7)
+        probe_buffers[1]->data[3] ^= 1;
+    return CL_SUCCESS;
+}
+
+static cl_int CL_API_CALL read_buffer(cl_command_queue, cl_mem buffer, cl_bool, size_t offset, size_t bytes, void* output, cl_uint, const cl_event*, cl_event*)
+{
+    if (probe_failure == 6)
+        return CL_OUT_OF_RESOURCES;
+    memcpy(output, reinterpret_cast<const char*>(buffer->data.data()) + offset, bytes);
+    return CL_SUCCESS;
+}
+
+static int check_packed_loads(const char* name, const char* extensions, bool expected)
+{
+    const momoten_detail::ShaderDeviceProfile profile = momoten_detail::probe_shader_device_profile(
+        reinterpret_cast<cl_device_id>(1), extensions, 128, 128, momoten_detail::OpenCLDriverPolicy());
+    if (profile.packed_fp16_vector_loads != expected || live_queues || live_buffers || live_contexts || live_programs || live_kernels)
+    {
+        fprintf(stderr, "device_profile_test: packed half loads: %s\n", name);
+        return 1;
+    }
+    return 0;
+}
+
 static int check_profile(const char* name, const char* extensions, momoten::SubgroupMode mode, uint32_t size, size_t max_workgroup = 1024, size_t max_x = 1024, size_t expected_query_local = 1024)
 {
     queried_local_size = 0;
@@ -185,6 +268,19 @@ static int check_compiler(const char* name, uint32_t version, const char* option
     expected_build_options = options;
     const momoten::SubgroupMode mode = version >= 200 ? momoten::SubgroupModeNative : momoten::SubgroupModeEmulatedBasic;
     return check_profile(name, "cl_khr_subgroups cl_khr_subgroup_non_uniform_vote", mode, 64);
+}
+
+static int check_byte_stores(const char* version, const char* extensions, bool expected)
+{
+    language_version = version;
+    const momoten_detail::ShaderDeviceProfile profile = momoten_detail::probe_shader_device_profile(
+        reinterpret_cast<cl_device_id>(1), extensions, 128, 128, momoten_detail::OpenCLDriverPolicy());
+    if (profile.byte_addressable_store != expected)
+    {
+        fprintf(stderr, "device_profile_test: byte stores: %s, %s\n", version, extensions);
+        return 1;
+    }
+    return 0;
 }
 
 int main()
@@ -266,6 +362,12 @@ int main()
     result |= check_compiler("failed version list read falls back to version string", 200, "-cl-std=CL2.0");
     versions_read_failure = false;
     language_versions.clear();
+    result |= check_byte_stores("OpenCL C 1.0", "", false);
+    result |= check_byte_stores("OpenCL C 1.0", "cl_khr_byte_addressable_store_extra", false);
+    result |= check_byte_stores("OpenCL C 1.0", "cl_khr_byte_addressable_store", true);
+    result |= check_byte_stores("OpenCL C 1.1", "", true);
+    result |= check_byte_stores("OpenCL C 3.0", "", true);
+    language_version = "OpenCL C 2.0";
     result |= check_compiler("OpenCL C 2.0 without version list", 200, "-cl-std=CL2.0");
     language_version = "OpenCL C 3.0";
     result |= check_compiler("OpenCL C 3.0 without version list", 300, "-cl-std=CL3.0");
@@ -287,5 +389,51 @@ int main()
     program_result = CL_SUCCESS;
     kernel_result = CL_INVALID_KERNEL_NAME;
     result |= check_profile("failed kernel creation releases handles", extensions, momoten::SubgroupModeSingleton, 1, 1024, 1024, 0);
+    kernel_result = CL_SUCCESS;
+    momoten_detail::g_opencl.p_clCreateCommandQueue = create_queue;
+    momoten_detail::g_opencl.p_clReleaseCommandQueue = release_queue;
+    momoten_detail::g_opencl.p_clCreateBuffer = create_buffer;
+    momoten_detail::g_opencl.p_clReleaseMemObject = release_buffer;
+    momoten_detail::g_opencl.p_clSetKernelArg = set_kernel_arg;
+    momoten_detail::g_opencl.p_clEnqueueNDRangeKernel = enqueue_kernel;
+    momoten_detail::g_opencl.p_clEnqueueReadBuffer = read_buffer;
+    result |= check_packed_loads("CPU stays conservative", "cl_khr_fp16", false);
+    device_type = CL_DEVICE_TYPE_GPU;
+    result |= check_packed_loads("missing fp16", "", false);
+    result |= check_packed_loads("verified lane mapping", "cl_khr_fp16", true);
+    empty_build = false;
+    result |= check_packed_loads("unavailable compiler", "cl_khr_fp16", false);
+    empty_build = true;
+    for (probe_failure = 1; probe_failure <= 7; probe_failure++)
+        result |= check_packed_loads("execution or mapping failure", "cl_khr_fp16", false);
+
+    VkPhysicalDevice_T physical = {};
+    VkDevice_T device = {};
+    device.physical_device = &physical;
+    physical.opencl_device_type = CL_DEVICE_TYPE_GPU;
+    physical.shader_profile.packed_fp16_vector_loads = true;
+    momoten::TranslationOptions options;
+    const cl_uint alignments[] = {8, 16, 24, 32, 48, 64, 128};
+    for (size_t i = 0; i < sizeof(alignments) / sizeof(alignments[0]); i++)
+    {
+        physical.mem_base_alignment_bits = alignments[i];
+        momoten_detail::configure_translation_options(&device, options);
+        if (options.packed_fp16_vector_loads != (alignments[i] >= 32 && alignments[i] % 32 == 0))
+        {
+            fprintf(stderr, "device_profile_test: packed load descriptor alignment guard\n");
+            result = 1;
+        }
+    }
+    physical.opencl_device_type = CL_DEVICE_TYPE_CPU;
+    momoten_detail::configure_translation_options(&device, options);
+    if (options.packed_fp16_vector_loads)
+        result = 1;
+    for (bool supported : {false, true})
+    {
+        physical.shader_profile.byte_addressable_store = supported;
+        momoten_detail::configure_translation_options(&device, options);
+        if (options.byte_addressable_store != supported)
+            result = 1;
+    }
     return result;
 }

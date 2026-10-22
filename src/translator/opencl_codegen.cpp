@@ -83,6 +83,14 @@ void CompilerOpenCL::emit_entry_point_declarations()
         statement("const uint3 momo_virtual_num_workgroups = (uint3)((uint)(get_num_groups(0) / (size_t)momo_workgroup_chunk_count), (uint)get_num_groups(1), (uint)get_num_groups(2));");
         statement("const uint3 momo_virtual_global_invocation_id = momo_virtual_workgroup_id * (uint3)(", local_size[0], "u, ", local_size[1], "u, ", local_size[2], "u) + momo_virtual_local_invocation_id;");
     }
+    if (translation_options.workgroup_mode == WorkgroupModeRepartitioned)
+    {
+        statement("const uint3 momo_virtual_global_invocation_id = (uint3)((uint)get_global_id(0), (uint)get_global_id(1), (uint)get_global_id(2));");
+        statement("const uint3 momo_virtual_local_invocation_id = (uint3)((uint)(get_global_id(0) % ", local_size[0], "u), (uint)(get_global_id(1) % ", local_size[1], "u), (uint)(get_global_id(2) % ", local_size[2], "u));");
+        statement("const uint momo_virtual_local_invocation_index = momo_virtual_local_invocation_id.x + ", local_size[0], "u * (momo_virtual_local_invocation_id.y + ", local_size[1], "u * momo_virtual_local_invocation_id.z);");
+        statement("const uint3 momo_virtual_workgroup_id = (uint3)((uint)(get_global_id(0) / ", local_size[0], "u), (uint)(get_global_id(1) / ", local_size[1], "u), (uint)(get_global_id(2) / ", local_size[2], "u));");
+        statement("const uint3 momo_virtual_num_workgroups = (uint3)((uint)(get_global_size(0) / ", local_size[0], "u), (uint)(get_global_size(1) / ", local_size[1], "u), (uint)(get_global_size(2) / ", local_size[2], "u));");
+    }
     if (uses_workgroup_storage)
         statement("volatile int momo_active = 1;");
 }
@@ -126,6 +134,12 @@ void CompilerOpenCL::emit_header()
         statement("#pragma OPENCL EXTENSION cl_khr_global_int32_base_atomics : enable");
     if (requires_fp16)
         statement("#pragma OPENCL EXTENSION cl_khr_fp16 : enable");
+    if (translation_options.byte_addressable_store)
+    {
+        statement("#if defined(cl_khr_byte_addressable_store) && (!defined(__OPENCL_C_VERSION__) || __OPENCL_C_VERSION__ < 110)");
+        statement("#pragma OPENCL EXTENSION cl_khr_byte_addressable_store : enable");
+        statement("#endif");
+    }
     if (requires_fp64)
     {
         statement("#if !defined(__opencl_c_fp64)");
@@ -163,6 +177,16 @@ void CompilerOpenCL::emit_header()
         // cl_khr_fp16 is present.
         statement("typedef struct { half4 c[4]; } momo_hmat4;");
         statement("typedef char momo_hmat4_size_must_be_32[(sizeof(momo_hmat4) == 32) ? 1 : -1];");
+        if (translation_options.packed_fp16_vector_loads)
+        {
+            statement("#if !defined(__has_attribute)");
+            statement("#error Packed half loads require may_alias and aligned attributes");
+            statement("#elif !__has_attribute(may_alias) || !__has_attribute(aligned)");
+            statement("#error Packed half loads require may_alias and aligned attributes");
+            statement("#endif");
+            statement("typedef uint2 momo_alias_uint2 __attribute__((may_alias, aligned(4)));");
+            statement("typedef uint4 momo_alias_uint4 __attribute__((may_alias, aligned(4)));");
+        }
     }
     if (requires_integer_dot_product)
         emit_integer_dot_product_helpers();
@@ -303,7 +327,7 @@ void CompilerOpenCL::emit_header()
     }
     statement("");
 
-    if (translation_options.workgroup_mode == WorkgroupModeVirtual)
+    if (translation_options.workgroup_mode != WorkgroupModeDirect)
     {
         statement("#define gl_NumWorkGroups momo_virtual_num_workgroups");
         statement("#define gl_WorkGroupID momo_virtual_workgroup_id");
@@ -625,48 +649,12 @@ bool CompilerOpenCL::emit_fp64_vector_instruction(
     return false;
 }
 
-bool CompilerOpenCL::prepare_access_chain_for_scalar_access(std::string& expression, const SPIRType& scalar_type,
-                                                            StorageClass storage, bool& packed)
-{
-    // Older OpenCL compilers reject vector subscripting. Index the contiguous
-    // scalar components through a pointer in the original address space.
-    const OpenCLAddressSpace address_space = opencl_address_space(storage);
-    const char* qualifier = opencl_address_space_qualifier(address_space);
-    if (!qualifier)
-        return false;
-    const bool global_storage = address_space == OpenCLAddressSpace::Global;
-    // OpenCL has no bool vectors: bvecN is represented by intN, so its
-    // component stride is sizeof(int), not sizeof(bool).
-    const std::string scalar_name = scalar_type.basetype == SPIRType::Boolean
-                                        ? "int"
-                                    : global_storage && scalar_type.basetype == SPIRType::Double && scalar_type.width == 64
-                                        ? "ulong"
-                                        : type_to_glsl(scalar_type);
-    // Preserve scalar accesses at descriptor tails instead of allowing a
-    // compiler to speculate a wider vector load/store.
-    const std::string qualifiers = (global_storage ? "volatile " : "") + std::string(qualifier);
-    expression = "((" + qualifiers + " " + scalar_name + " *)&(" + expression + "))";
-    packed = true;
-    return true;
-}
-
-void CompilerOpenCL::cast_from_variable_load(uint32_t source_id, std::string& expression, const SPIRType& type)
-{
-    CompilerGLSL::cast_from_variable_load(source_id, expression, type);
-    if (type.basetype == SPIRType::Boolean && type.array.empty() && type.columns == 1 && type.vecsize == 1)
-    {
-        // Vector comparisons use 0/-1 masks, while scalar bool uses 0/1.
-        // Normalize even forwarded loads before scalar logical comparisons.
-        expression = "(" + expression + " != 0)";
-    }
-}
-
 void CompilerOpenCL::emit_instruction(const Instruction& instruction)
 {
     const Op opcode = static_cast<Op>(instruction.op);
     const uint32_t* ops = stream(instruction);
 
-    if (opcode == OpLoad && emit_storage_buffer_load(instruction, ops))
+    if (emit_memory_instruction(instruction, ops))
         return;
 
     if ((opcode == OpAccessChain || opcode == OpInBoundsAccessChain) && emit_matrix_access_chain(instruction, ops))
@@ -853,13 +841,33 @@ void CompilerOpenCL::emit_instruction(const Instruction& instruction)
 
         const std::string vector = "(" + to_expression(ops[2]) + ")";
         const std::string matrix = "(" + to_expression(ops[3]) + ")";
-        const std::string expression = type_to_glsl(result_type) + "(dot(" + vector + ", " + matrix + ".c[0]), "
-                                                                                                      "dot("
-                                       + vector + ", " + matrix + ".c[1]), "
-                                                                  "dot("
-                                       + vector + ", " + matrix + ".c[2]), "
-                                                                  "dot("
-                                       + vector + ", " + matrix + ".c[3]))";
+        std::string expression = type_to_glsl(result_type) + "(dot(" + vector + ", " + matrix + ".c[0]), "
+                                                                                                "dot("
+                                 + vector + ", " + matrix + ".c[1]), "
+                                                            "dot("
+                                 + vector + ", " + matrix + ".c[2]), "
+                                                            "dot("
+                                 + vector + ", " + matrix + ".c[3]))";
+        // Keep the four fp16 dot products in vector arithmetic.
+        if (result_type.basetype == SPIRType::Half)
+        {
+            expression.clear();
+            for (size_t lane = 0; lane < 4; lane++)
+            {
+                const std::string component(1, "xyzw"[lane]);
+                if (lane)
+                    expression += " + ";
+                expression += vector + "." + component + " * ((half4)(";
+                for (size_t column = 0; column < 4; column++)
+                {
+                    if (column)
+                        expression += ", ";
+                    expression += matrix + ".c[" + std::to_string(column) + "]." + component;
+                }
+                expression += "))";
+            }
+            expression = "(" + expression + ")";
+        }
         emit_op(ops[0], ops[1], expression,
                 should_forward(ops[2]) && should_forward(ops[3]));
         inherit_expression_dependencies(ops[1], ops[2]);
@@ -979,71 +987,6 @@ void CompilerOpenCL::emit_instruction(const Instruction& instruction)
     }
 
     CompilerGLSL::emit_instruction(instruction);
-}
-
-void CompilerOpenCL::emit_store_statement(uint32_t lhs_expression, uint32_t rhs_expression)
-{
-    SPIRVariable* backing = maybe_get_backing_variable(lhs_expression);
-    const bool resource_store = backing && resource_indices.find(backing->self) != resource_indices.end();
-
-    bool scalar_double_store = false;
-    bool vector_store = false;
-    if (resource_store)
-    {
-        const SPIRType& value_type = expression_type(rhs_expression);
-        scalar_double_store = value_type.basetype == SPIRType::Double && value_type.width == 64 && value_type.vecsize == 1 && value_type.columns == 1 && value_type.array.empty();
-        vector_store = value_type.columns == 1 && value_type.array.empty() && (value_type.vecsize == 2 || value_type.vecsize == 3 || value_type.vecsize == 4);
-    }
-
-    const bool guarded_store = uses_workgroup_storage && resource_store;
-    if (guarded_store)
-    {
-        statement("if (momo_active != 0)");
-        begin_scope();
-    }
-
-    if (scalar_double_store)
-    {
-        // Treat fp64 descriptor storage as its exact 64-bit representation.
-        // This avoids address-space casts from the byte-oriented kernel ABI
-        // to double pointers while preserving the Vulkan buffer bit layout.
-        const std::string lhs = to_dereferenced_expression(lhs_expression);
-        const std::string rhs = to_expression(rhs_expression);
-        statement(lhs, " = as_ulong(", rhs, ");");
-        register_write(lhs_expression);
-    }
-    else if (vector_store)
-    {
-        // Scalarize descriptor-vector stores. Some CPU backends incorrectly
-        // widen/speculate native vector stores (including vstoreN) for tail
-        // elements even when the descriptor access is valid.
-        const SPIRType& value_type = expression_type(rhs_expression);
-        SPIRType element_type = value_type;
-        element_type.vecsize = 1;
-        const std::string storage_type = value_type.basetype == SPIRType::Double && value_type.width == 64
-                                             ? "ulong"
-                                             : type_to_glsl(element_type);
-        flush_variable_declaration(rhs_expression);
-        const std::string lhs = to_dereferenced_expression(lhs_expression);
-        const std::string rhs = to_expression(rhs_expression);
-        static const char components[] = "xyzw";
-        for (uint32_t component = 0; component < value_type.vecsize; component++)
-        {
-            std::string component_value = "(" + rhs + ")." + components[component];
-            if (value_type.basetype == SPIRType::Double && value_type.width == 64)
-                component_value = "as_ulong(" + component_value + ")";
-            statement("*((volatile __global ", storage_type, " *)&(", lhs,
-                      ") + ", component, ") = ", component_value, ";");
-        }
-        register_write(lhs_expression);
-    }
-    else
-    {
-        CompilerGLSL::emit_store_statement(lhs_expression, rhs_expression);
-    }
-
-    if (guarded_store)
-        end_scope();
 }
 
 void CompilerOpenCL::emit_glsl_op(uint32_t result_type, uint32_t result_id, uint32_t op,
@@ -1178,110 +1121,6 @@ std::string CompilerOpenCL::constant_expression_vector(const SPIRConstant& const
             i++;
     }
     return expression;
-}
-
-bool CompilerOpenCL::emit_storage_buffer_load(const Instruction& instruction, const uint32_t* ops)
-{
-    if (instruction.length < 3)
-        return false;
-
-    const uint32_t result_type = ops[0];
-    const uint32_t result_id = ops[1];
-    const uint32_t pointer_id = ops[2];
-    SPIRVariable* backing = maybe_get_backing_variable(pointer_id);
-    if (!backing)
-        return false;
-    if (resource_indices.find(backing->self) == resource_indices.end())
-        return false;
-
-    const SPIRType& type = get<SPIRType>(result_type);
-    if (!type.array.empty())
-        throw std::runtime_error("storage-buffer array loads are not supported");
-
-    // OpenCL C does not permit taking the address of a vector element. Work
-    // from the enclosing vector and load only the requested scalar component.
-    const SPIRType& block_type = get<SPIRType>(backing->basetype);
-    if (block_type.basetype == SPIRType::Struct && block_type.member_types.size() == 1)
-    {
-        const SPIRType& storage_element = get<SPIRType>(block_type.member_types[0]);
-        if ((storage_element.vecsize > 1 || storage_element.columns > 1) && type.vecsize == 1 && type.columns == 1)
-        {
-            // OpenCL C forbids taking the address of a vector component, but
-            // emitting the component lvalue directly lets some CPU backends
-            // speculate a widened vector access past a descriptor tail. Use
-            // the enclosing vector address, then load just the requested
-            // scalar component through the scalar storage representation.
-            flush_variable_declaration(pointer_id);
-            const std::string lvalue = to_dereferenced_expression(pointer_id, false);
-            const size_t dot = lvalue.rfind('.');
-            if (storage_element.columns == 1 && (storage_element.vecsize == 2 || storage_element.vecsize == 3 || storage_element.vecsize == 4) && dot != std::string::npos && dot + 2 == lvalue.size() && std::string("xyzw").find(lvalue[dot + 1]) < storage_element.vecsize)
-            {
-                SPIRType element_type = storage_element;
-                element_type.vecsize = 1;
-                const std::string storage_type = storage_element.basetype == SPIRType::Double && storage_element.width == 64
-                                                     ? "ulong"
-                                                     : type_to_glsl(element_type);
-                const size_t component = std::string("xyzw").find(lvalue[dot + 1]);
-                std::string expression = "*((volatile __global const " + storage_type + " *)&(" + lvalue.substr(0, dot) + ") + " + std::to_string(component) + ")";
-                if (storage_element.basetype == SPIRType::Double && storage_element.width == 64)
-                    expression = "as_double(" + expression + ")";
-                cast_from_variable_load(pointer_id, expression, type);
-                emit_op(result_type, result_id, expression, false);
-                register_read(result_id, pointer_id, false);
-                inherit_expression_dependencies(result_id, pointer_id);
-                return true;
-            }
-            // Pointer-based scalar access chains already retain their address
-            // space. Fall through so fp64 storage still gets its bitcast.
-        }
-    }
-
-    // Let SPIRV-Cross emit ordinary scalar loads. Only fp64 needs a storage
-    // representation conversion; half, short and ushort use native types.
-    if (type.vecsize == 1 && type.columns == 1)
-    {
-        if (type.basetype == SPIRType::Double && type.width == 64)
-        {
-            flush_variable_declaration(pointer_id);
-            std::string expression = "as_double(" + to_dereferenced_expression(pointer_id, false) + ")";
-            cast_from_variable_load(pointer_id, expression, type);
-            emit_op(result_type, result_id, expression, false);
-            register_read(result_id, pointer_id, false);
-            inherit_expression_dependencies(result_id, pointer_id);
-            return true;
-        }
-        return false;
-    }
-
-    if (type.columns == 1 && (type.vecsize == 2 || type.vecsize == 3 || type.vecsize == 4))
-    {
-        flush_variable_declaration(pointer_id);
-        const std::string lvalue = to_dereferenced_expression(pointer_id, false);
-        SPIRType element_type = type;
-        element_type.vecsize = 1;
-        const std::string storage_type = type.basetype == SPIRType::Double && type.width == 64
-                                             ? "ulong"
-                                             : type_to_glsl(element_type);
-        std::string expression = type.basetype == SPIRType::Double && type.width == 64
-                                     ? "momo_make_double" + std::to_string(type.vecsize) + "("
-                                     : type_to_glsl(type) + "(";
-        for (uint32_t component = 0; component < type.vecsize; component++)
-        {
-            if (component != 0)
-                expression += ", ";
-            std::string component_load = "*((volatile __global const " + storage_type + " *)&(" + lvalue + ") + " + std::to_string(component) + ")";
-            if (type.basetype == SPIRType::Double && type.width == 64)
-                component_load = "as_double(" + component_load + ")";
-            expression += component_load;
-        }
-        expression += ")";
-        cast_from_variable_load(pointer_id, expression, type);
-        emit_op(result_type, result_id, expression, false);
-        register_read(result_id, pointer_id, false);
-        inherit_expression_dependencies(result_id, pointer_id);
-        return true;
-    }
-    return false;
 }
 
 const char* CompilerOpenCL::function_pointer_address_space(StorageClass storage)

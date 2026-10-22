@@ -194,6 +194,72 @@ public:
         return kernel;
     }
 
+    bool packed_fp16_vector_loads()
+    {
+        // Packed reads require alias-safe vector types with four-byte
+        // alignment. Check 64-bit and 128-bit reads and the implementation-
+        // defined uint2-to-half4 mapping with every 16-bit pattern per lane.
+        cl_device_type type = 0;
+        if (g_opencl.p_clGetDeviceInfo(device, CL_DEVICE_TYPE, sizeof(type), &type, 0) != CL_SUCCESS || !(type & CL_DEVICE_TYPE_GPU))
+            return false;
+        static const char source[] = "#pragma OPENCL EXTENSION cl_khr_fp16 : enable\n"
+                                     "#if !defined(__has_attribute)\n"
+                                     "#error Missing attribute support\n"
+                                     "#elif !__has_attribute(may_alias) || !__has_attribute(aligned)\n"
+                                     "#error Missing alias or alignment attributes\n"
+                                     "#endif\n"
+                                     "typedef uint2 momo_alias_uint2 __attribute__((may_alias, aligned(4)));\n"
+                                     "typedef uint4 momo_alias_uint4 __attribute__((may_alias, aligned(4)));\n"
+                                     "typedef char check_alignment[(__alignof__(momo_alias_uint2) == 4 && __alignof__(momo_alias_uint4) == 4) ? 1 : -1];\n"
+                                     "__kernel void momo_packed_half_probe(__global const half* input, __global half* output)\n"
+                                     "{\n"
+                                     "    size_t i = get_global_id(0);\n"
+                                     "    input += 2;\n"
+                                     "    uint2 narrow = ((__global const momo_alias_uint2*)input)[i];\n"
+                                     "    uint4 wide = ((__global const momo_alias_uint4*)input)[i / 2];\n"
+                                     "    uint2 grouped = (i & 1) ? wide.s23 : wide.s01;\n"
+                                     "    half4 value = as_half4(narrow);\n"
+                                     "    if (any(narrow != grouped)) value = (half4)(0.0f);\n"
+                                     "    vstore4(value.wzyx, i, output);\n"
+                                     "}\n";
+        if (!build(source, "momo_packed_half_probe"))
+            return false;
+
+        const size_t count = 65536;
+        std::vector<cl_ushort> input(count * 4 + 2, 0);
+        std::vector<cl_ushort> output(count * 4, 0);
+        for (size_t i = 0; i < count; i++)
+            for (size_t lane = 0; lane < 4; lane++)
+                input[i * 4 + lane + 2] = static_cast<cl_ushort>(i + lane * 16381);
+        const size_t bytes = output.size() * sizeof(cl_ushort);
+        cl_int ret = CL_SUCCESS;
+        cl_command_queue queue = g_opencl.p_clCreateCommandQueue(context, device, 0, &ret);
+        cl_mem buffers[2] = {};
+        if (queue && ret == CL_SUCCESS)
+            buffers[0] = g_opencl.p_clCreateBuffer(context, CL_MEM_READ_ONLY | CL_MEM_COPY_HOST_PTR, input.size() * sizeof(cl_ushort), input.data(), &ret);
+        if (buffers[0] && ret == CL_SUCCESS)
+            buffers[1] = g_opencl.p_clCreateBuffer(context, CL_MEM_READ_WRITE | CL_MEM_COPY_HOST_PTR, bytes, output.data(), &ret);
+        bool success = queue && buffers[0] && buffers[1] && ret == CL_SUCCESS;
+        for (cl_uint i = 0; success && i < 2; i++)
+            success = g_opencl.p_clSetKernelArg(kernel, i, sizeof(cl_mem), &buffers[i]) == CL_SUCCESS;
+        if (success)
+            success = g_opencl.p_clEnqueueNDRangeKernel(queue, kernel, 1, 0, &count, 0, 0, 0, 0) == CL_SUCCESS;
+        if (success)
+            success = g_opencl.p_clEnqueueReadBuffer(queue, buffers[1], CL_TRUE, 0, bytes, output.data(), 0, 0, 0) == CL_SUCCESS;
+        for (size_t i = 0; i < 2; i++)
+            if (buffers[i])
+                g_opencl.p_clReleaseMemObject(buffers[i]);
+        if (queue)
+            g_opencl.p_clReleaseCommandQueue(queue);
+        if (!success)
+            return false;
+        for (size_t i = 0; i < count; i++)
+            for (size_t lane = 0; lane < 4; lane++)
+                if (output[i * 4 + lane] != input[i * 4 + 3 - lane + 2])
+                    return false;
+        return true;
+    }
+
 private:
     OpenCLCapabilityProbe(const OpenCLCapabilityProbe&) = delete;
     OpenCLCapabilityProbe& operator=(const OpenCLCapabilityProbe&) = delete;
@@ -353,8 +419,10 @@ ShaderDeviceProfile probe_shader_device_profile(
 {
     ShaderDeviceProfile profile;
     profile.compiler = probe_opencl_compiler_profile(device);
+    profile.byte_addressable_store = profile.compiler.version >= 110 || extension_string_contains(extensions, "cl_khr_byte_addressable_store");
     OpenCLCapabilityProbe probe(device, profile.compiler);
     profile.fp16 = extension_string_contains(extensions, "cl_khr_fp16");
+    profile.packed_fp16_vector_loads = profile.fp16 && probe.packed_fp16_vector_loads();
     profile.int64 = declares_int64(device, extensions);
 
     cl_device_fp_config double_config = 0;
@@ -423,7 +491,7 @@ IntegerDotProductProfile::IntegerDotProductProfile()
 }
 
 ShaderDeviceProfile::ShaderDeviceProfile()
-    : fp16(false), int64(false), fp64(false), float_controls2(true), denorm_preserve_widths(0), round_to_nearest_widths(0), signed_zero_inf_nan_preserve_widths(0), subgroup_mode(momoten::SubgroupModeSingleton), subgroup_size(1), subgroup_operations(VK_SUBGROUP_FEATURE_BASIC_BIT)
+    : byte_addressable_store(false), fp16(false), packed_fp16_vector_loads(false), int64(false), fp64(false), float_controls2(true), denorm_preserve_widths(0), round_to_nearest_widths(0), signed_zero_inf_nan_preserve_widths(0), subgroup_mode(momoten::SubgroupModeSingleton), subgroup_size(1), subgroup_operations(VK_SUBGROUP_FEATURE_BASIC_BIT)
 {
 }
 
@@ -438,6 +506,11 @@ void configure_translation_options(
     const ShaderDeviceProfile& physical = device->physical_device->shader_profile;
     const EnabledShaderProfile& enabled = device->enabled_shader_profile;
     options.address_bits = device->physical_device->address_bits;
+    options.byte_addressable_store = physical.byte_addressable_store;
+    options.native_buffer_vector_loads = (device->physical_device->opencl_device_type & CL_DEVICE_TYPE_GPU) != 0;
+    options.native_buffer_vector_stores = options.native_buffer_vector_loads;
+    const cl_uint offset_alignment = device->physical_device->mem_base_alignment_bits / 8;
+    options.packed_fp16_vector_loads = options.native_buffer_vector_loads && physical.packed_fp16_vector_loads && offset_alignment >= 4 && offset_alignment % 4 == 0;
     options.subgroup_mode = physical.subgroup_mode;
     options.subgroup_size = physical.subgroup_size;
     options.integer_dot_product = enabled.integer_dot_product;

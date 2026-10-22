@@ -34,6 +34,16 @@ std::vector<uint32_t> specialize_and_optimize_spirv(
     const uint32_t* words, size_t word_count, const TranslationOptions& options);
 
 bool spirv_contains_opcode(const std::vector<uint32_t>& words, Op opcode);
+void simplify_bounded_integer_loops(std::vector<uint32_t>& words);
+
+struct CoalescedBufferLoad
+{
+    uint32_t first_result;
+    uint32_t word_offset;
+};
+
+std::map<uint32_t, CoalescedBufferLoad> plan_coalesced_buffer_loads(
+    const uint32_t* words, size_t word_count, const TranslationOptions& options);
 
 const char* capability_name(Capability capability);
 
@@ -88,7 +98,33 @@ protected:
     std::string constant_expression_vector(const SPIRConstant& constant, uint32_t vector) override;
 
 private:
+    struct PrivateVectorAccess
+    {
+        uint32_t variable;
+        uint32_t index;
+    };
+
+    struct BufferAccessChain
+    {
+        uint32_t base;
+        std::vector<uint32_t> indices;
+    };
+
+    bool emit_memory_instruction(const Instruction& instruction, const uint32_t* ops);
+    void require_statement_continue();
+    std::string buffer_scalar_type(const SPIRType& type);
+    void emit_buffer_load_result(uint32_t result_type, uint32_t result_id, uint32_t pointer, const std::string& expression);
+    void track_aliased_buffer_access(const Instruction& instruction, const uint32_t* ops);
+    std::string aliased_buffer_address(uint32_t pointer);
+    std::string aliased_scalar_load(const SPIRType& type, const std::string& address, uint32_t offset);
+    void emit_aliased_scalar_store(const SPIRType& type, const std::string& address, uint32_t offset,
+                                   const std::string& value, const std::string& temporary);
+    void track_private_vector_access(const Instruction& instruction, const uint32_t* ops);
+    bool emit_private_vector_access(const Instruction& instruction, const uint32_t* ops);
+    bool emit_coalesced_buffer_load(const Instruction& instruction, const uint32_t* ops);
+    bool emit_aliased_buffer_access(const Instruction& instruction, const uint32_t* ops);
     bool emit_storage_buffer_load(const Instruction& instruction, const uint32_t* ops);
+    bool emit_storage_buffer_store(const Instruction& instruction, const uint32_t* ops);
     void emit_fp64_vector_helpers();
     bool emit_fp64_vector_instruction(const Instruction& instruction, const uint32_t* ops);
     void emit_integer_dot_product_helpers();
@@ -126,6 +162,9 @@ private:
     uint32_t push_constant_variable_id;
     uint32_t local_size[3];
     std::set<uint32_t> storage_block_types;
+    std::map<uint32_t, CoalescedBufferLoad> coalesced_buffer_loads;
+    std::map<uint32_t, PrivateVectorAccess> private_vector_accesses;
+    std::map<uint32_t, BufferAccessChain> buffer_access_chains;
 };
 
 } // namespace momoten

@@ -11,11 +11,9 @@ struct ReplayState
     explicit ReplayState(VkDevice value);
 
     VkDevice device;
-    cl_event tail_event;
     std::vector<std::shared_ptr<DeviceMemory> > touched_memories;
 };
 
-void advance_replay_event(ReplayState& state, cl_event event);
 cl_int replay_copy(ReplayState& state, const RecordedCommand& command);
 cl_int replay_barrier(ReplayState& state, const RecordedCommand& command);
 cl_int replay_dispatch(ReplayState& state, const RecordedCommand& command);

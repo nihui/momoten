@@ -171,6 +171,29 @@ function(momoten_add_workgroup_pipeline_test target_name translator_target test_
         LABELS "momoten;api;workgroup")
 endfunction()
 
+function(momoten_add_spirv_analysis_test name translator_target prefix)
+    set(target_name ${prefix}_${name}_test)
+    set(test_name ${prefix}_${name})
+    string(REPLACE "_" "-" label ${name})
+    add_executable(${target_name} translator/${name}_test.cpp)
+    target_compile_features(${target_name} PRIVATE cxx_std_11)
+    target_include_directories(${target_name} PRIVATE
+        "${CMAKE_CURRENT_SOURCE_DIR}/../src")
+    target_link_libraries(${target_name} PRIVATE
+        ${translator_target} momoten::headers spirv-cross-glsl SPIRV-Tools-static)
+    add_test(NAME ${test_name} COMMAND ${target_name})
+    set_tests_properties(${test_name} PROPERTIES
+        LABELS "momoten;translator;${label}")
+endfunction()
+
+foreach(name integer_ranges buffer_loads)
+    momoten_add_spirv_analysis_test(${name} momoten::translator momoten)
+    if(TARGET momoten_amalgamated_translator)
+        momoten_add_spirv_analysis_test(${name}
+            momoten_amalgamated_translator momoten_amalgamated)
+    endif()
+endforeach()
+
 momoten_add_workgroup_pipeline_test(momoten_workgroup_pipeline_test
     momoten::translator momoten_workgroup_pipeline)
 if(TARGET momoten_amalgamated_translator)
@@ -332,9 +355,34 @@ momoten_compile_test_shader(momoten_workgroup_3d_test_spv workgroup_3d.comp vulk
 momoten_compile_test_shader(momoten_vector_extract_test_spv vector_extract_dynamic.comp vulkan1.1)
 momoten_compile_test_shader(momoten_vector_extract_fp64_test_spv vector_extract_fp64.comp vulkan1.1)
 momoten_compile_test_shader(momoten_vector_extract_int16_test_spv vector_extract_int16.comp vulkan1.1)
+momoten_compile_test_shader(momoten_buffer_vector_load_test_spv buffer_vector_load.comp vulkan1.0)
+momoten_compile_test_shader(momoten_buffer_vector_store_test_spv buffer_vector_store.comp vulkan1.0)
+momoten_compile_test_shader(momoten_fp16_vector_load_test_spv fp16_vector_load.comp vulkan1.1)
+momoten_compile_test_shader(momoten_coalesced_buffer_load_test_spv coalesced_buffer_load.comp vulkan1.1)
+momoten_compile_test_shader(momoten_coalesced_fp16_load_test_spv coalesced_fp16_load.comp vulkan1.1)
+momoten_compile_test_shader(momoten_buffer_alias_test_spv buffer_alias.comp vulkan1.1)
+momoten_compile_test_shader(momoten_memory_lowering_test_spv memory_lowering.comp vulkan1.1)
+momoten_compile_test_shader(momoten_buffer_read_write_test_spv buffer_read_write.comp vulkan1.1)
+momoten_compile_test_shader(momoten_fp16_buffer_read_write_test_spv fp16_buffer_read_write.comp vulkan1.1)
 momoten_compile_test_shader(momoten_pow_constant_base_test_spv pow_constant_base.comp vulkan1.0)
+momoten_compile_test_shader(momoten_integer_ranges_test_spv integer_ranges.comp vulkan1.0)
 
 add_custom_target(momoten-test-spv DEPENDS ${momoten_test_spv_files})
+
+function(momoten_add_memory_lowering_test target translator)
+    add_executable(${target} translator/memory_lowering_test.cpp)
+    target_compile_features(${target} PRIVATE cxx_std_11)
+    target_link_libraries(${target} PRIVATE ${translator} momoten::headers spirv-cross-core SPIRV-Tools-static)
+    add_dependencies(${target} momoten-test-spv)
+    add_test(NAME ${target} COMMAND ${target}
+        "${momoten_memory_lowering_test_spv}" "${momoten_fp16_buffer_read_write_test_spv}" "${momoten_fp64_test_spv}")
+    set_tests_properties(${target} PROPERTIES LABELS "momoten;translator;memory")
+endfunction()
+
+momoten_add_memory_lowering_test(momoten_memory_lowering_test momoten::translator)
+if(TARGET momoten_amalgamated_translator)
+    momoten_add_memory_lowering_test(momoten_amalgamated_memory_lowering_test momoten_amalgamated_translator)
+endif()
 
 add_executable(momoten_translator_test translator/translator_test.cpp)
 target_compile_features(momoten_translator_test PRIVATE cxx_std_11)
@@ -411,6 +459,17 @@ if(DEFINED NCNN_MOMOTEN_CLANG AND NOT DEFINED MOMOTEN_CLANG)
 endif()
 find_program(MOMOTEN_CLANG clang)
 if(MOMOTEN_CLANG)
+    add_test(NAME momoten_memory_lowering_syntax
+        COMMAND "${CMAKE_COMMAND}"
+            -DTEST=$<TARGET_FILE:momoten_memory_lowering_test>
+            -DCLANG=${MOMOTEN_CLANG}
+            -DSPV=${momoten_memory_lowering_test_spv}
+            -DFP16_SPV=${momoten_fp16_buffer_read_write_test_spv}
+            -DFP64_SPV=${momoten_fp64_test_spv}
+            -DOUTPUT_DIR=${CMAKE_CURRENT_BINARY_DIR}/memory-lowering
+            -P "${CMAKE_CURRENT_SOURCE_DIR}/translator/memory_lowering_test.cmake")
+    set_tests_properties(momoten_memory_lowering_syntax PROPERTIES
+        LABELS "momoten;translator;opencl-1.0")
     # Keep syntax regressions active in runtime-only CI without installing a CLI.
     if(TARGET momoten_spv_to_clc)
         set(momoten_syntax_translator momoten_spv_to_clc)
@@ -477,7 +536,7 @@ if(TARGET momoten_test_opencl)
     target_compile_features(momoten_opencl_test PRIVATE cxx_std_11)
     target_compile_definitions(momoten_opencl_test PRIVATE CL_TARGET_OPENCL_VERSION=100)
     target_link_libraries(momoten_opencl_test PRIVATE
-        momoten::translator momoten_test_opencl)
+        momoten::translator momoten_test_opencl spirv-cross-core)
     add_dependencies(momoten_opencl_test momoten-test-spv)
     add_test(NAME momoten_opencl_simple
         COMMAND momoten_opencl_test "${momoten_test_spv}")
@@ -504,6 +563,9 @@ if(TARGET momoten_test_opencl)
     add_test(NAME momoten_opencl_workgroup_3d
         COMMAND momoten_opencl_test "${momoten_workgroup_3d_test_spv}"
             workgroup-3d)
+    add_test(NAME momoten_opencl_integer_ranges
+        COMMAND momoten_opencl_test "${momoten_integer_ranges_test_spv}"
+            integer-ranges)
     add_test(NAME momoten_opencl_vector_access
         COMMAND momoten_opencl_test "${momoten_vector_extract_test_spv}"
             vector-access)
@@ -513,6 +575,61 @@ if(TARGET momoten_test_opencl)
     add_test(NAME momoten_opencl_vector_extract_int16
         COMMAND momoten_opencl_test "${momoten_vector_extract_int16_test_spv}"
             vector-extract-int16)
+    add_test(NAME momoten_opencl_fp16_vector_load
+        COMMAND momoten_opencl_test "${momoten_fp16_vector_load_test_spv}"
+            fp16-vector-load)
+    add_test(NAME momoten_opencl_coalesced_buffer_load
+        COMMAND momoten_opencl_test "${momoten_coalesced_buffer_load_test_spv}"
+            coalesced-buffer-load)
+    add_test(NAME momoten_opencl_coalesced_fp16_load
+        COMMAND momoten_opencl_test "${momoten_coalesced_fp16_load_test_spv}"
+            coalesced-fp16-load)
+    add_test(NAME momoten_opencl_buffer_vector_store
+        COMMAND momoten_opencl_test "${momoten_buffer_vector_store_test_spv}"
+            buffer-vector-store)
+    add_test(NAME momoten_opencl_buffer_vector_load
+        COMMAND momoten_opencl_test "${momoten_buffer_vector_load_test_spv}"
+            buffer-vector-load)
+    foreach(prefix "" "fp16_")
+        string(REPLACE "_" "-" mode "${prefix}buffer-read-write")
+        add_test(NAME momoten_opencl_${prefix}buffer_read_write_scalar
+            COMMAND momoten_opencl_test "${momoten_${prefix}buffer_read_write_test_spv}" ${mode} scalar-vector-memory)
+        add_test(NAME momoten_opencl_${prefix}buffer_read_write
+            COMMAND momoten_opencl_test "${momoten_${prefix}buffer_read_write_test_spv}" ${mode})
+        add_test(NAME momoten_opencl_${prefix}buffer_read_write_native_stores
+            COMMAND momoten_opencl_test "${momoten_${prefix}buffer_read_write_test_spv}" ${mode} native-vector-memory)
+        set_tests_properties(momoten_opencl_${prefix}buffer_read_write
+            momoten_opencl_${prefix}buffer_read_write_scalar
+            momoten_opencl_${prefix}buffer_read_write_native_stores PROPERTIES
+            LABELS "momoten;runtime;direct-opencl"
+            SKIP_RETURN_CODE 77)
+    endforeach()
+    foreach(direction buffer-alias buffer-alias-reverse)
+        foreach(mode scalar-vector-memory native-vector-loads native-vector-memory)
+            add_test(NAME momoten_opencl_${direction}_${mode}
+                COMMAND momoten_opencl_test "${momoten_buffer_alias_test_spv}" ${direction} ${mode})
+            set_tests_properties(momoten_opencl_${direction}_${mode} PROPERTIES
+                LABELS "momoten;runtime;direct-opencl" SKIP_RETURN_CODE 77)
+        endforeach()
+    endforeach()
+    foreach(mode scalar-vector-memory native-vector-loads native-vector-memory)
+        add_test(NAME momoten_opencl_memory_lowering_${mode}
+            COMMAND momoten_opencl_test "${momoten_memory_lowering_test_spv}" memory-lowering ${mode})
+        set_tests_properties(momoten_opencl_memory_lowering_${mode} PROPERTIES
+            LABELS "momoten;runtime;direct-opencl" SKIP_RETURN_CODE 77)
+        add_test(NAME momoten_opencl_fp16_buffer_alias_${mode}
+            COMMAND momoten_opencl_test "${momoten_fp16_buffer_read_write_test_spv}" fp16-buffer-alias ${mode})
+        set_tests_properties(momoten_opencl_fp16_buffer_alias_${mode} PROPERTIES
+            LABELS "momoten;runtime;direct-opencl" SKIP_RETURN_CODE 77)
+    endforeach()
+    add_test(NAME momoten_opencl_fp64_buffer_alias
+        COMMAND momoten_opencl_test "${momoten_fp64_test_spv}" fp64-buffer-alias)
+    set_tests_properties(momoten_opencl_fp64_buffer_alias PROPERTIES
+        LABELS "momoten;runtime;direct-opencl" SKIP_RETURN_CODE 77)
+    add_test(NAME momoten_opencl_memory_lowering_copied
+        COMMAND momoten_opencl_test "${momoten_memory_lowering_test_spv}" memory-lowering-copied native-vector-memory)
+    set_tests_properties(momoten_opencl_memory_lowering_copied PROPERTIES
+        LABELS "momoten;runtime;direct-opencl" SKIP_RETURN_CODE 77)
     foreach(width scalar vec2 vec3 vec4)
         add_test(NAME momoten_opencl_pow_${width}
             COMMAND momoten_opencl_test "${momoten_pow_constant_base_test_spv}"
@@ -528,8 +645,11 @@ if(TARGET momoten_test_opencl)
         momoten_opencl_atomic_packed momoten_opencl_scalar_16bit
         momoten_opencl_subgroup_basic momoten_opencl_integer_dot_product
         momoten_opencl_workgroup_split momoten_opencl_workgroup_3d
+        momoten_opencl_integer_ranges
         momoten_opencl_vector_access momoten_opencl_vector_access_fp64
-        momoten_opencl_vector_extract_int16 PROPERTIES
+        momoten_opencl_vector_extract_int16 momoten_opencl_buffer_vector_load
+        momoten_opencl_buffer_vector_store momoten_opencl_fp16_vector_load
+        momoten_opencl_coalesced_buffer_load momoten_opencl_coalesced_fp16_load PROPERTIES
         LABELS "momoten;runtime;direct-opencl"
         SKIP_RETURN_CODE 77)
     # These fixtures synchronize more than one invocation in a workgroup.

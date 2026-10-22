@@ -1,0 +1,87 @@
+// Copyright 2026 nihui
+// SPDX-License-Identifier: Apache-2.0
+
+#version 450
+
+layout(local_size_x = 1) in;
+layout(binding = 0) buffer Output { uint values[]; };
+
+void main()
+{
+    uint sum = 0;
+    for (uint i = 0; i < 9; i++)
+        sum += i / 9 + i % 9;
+    values[0] = sum;
+
+    sum = 0;
+    for (int i = 3; i < 11; i++)
+        sum += uint(i / 11 + i % 11);
+    values[1] = sum;
+
+    int signed_sum = 0;
+    for (int i = -12; i < 9; i++)
+        signed_sum += i / 9;
+    values[2] = uint(signed_sum);
+
+    sum = 0;
+    for (uint i = 0; i < 9; i += 2)
+        sum += i % 9;
+    values[3] = sum;
+
+    sum = 0;
+    for (uint i = 0; i < 9; i++)
+    {
+        i += 3;
+        sum += i / 9;
+    }
+    values[4] = sum;
+
+    sum = 0;
+    for (uint i = 0; i < 9; ++i, sum += i / 9)
+    {
+    }
+    values[5] = sum;
+
+    uint counter;
+    for (counter = 0; counter < 9; counter++)
+    {
+    }
+    values[6] = counter / 9;
+
+    sum = 0;
+    for (uint i = 0; i < 9; i++)
+        for (uint j = 0; j < 5; j++)
+            sum += i % 9 + j % 5;
+    values[7] = sum;
+
+    sum = 0;
+    for (uint i = 0; i < 9; i++)
+    {
+        if (i == 3)
+            continue;
+        sum += i % 9;
+    }
+    values[8] = sum;
+
+    sum = 0;
+    for (uint i = 0xfffffffcu; i < 0xffffffffu; i++)
+        sum += i % 0xffffffffu;
+    values[9] = sum;
+
+    sum = 0;
+    for (int i = 2147483645; i < 2147483647; i++)
+        sum += uint(i % 2147483647);
+    values[10] = sum;
+
+    sum = 0;
+    for (uint i = 0; i < 9; i++)
+        sum += i / 8 + i % 8;
+    values[11] = sum;
+
+    // The upper bound arrives through a buffer and cannot be inferred.
+    uint bound = values[12];
+    sum = 0;
+    for (uint i = 0; i < bound; i++)
+        sum += i / 9;
+    values[12] = sum;
+}

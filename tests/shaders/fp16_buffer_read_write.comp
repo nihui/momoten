@@ -1,0 +1,33 @@
+// Copyright 2026 nihui
+// SPDX-License-Identifier: Apache-2.0
+
+#version 450
+#extension GL_EXT_shader_16bit_storage : require
+#extension GL_EXT_shader_explicit_arithmetic_types_float16 : require
+
+layout(local_size_x = 1) in;
+layout(binding = 0) buffer Input { f16vec4 data[]; } input_buffer;
+layout(binding = 1) writeonly buffer Output { f16vec4 data[]; } output_buffer;
+layout(push_constant) uniform Parameters { uint read_index; uint write_index; } parameters;
+
+void main()
+{
+    uint r = parameters.read_index * 4;
+    uint w = parameters.write_index * 4;
+    // The first two loads combine into 128 bits; the third uses 64 bits.
+    f16vec4 a = input_buffer.data[r];
+    f16vec4 b = input_buffer.data[r + 1];
+    f16vec4 c = input_buffer.data[r + 2];
+    input_buffer.data[w] = f16vec4(1.0, 2.0, 3.0, 4.0);
+    input_buffer.data[w + 1] = f16vec4(5.0, 6.0, 7.0, 8.0);
+    input_buffer.data[w + 2] = f16vec4(9.0, 10.0, 11.0, 12.0);
+    f16vec4 d = input_buffer.data[r];
+    f16vec4 e = input_buffer.data[r + 1];
+    f16vec4 f = input_buffer.data[r + 2];
+    output_buffer.data[0] = a;
+    output_buffer.data[1] = b;
+    output_buffer.data[2] = c;
+    output_buffer.data[3] = d;
+    output_buffer.data[4] = e;
+    output_buffer.data[5] = f;
+}

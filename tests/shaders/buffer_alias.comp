@@ -1,0 +1,63 @@
+// Copyright 2026 nihui
+// SPDX-License-Identifier: Apache-2.0
+
+#version 450
+layout(local_size_x = 1) in;
+layout(constant_id = 0) const uint float_stores = 0;
+// The runtime fixture decorates bindings 0..3 Aliased and binds the same
+// allocation to all four differently typed views, with a four-byte prefix.
+layout(binding = 0) buffer Scalars { float data[]; } scalars;
+layout(binding = 1) buffer Pairs { vec2 data[]; } pairs;
+layout(binding = 2) buffer Quads { vec4 data[]; } quads;
+layout(binding = 3) buffer Bits { uvec4 data[]; } bits;
+layout(binding = 4) writeonly buffer Output { uint data[]; } output_buffer;
+layout(push_constant) uniform Parameters { uint read_index; uint write_index; uint kind; } parameters;
+
+void main()
+{
+    uint r = parameters.read_index * 4;
+    uint p = parameters.read_index * 2;
+    vec4 before_scalar = vec4(scalars.data[r], scalars.data[r + 1], scalars.data[r + 2], scalars.data[r + 3]);
+    vec4 before_pair = vec4(pairs.data[p], pairs.data[p + 1]);
+    vec4 before_quad = quads.data[parameters.read_index];
+    uvec4 before_bits = bits.data[parameters.read_index];
+    uint w = parameters.write_index;
+    if (float_stores == 0)
+        bits.data[w] = floatBitsToUint(vec4(1.0, 2.0, 3.0, 4.0));
+    else if (parameters.kind == 0)
+    {
+        scalars.data[w * 4] = 1.0;
+        scalars.data[w * 4 + 1] = 2.0;
+        scalars.data[w * 4 + 2] = 3.0;
+        scalars.data[w * 4 + 3] = 4.0;
+    }
+    else if (parameters.kind == 1)
+    {
+        pairs.data[w * 2] = vec2(1.0, 2.0);
+        pairs.data[w * 2 + 1] = vec2(3.0, 4.0);
+    }
+    else if (parameters.kind == 2)
+        quads.data[w] = vec4(1.0, 2.0, 3.0, 4.0);
+    else
+    {
+        quads.data[w].x = 1.0;
+        quads.data[w].y = 2.0;
+        quads.data[w].z = 3.0;
+        quads.data[w].w = 4.0;
+    }
+    vec4 after_scalar = vec4(scalars.data[r], scalars.data[r + 1], scalars.data[r + 2], scalars.data[r + 3]);
+    vec4 after_pair = vec4(pairs.data[p], pairs.data[p + 1]);
+    vec4 after_quad = quads.data[parameters.read_index];
+    uvec4 after_bits = bits.data[parameters.read_index];
+    for (uint i = 0; i < 4; i++)
+    {
+        output_buffer.data[i] = floatBitsToUint(before_scalar[i]);
+        output_buffer.data[4 + i] = floatBitsToUint(before_pair[i]);
+        output_buffer.data[8 + i] = floatBitsToUint(before_quad[i]);
+        output_buffer.data[12 + i] = before_bits[i];
+        output_buffer.data[16 + i] = floatBitsToUint(after_scalar[i]);
+        output_buffer.data[20 + i] = floatBitsToUint(after_pair[i]);
+        output_buffer.data[24 + i] = floatBitsToUint(after_quad[i]);
+        output_buffer.data[28 + i] = after_bits[i];
+    }
+}

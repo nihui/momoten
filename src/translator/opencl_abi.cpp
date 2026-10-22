@@ -176,7 +176,10 @@ void CompilerOpenCL::emit_function_prototype(SPIRFunction& func, const Bitset& r
 
     std::ostringstream declaration;
     declaration << "__kernel ";
-    if (translation_options.workgroup_mode == WorkgroupModeDirect)
+    // Independent invocations can be split when the compiler's natural
+    // workgroup limit is smaller than the Vulkan shape. Requiring that shape
+    // here can instead force register spilling and hide the lower limit.
+    if (translation_options.workgroup_mode == WorkgroupModeDirect && !workgroup_splittable)
     {
         declaration << "__attribute__((reqd_work_group_size(" << local_size[0] << ", "
                     << local_size[1] << ", " << local_size[2] << "))) ";

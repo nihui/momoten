@@ -12,6 +12,8 @@ translator include/momoten/spv_to_clc.h
 translator src/translator/translator_internal.h
 translator src/translator/opencl_source.h
 translator src/translator/opencl_source.cpp
+translator src/translator/spirv_integer_ranges.cpp
+translator src/translator/spirv_buffer_loads.cpp
 translator src/translator/spirv_prepare.cpp
 translator src/translator/float_controls.cpp
 translator src/translator/compiler_opencl.cpp
@@ -21,6 +23,8 @@ translator src/translator/opencl_prelude.cpp
 translator src/translator/opencl_integer_dot.cpp
 translator src/translator/opencl_subgroup.cpp
 translator src/translator/opencl_matrix.cpp
+translator src/translator/opencl_buffer_alias.cpp
+translator src/translator/opencl_memory.cpp
 translator src/translator/opencl_codegen.cpp
 
 driver src/backend/opencl_loader.h

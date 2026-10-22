@@ -1,0 +1,47 @@
+// Copyright 2026 nihui
+// SPDX-License-Identifier: Apache-2.0
+
+#version 450
+
+layout(local_size_x = 1) in;
+layout(binding = 0) readonly buffer Scalars { uint data[]; } scalars;
+layout(binding = 1) readonly buffer Pairs { vec2 data[]; } pairs;
+layout(binding = 2) writeonly buffer Output { uint data[]; } output_buffer;
+layout(binding = 3) buffer Alias { uint data[]; } alias_buffer;
+
+void main()
+{
+    uint index = gl_GlobalInvocationID.x * 4;
+    uint a = scalars.data[index];
+    uint b = scalars.data[index + 1];
+    uint c = scalars.data[index + 2];
+    uint d = scalars.data[index + 3];
+    uint pair_index = gl_GlobalInvocationID.x * 2;
+    vec2 e = pairs.data[pair_index];
+    vec2 f = pairs.data[pair_index + 1];
+    uint out_index = gl_GlobalInvocationID.x * 13;
+    output_buffer.data[out_index] = a;
+    output_buffer.data[out_index + 1] = b;
+    output_buffer.data[out_index + 2] = c;
+    output_buffer.data[out_index + 3] = d;
+    output_buffer.data[out_index + 4] = floatBitsToUint(e.x);
+    output_buffer.data[out_index + 5] = floatBitsToUint(e.y);
+    output_buffer.data[out_index + 6] = floatBitsToUint(f.x);
+    output_buffer.data[out_index + 7] = floatBitsToUint(f.y);
+
+    // Both bindings refer to the same allocation. This write must separate
+    // the following loads even though it uses another descriptor.
+    a = scalars.data[index];
+    alias_buffer.data[index + 1] = 123u;
+    b = scalars.data[index + 1];
+    c = scalars.data[index + 2];
+    d = scalars.data[index + 3];
+    output_buffer.data[out_index + 8] = a;
+    output_buffer.data[out_index + 9] = b;
+    output_buffer.data[out_index + 10] = c;
+    output_buffer.data[out_index + 11] = d;
+
+    // The last invocation reaches the allocation's final word.
+    if (gl_GlobalInvocationID.x == 3)
+        output_buffer.data[out_index + 12] = scalars.data[index + 3];
+}
