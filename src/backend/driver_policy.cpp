@@ -22,9 +22,9 @@ OpenCLDriverPolicy opencl_driver_policy(const std::string& vendor, const std::st
         // Select lowering before compiling the capability probe: a compiler
         // crash in negDp2accFolding cannot be recovered as a build error.
         policy.split_packed_dot_acc_sat = compiler == "E031.47.18.50" || compiler == "E031.47.18.51";
-        // This compiler accepts unsigned x signed native saturation, including
+        // These compilers accept unsigned x signed native saturation, including
         // when the accumulator aliases the original signed input.
-        policy.swap_mixed_dot_acc_sat = compiler == "E031.41.03.62";
+        policy.swap_mixed_dot_acc_sat = compiler == "E031.41.03.57" || compiler == "E031.41.03.62";
     }
     else if (vendor == "Imagination Technologies")
     {

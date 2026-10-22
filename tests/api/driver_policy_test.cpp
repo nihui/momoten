@@ -465,9 +465,12 @@ int main()
     const char* samsung_driver = "OpenCL 3.0 QUALCOMM build: 0800.64.7 Compiler E031.47.18.50";
     const char* honor_driver = "OpenCL 3.0 QUALCOMM build: 0800.74 Compiler E031.47.18.51";
     const char* mixed_driver = "OpenCL 3.0 QUALCOMM build: 0676.73 Compiler E031.41.03.62";
+    const char* oppo_driver = "OpenCL 3.0 QUALCOMM build: commit unknown Compiler E031.41.03.57";
     language_version = "OpenCL C 3.0";
     expected_build_options = "-cl-std=CL3.0";
     if (check_profile("CL3.0 integer dot uses the selected language", "QUALCOMM", honor_driver, true, true))
+        return 1;
+    if (check_profile("OPPO Adreno 740 CL3.0 mixed saturation", "QUALCOMM", oppo_driver, true, false, true))
         return 1;
     language_version = "OpenCL C 2.0";
     expected_build_options = "-cl-std=CL2.0";
@@ -494,6 +497,11 @@ int main()
            || check_profile("Honor other vendor", "another vendor", honor_driver, true, false)
            || check_profile("Honor same compiler other release", "QUALCOMM", "OpenCL 3.0 QUALCOMM build: 0800.75 Compiler E031.47.18.51", true, true)
            || check_profile("Honor compiler version prefix", "QUALCOMM", "OpenCL 3.0 QUALCOMM build: 0800.74 Compiler E031.47.18.510", true, false)
+           || check_profile("OPPO Adreno 740 packed-only", "QUALCOMM", oppo_driver, false, false, true)
+           || check_profile("OPPO other vendor", "another vendor", oppo_driver, true, false)
+           || check_profile("OPPO compiler followed by metadata", "QUALCOMM", "OpenCL 3.0 QUALCOMM build: commit unknown Compiler E031.41.03.57 extra", true, false, true)
+           || check_profile("OPPO compiler version prefix", "QUALCOMM", "OpenCL 3.0 QUALCOMM build: commit unknown Compiler E031.41.03.570", true, false)
+           || check_profile("OPPO compiler version suffix", "QUALCOMM", "OpenCL 3.0 QUALCOMM build: commit unknown Compiler E031.41.03.57-custom", true, false)
            || check_profile("mixed saturation driver", "QUALCOMM", mixed_driver, true, false, true)
            || check_profile("mixed saturation packed-only", "QUALCOMM", mixed_driver, false, false, true)
            || check_profile("mixed saturation other vendor", "another vendor", mixed_driver, true, false)
