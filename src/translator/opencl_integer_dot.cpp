@@ -19,49 +19,51 @@ void CompilerOpenCL::emit_integer_dot_product_helpers()
     // requiring optional OpenCL int64 support.
     // These helpers deliberately use ordinary definitions rather than inline;
     // see emit_header() for the OpenCL C 1.0 linkage constraint.
-    statement("typedef struct { uint lo; uint mid; uint hi; } momo_u96;");
+    // A vector avoids broken private-struct vectorization in older OpenCL
+    // compilers. The fourth lane is unused and remains zero.
+    statement("typedef uint4 momo_u96;");
     statement("void momo_u96_add_u32(__private momo_u96* value, uint addend)");
     begin_scope();
-    statement("uint old_lo = value->lo;");
-    statement("value->lo += addend;");
-    statement("if (value->lo < old_lo)");
+    statement("uint old_lo = value->x;");
+    statement("value->x += addend;");
+    statement("if (value->x < old_lo)");
     begin_scope();
-    statement("uint old_mid = value->mid;");
-    statement("value->mid++;");
-    statement("if (value->mid < old_mid) value->hi++;");
+    statement("uint old_mid = value->y;");
+    statement("value->y++;");
+    statement("if (value->y < old_mid) value->z++;");
     end_scope();
     end_scope();
     statement("void momo_u96_add_product(__private momo_u96* value, uint a, uint b)");
     begin_scope();
     statement("uint product_lo = a * b;");
     statement("uint product_hi = mul_hi(a, b);");
-    statement("uint old_lo = value->lo;");
-    statement("value->lo += product_lo;");
-    statement("uint carry_lo = value->lo < old_lo;");
-    statement("uint old_mid = value->mid;");
-    statement("value->mid += product_hi;");
-    statement("uint carry_hi = value->mid < old_mid;");
-    statement("old_mid = value->mid;");
-    statement("value->mid += carry_lo;");
-    statement("value->hi += carry_hi + (value->mid < old_mid);");
+    statement("uint old_lo = value->x;");
+    statement("value->x += product_lo;");
+    statement("uint carry_lo = value->x < old_lo;");
+    statement("uint old_mid = value->y;");
+    statement("value->y += product_hi;");
+    statement("uint carry_hi = value->y < old_mid;");
+    statement("old_mid = value->y;");
+    statement("value->y += carry_lo;");
+    statement("value->z += carry_hi + (value->y < old_mid);");
     end_scope();
     statement("int momo_u96_compare(momo_u96 a, momo_u96 b)");
     begin_scope();
-    statement("if (a.hi != b.hi) return a.hi > b.hi ? 1 : -1;");
-    statement("if (a.mid != b.mid) return a.mid > b.mid ? 1 : -1;");
-    statement("if (a.lo != b.lo) return a.lo > b.lo ? 1 : -1;");
+    statement("if (a.z != b.z) return a.z > b.z ? 1 : -1;");
+    statement("if (a.y != b.y) return a.y > b.y ? 1 : -1;");
+    statement("if (a.x != b.x) return a.x > b.x ? 1 : -1;");
     statement("return 0;");
     end_scope();
     statement("momo_u96 momo_u96_subtract(momo_u96 a, momo_u96 b)");
     begin_scope();
-    statement("momo_u96 result;");
-    statement("result.lo = a.lo - b.lo;");
-    statement("uint borrow_lo = a.lo < b.lo;");
-    statement("uint mid_without_borrow = a.mid - b.mid;");
-    statement("uint borrow_mid = a.mid < b.mid;");
-    statement("result.mid = mid_without_borrow - borrow_lo;");
+    statement("momo_u96 result = (momo_u96)(0u);");
+    statement("result.x = a.x - b.x;");
+    statement("uint borrow_lo = a.x < b.x;");
+    statement("uint mid_without_borrow = a.y - b.y;");
+    statement("uint borrow_mid = a.y < b.y;");
+    statement("result.y = mid_without_borrow - borrow_lo;");
     statement("uint borrow_carry = mid_without_borrow < borrow_lo;");
-    statement("result.hi = a.hi - b.hi - borrow_mid - borrow_carry;");
+    statement("result.z = a.z - b.z - borrow_mid - borrow_carry;");
     statement("return result;");
     end_scope();
     statement("uint momo_abs_int_bits(int value)");
@@ -83,16 +85,16 @@ void CompilerOpenCL::emit_integer_dot_product_helpers()
     statement("else momo_u96_add_u32(&positive, as_uint(accumulator));");
     statement("int comparison = momo_u96_compare(positive, negative);");
     statement("momo_u96 magnitude = comparison >= 0 ? momo_u96_subtract(positive, negative) : momo_u96_subtract(negative, positive);");
-    statement("if (magnitude.hi != 0u || magnitude.mid != 0u)");
+    statement("if (magnitude.z != 0u || magnitude.y != 0u)");
     statement("    return comparison >= 0 ? as_int(0x7fffffffu) : as_int(0x80000000u);");
     statement("if (comparison >= 0)");
-    statement("    return magnitude.lo > 0x7fffffffu ? as_int(0x7fffffffu) : as_int(magnitude.lo);");
-    statement("return magnitude.lo > 0x80000000u ? as_int(0x80000000u) : as_int(0u - magnitude.lo);");
+    statement("    return magnitude.x > 0x7fffffffu ? as_int(0x7fffffffu) : as_int(magnitude.x);");
+    statement("return magnitude.x > 0x80000000u ? as_int(0x80000000u) : as_int(0u - magnitude.x);");
     end_scope();
     statement("uint momo_finalize_unsigned_dot(momo_u96 value, uint accumulator)");
     begin_scope();
     statement("momo_u96_add_u32(&value, accumulator);");
-    statement("return value.hi != 0u || value.mid != 0u ? 0xffffffffu : value.lo;");
+    statement("return value.z != 0u || value.y != 0u ? 0xffffffffu : value.x;");
     end_scope();
 
     static const char components[] = "xyzw";
@@ -133,8 +135,8 @@ void CompilerOpenCL::emit_integer_dot_product_helpers()
 
         statement("int momo_sdot_acc_sat32_" + suffix + "(int" + suffix + " a, int" + suffix + " b, int accumulator)");
         begin_scope();
-        statement("momo_u96 positive = { 0u, 0u, 0u };");
-        statement("momo_u96 negative = { 0u, 0u, 0u };");
+        statement("momo_u96 positive = (momo_u96)(0u);");
+        statement("momo_u96 negative = (momo_u96)(0u);");
         for (uint32_t i = 0; i < count; i++)
             statement("momo_u96_add_ss_product(&positive, &negative, a." + std::string(1, components[i]) + ", b." + std::string(1, components[i]) + ");");
         statement("return momo_finalize_signed_dot(positive, negative, accumulator);");
@@ -142,7 +144,7 @@ void CompilerOpenCL::emit_integer_dot_product_helpers()
 
         statement("uint momo_udot_acc_sat32_" + suffix + "(uint" + suffix + " a, uint" + suffix + " b, uint accumulator)");
         begin_scope();
-        statement("momo_u96 value = { 0u, 0u, 0u };");
+        statement("momo_u96 value = (momo_u96)(0u);");
         for (uint32_t i = 0; i < count; i++)
             statement("momo_u96_add_product(&value, a." + std::string(1, components[i]) + ", b." + std::string(1, components[i]) + ");");
         statement("return momo_finalize_unsigned_dot(value, accumulator);");
@@ -150,8 +152,8 @@ void CompilerOpenCL::emit_integer_dot_product_helpers()
 
         statement("int momo_sudot_acc_sat32_" + suffix + "(int" + suffix + " a, uint" + suffix + " b, int accumulator)");
         begin_scope();
-        statement("momo_u96 positive = { 0u, 0u, 0u };");
-        statement("momo_u96 negative = { 0u, 0u, 0u };");
+        statement("momo_u96 positive = (momo_u96)(0u);");
+        statement("momo_u96 negative = (momo_u96)(0u);");
         for (uint32_t i = 0; i < count; i++)
             statement("momo_u96_add_su_product(&positive, &negative, a." + std::string(1, components[i]) + ", b." + std::string(1, components[i]) + ");");
         statement("return momo_finalize_signed_dot(positive, negative, accumulator);");
