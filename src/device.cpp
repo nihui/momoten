@@ -223,6 +223,8 @@ VkResult impl_create_device(
         log_error("clCreateContext", ret);
         return VK_ERROR_INITIALIZATION_FAILED;
     }
+    // Replay relies on this in-order queue for command and memory dependencies,
+    // including dependencies between consecutive Vulkan submissions.
     cl_command_queue queue = momoten_detail::g_opencl.p_clCreateCommandQueue(context, physical->device, 0, &ret);
     if (!queue)
     {

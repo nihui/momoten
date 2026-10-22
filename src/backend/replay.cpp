@@ -35,21 +35,8 @@ static bool bound_range(const std::shared_ptr<Buffer>& buffer,
 }
 
 ReplayState::ReplayState(VkDevice value)
-    : device(value), tail_event(0)
+    : device(value)
 {
-    if (!device->pending_submissions.empty())
-    {
-        cl_event previous = device->pending_submissions.back().event;
-        if (momoten_detail::g_opencl.p_clRetainEvent(previous) == CL_SUCCESS)
-            tail_event = previous;
-    }
-}
-
-void advance_replay_event(ReplayState& state, cl_event event)
-{
-    if (state.tail_event)
-        momoten_detail::g_opencl.p_clReleaseEvent(state.tail_event);
-    state.tail_event = event;
 }
 
 cl_int replay_copy(ReplayState& state, const RecordedCommand& command)
@@ -73,28 +60,21 @@ cl_int replay_copy(ReplayState& state, const RecordedCommand& command)
         if (ret != CL_SUCCESS)
             return ret;
 
-        cl_event event = 0;
-        const cl_uint wait_count = state.tail_event ? 1u : 0u;
-        const cl_event* wait_list = state.tail_event ? &state.tail_event : 0;
         ret = momoten_detail::enqueue_buffer_copy(
             state.device, src_memory->memory, dst_memory->memory,
-            src_offset, dst_offset, size, wait_count, wait_list, &event);
+            src_offset, dst_offset, size, 0, 0, 0);
         if (ret != CL_SUCCESS)
             return ret;
-        advance_replay_event(state, event);
         mark_device_range(state, dst_memory, dst_offset, size);
     }
     return CL_SUCCESS;
 }
 
-cl_int replay_barrier(ReplayState& state, const RecordedCommand&)
+cl_int replay_barrier(ReplayState&, const RecordedCommand&)
 {
-    cl_event event = 0;
-    const cl_int ret = momoten_detail::g_opencl.p_clEnqueueMarker(
-        state.device->command_queue, &event);
-    if (ret != CL_SUCCESS)
-        return ret;
-    advance_replay_event(state, event);
+    // All commands use the same in-order OpenCL queue. Its implicit memory
+    // dependencies already cover the supported compute and buffer barriers.
+    // Mapped host memory is synchronized before and after replay.
     return CL_SUCCESS;
 }
 
@@ -193,15 +173,11 @@ cl_int replay_dispatch(ReplayState& state, const RecordedCommand& command)
         }
     }
 
-    cl_event event = 0;
-    const cl_uint wait_count = state.tail_event ? 1u : 0u;
-    const cl_event* wait_list = state.tail_event ? &state.tail_event : 0;
     cl_int ret = momoten_detail::g_opencl.p_clEnqueueNDRangeKernel(
         device->command_queue, pipeline->kernel, 3, 0,
-        global_size, local_size, wait_count, wait_list, &event);
+        global_size, local_size, 0, 0, 0);
     if (ret != CL_SUCCESS)
         return ret;
-    advance_replay_event(state, event);
     for (size_t i = 0; i < pipeline->abi.buffers.size(); i++)
     {
         const momoten::BufferArgument& argument = pipeline->abi.buffers[i];
@@ -227,21 +203,13 @@ cl_int finish_replay(ReplayState& state, cl_event& event)
     if (readback_ret != CL_SUCCESS)
         return readback_ret;
 
-    cl_event marker = 0;
-    const cl_int ret = momoten_detail::g_opencl.p_clEnqueueMarker(
-        state.device->command_queue, &marker);
-    if (ret != CL_SUCCESS)
-        return ret;
-    advance_replay_event(state, marker);
-    event = state.tail_event;
-    state.tail_event = 0;
-    return CL_SUCCESS;
+    // One event covers the entire submission, including mapped readbacks and
+    // empty submissions. Intermediate commands need no explicit events.
+    return momoten_detail::g_opencl.p_clEnqueueMarker(
+        state.device->command_queue, &event);
 }
 
 void abort_replay(ReplayState& state)
 {
-    if (state.tail_event)
-        momoten_detail::g_opencl.p_clReleaseEvent(state.tail_event);
-    state.tail_event = 0;
     state.touched_memories.clear();
 }

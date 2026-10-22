@@ -358,7 +358,7 @@ static cl_int CL_API_CALL set_argument(cl_kernel kernel, cl_uint, size_t size, c
 
 static cl_int CL_API_CALL enqueue_kernel(cl_command_queue, cl_kernel kernel, cl_uint dimensions, const size_t* offset, const size_t* global, const size_t* local, cl_uint wait_count, const cl_event*, cl_event* event)
 {
-    if (!kernel || !kernel->alive || dimensions != 3 || offset || !global || !local || wait_count != 0 || !event)
+    if (!kernel || !kernel->alive || dimensions != 3 || offset || !global || !local || wait_count != 0)
     {
         mock->invalid_lifetime = true;
         return CL_INVALID_VALUE;
@@ -366,10 +366,13 @@ static cl_int CL_API_CALL enqueue_kernel(cl_command_queue, cl_kernel kernel, cl_
     memcpy(mock->global_size.values, global, sizeof(mock->global_size.values));
     memcpy(mock->local_size.values, local, sizeof(mock->local_size.values));
     mock->enqueue_calls++;
-    std::unique_ptr<_cl_event> result(new _cl_event);
-    result->references = 1;
-    *event = result.get();
-    mock->events.push_back(std::move(result));
+    if (event)
+    {
+        std::unique_ptr<_cl_event> result(new _cl_event);
+        result->references = 1;
+        *event = result.get();
+        mock->events.push_back(std::move(result));
+    }
     return CL_SUCCESS;
 }
 

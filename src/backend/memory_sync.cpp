@@ -72,16 +72,12 @@ cl_int upload_host_ranges(ReplayState& state,
     {
         const size_t begin = static_cast<size_t>(ranges[i].begin);
         const size_t byte_count = static_cast<size_t>(ranges[i].end - ranges[i].begin);
-        cl_event event = 0;
-        const cl_uint wait_count = state.tail_event ? 1u : 0u;
-        const cl_event* wait_list = state.tail_event ? &state.tail_event : 0;
         const cl_int ret = momoten_detail::g_opencl.p_clEnqueueWriteBuffer(
             state.device->command_queue, memory->memory, CL_FALSE,
             begin, byte_count, memory->shadow.data() + begin,
-            wait_count, wait_list, &event);
+            0, 0, 0);
         if (ret != CL_SUCCESS)
             return ret;
-        advance_replay_event(state, event);
         {
             std::lock_guard<std::mutex> lock(memory->mutex);
             memory->range_map.set(
@@ -110,16 +106,12 @@ static cl_int enqueue_readbacks(ReplayState& state,
     {
         const size_t begin = static_cast<size_t>(ranges[i].begin);
         const size_t byte_count = static_cast<size_t>(ranges[i].end - ranges[i].begin);
-        cl_event event = 0;
-        const cl_uint wait_count = state.tail_event ? 1u : 0u;
-        const cl_event* wait_list = state.tail_event ? &state.tail_event : 0;
         const cl_int ret = momoten_detail::g_opencl.p_clEnqueueReadBuffer(
             state.device->command_queue, memory->memory, CL_FALSE,
             begin, byte_count, memory->shadow.data() + begin,
-            wait_count, wait_list, &event);
+            0, 0, 0);
         if (ret != CL_SUCCESS)
             return ret;
-        advance_replay_event(state, event);
         {
             std::lock_guard<std::mutex> lock(memory->mutex);
             memory->range_map.set(

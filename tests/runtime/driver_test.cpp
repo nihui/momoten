@@ -581,6 +581,69 @@ int main(int argc, char** argv)
         }
     }
 
+    // Chain two submissions without a host wait, then use an empty submission
+    // to fence both copies. Unmapped storage must remain ordered on the device.
+    for (uint32_t i = 0; i < 8; i++)
+    {
+        input[i] = static_cast<float>(i + 1);
+        output[i] = -99.f;
+    }
+    vkUnmapMemory(device, input_memory);
+    vkUnmapMemory(device, output_memory);
+    result = vkResetCommandBuffer(command_buffer, 0);
+    if (result != VK_SUCCESS) return fail("vkResetCommandBuffer(chain)", result);
+    result = vkBeginCommandBuffer(command_buffer, &begin_info);
+    if (result != VK_SUCCESS) return fail("vkBeginCommandBuffer(chain first)", result);
+    copy_region.srcOffset = copy_region.dstOffset = descriptor_offset;
+    copy_region.size = data_size;
+    vkCmdCopyBuffer(command_buffer, input_buffer, output_buffer, 1, &copy_region);
+    result = vkEndCommandBuffer(command_buffer);
+    if (result != VK_SUCCESS) return fail("vkEndCommandBuffer(chain first)", result);
+
+    VkCommandBuffer chained_buffer = VK_NULL_HANDLE;
+    result = vkAllocateCommandBuffers(device, &command_allocate_info, &chained_buffer);
+    if (result != VK_SUCCESS) return fail("vkAllocateCommandBuffers(chain)", result);
+    result = vkBeginCommandBuffer(chained_buffer, &begin_info);
+    if (result != VK_SUCCESS) return fail("vkBeginCommandBuffer(chain second)", result);
+    VkMemoryBarrier chain_barrier = {};
+    chain_barrier.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
+    chain_barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+    chain_barrier.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+    vkCmdPipelineBarrier(chained_buffer, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                         0, 1, &chain_barrier, 0, 0, 0, 0);
+    copy_region.dstOffset += sizeof(float);
+    copy_region.size -= sizeof(float);
+    vkCmdCopyBuffer(chained_buffer, output_buffer, input_buffer, 1, &copy_region);
+    result = vkEndCommandBuffer(chained_buffer);
+    if (result != VK_SUCCESS) return fail("vkEndCommandBuffer(chain second)", result);
+    result = vkQueueSubmit(queue, 1, &submit_info, VK_NULL_HANDLE);
+    if (result != VK_SUCCESS) return fail("vkQueueSubmit(chain first)", result);
+    VkSubmitInfo chained_submit = submit_info;
+    chained_submit.pCommandBuffers = &chained_buffer;
+    result = vkQueueSubmit(queue, 1, &chained_submit, VK_NULL_HANDLE);
+    if (result != VK_SUCCESS) return fail("vkQueueSubmit(chain second)", result);
+    result = vkResetFences(device, 1, &fence);
+    if (result != VK_SUCCESS) return fail("vkResetFences(chain)", result);
+    result = vkQueueSubmit(queue, 0, 0, fence);
+    if (result != VK_SUCCESS) return fail("vkQueueSubmit(chain fence)", result);
+    result = vkWaitForFences(device, 1, &fence, VK_TRUE, 10000000000ull);
+    if (result != VK_SUCCESS) return fail("vkWaitForFences(chain)", result);
+    result = vkMapMemory(device, input_memory, 0, VK_WHOLE_SIZE, 0, &input_mapping);
+    if (result != VK_SUCCESS) return fail("vkMapMemory(chain input)", result);
+    result = vkMapMemory(device, output_memory, 0, VK_WHOLE_SIZE, 0, &output_mapping);
+    if (result != VK_SUCCESS) return fail("vkMapMemory(chain output)", result);
+    input = reinterpret_cast<float*>(static_cast<unsigned char*>(input_mapping) + bind_offset + descriptor_offset);
+    output = reinterpret_cast<float*>(static_cast<unsigned char*>(output_mapping) + bind_offset + descriptor_offset);
+    for (uint32_t i = 0; i < 8; i++)
+    {
+        if (input[i] != static_cast<float>(i == 0 ? 1 : i) || output[i] != static_cast<float>(i + 1))
+        {
+            fprintf(stderr, "driver_test: chained submission copy mismatch at %u\n", i);
+            status = 1;
+        }
+    }
+    vkFreeCommandBuffers(device, pool, 1, &chained_buffer);
+
     for (size_t s = 0; s < 2; s++)
     {
         if (!subgroup_modules[s])
