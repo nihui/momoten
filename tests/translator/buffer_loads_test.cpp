@@ -40,7 +40,10 @@ struct LoadFixture
     std::string between;
     std::string functions;
 
-    unsigned count() const { return 128 / (width * lanes); }
+    unsigned count() const
+    {
+        return 128 / (width * lanes);
+    }
 
     std::string assembly() const
     {
@@ -51,51 +54,51 @@ struct LoadFixture
         if (half)
             s << "OpCapability Float16\nOpCapability StorageBuffer16BitAccess\nOpExtension \"SPV_KHR_16bit_storage\"\n";
         s << "OpMemoryModel Logical GLSL450\n"
-             "OpEntryPoint GLCompute %main \"main\" %gid\n"
-             "OpExecutionMode %main LocalSize 1 1 1\n"
-             "OpDecorate %gid BuiltIn GlobalInvocationId\n"
-             "OpDecorate %array ArrayStride " << width * lanes / 8 + padding << "\n"
-             "OpMemberDecorate %block 0 Offset 0\n"
-             "OpDecorate %block Block\n"
-             "OpDecorate %input DescriptorSet 0\nOpDecorate %input Binding 0\n"
-             "OpDecorate %output DescriptorSet 0\nOpDecorate %output Binding 1\n"
+          << "OpEntryPoint GLCompute %main \"main\" %gid\n"
+          << "OpExecutionMode %main LocalSize 1 1 1\n"
+          << "OpDecorate %gid BuiltIn GlobalInvocationId\n"
+          << "OpDecorate %array ArrayStride " << width * lanes / 8 + padding << "\n"
+          << "OpMemberDecorate %block 0 Offset 0\n"
+          << "OpDecorate %block Block\n"
+          << "OpDecorate %input DescriptorSet 0\nOpDecorate %input Binding 0\n"
+          << "OpDecorate %output DescriptorSet 0\nOpDecorate %output Binding 1\n"
           << decorations
           << "%void = OpTypeVoid\n%bool = OpTypeBool\n%uint = OpTypeInt 32 0\n"
-             "%integer = OpTypeInt 32 " << signed_index << "\n"
-             "%uint3 = OpTypeVector %uint 3\n"
-             "%ptr_input_uint3 = OpTypePointer Input %uint3\n"
-             "%gid = OpVariable %ptr_input_uint3 Input\n"
-             "%scalar = " << scalar << "\n";
+          << "%integer = OpTypeInt 32 " << signed_index << "\n"
+          << "%uint3 = OpTypeVector %uint 3\n"
+          << "%ptr_input_uint3 = OpTypePointer Input %uint3\n"
+          << "%gid = OpVariable %ptr_input_uint3 Input\n"
+          << "%scalar = " << scalar << "\n";
         if (lanes > 1)
             s << "%element = OpTypeVector %scalar " << lanes << "\n";
         const char* element = lanes > 1 ? "%element" : "%scalar";
         s << "%array = OpTypeRuntimeArray " << element << "\n"
-             "%block = OpTypeStruct %array\n"
-             "%ptr_block = OpTypePointer StorageBuffer %block\n"
-             "%ptr_element = OpTypePointer StorageBuffer " << element << "\n"
-             "%ptr_private = OpTypePointer Function %integer\n"
-             "%input = OpVariable %ptr_block StorageBuffer\n"
-             "%output = OpVariable %ptr_block StorageBuffer\n"
-             "%function = OpTypeFunction %void\n"
-             "%true = OpConstantTrue %bool\n"
-             "%scope = OpConstant %uint 2\n"
-             "%semantics = OpConstant %uint 72\n";
+          << "%block = OpTypeStruct %array\n"
+          << "%ptr_block = OpTypePointer StorageBuffer %block\n"
+          << "%ptr_element = OpTypePointer StorageBuffer " << element << "\n"
+          << "%ptr_private = OpTypePointer Function %integer\n"
+          << "%input = OpVariable %ptr_block StorageBuffer\n"
+          << "%output = OpVariable %ptr_block StorageBuffer\n"
+          << "%function = OpTypeFunction %void\n"
+          << "%true = OpConstantTrue %bool\n"
+          << "%scope = OpConstant %uint 2\n"
+          << "%semantics = OpConstant %uint 72\n";
         for (unsigned i = 0; i <= 8; i++)
             s << "%c" << i << " = OpConstant %integer " << i << "\n";
         s << "%main = OpFunction %void None %function\n%entry = OpLabel\n";
         if (private_index || loop)
             s << "%local = OpVariable %ptr_private Function\n";
         s << "%invocation = OpLoad %uint3 %gid\n"
-             "%x = OpCompositeExtract %uint %invocation 0\n"
-             "%signed_x = OpBitcast %integer %x\n";
+          << "%x = OpCompositeExtract %uint %invocation 0\n"
+          << "%signed_x = OpBitcast %integer %x\n";
         if (loop)
         {
             s << "OpStore %local %c0\nOpBranch %header\n%header = OpLabel\n"
-                 "%iteration = OpLoad %integer %local\n"
-                 "%condition = " << (signed_index ? "OpSLessThan" : "OpULessThan") << " %bool %iteration %c8\n"
-                 "OpLoopMerge %merge %continue None\n"
-                 "OpBranchConditional %condition %body %merge\n%body = OpLabel\n"
-                 "%base = OpLoad %integer %local\n";
+              << "%iteration = OpLoad %integer %local\n"
+              << "%condition = " << (signed_index ? "OpSLessThan" : "OpULessThan") << " %bool %iteration %c8\n"
+              << "OpLoopMerge %merge %continue None\n"
+              << "OpBranchConditional %condition %body %merge\n%body = OpLabel\n"
+              << "%base = OpLoad %integer %local\n";
         }
         else
         {
@@ -110,25 +113,27 @@ struct LoadFixture
                 s << between;
                 if (branch)
                     s << "%take = OpIEqual %bool %signed_x %c0\n"
-                         "OpSelectionMerge %merge None\nOpBranchConditional %take %tail %merge\n%tail = OpLabel\n";
+                      << "OpSelectionMerge %merge None\nOpBranchConditional %take %tail %merge\n%tail = OpLabel\n";
             }
             if (private_index)
                 s << "%index_base" << i << " = OpLoad %integer %local\n";
             const std::string base = private_index ? "%index_base" + std::to_string(i) : "%base";
-            const unsigned offset = first_offset + (duplicate && i == n - 1 ? 0 : reverse ? n - i - 1 : i);
+            const unsigned lane = reverse ? n - i - 1 : i;
+            const unsigned offset = first_offset + (duplicate && i == n - 1 ? 0 : lane);
             s << "%index" << i << " = OpIAdd %integer " << base << " %c" << offset << "\n"
-                 "%pointer" << i << " = OpAccessChain %ptr_element " << (split_buffers && i == n - 1 ? "%output" : "%input") << " %c0 %index" << i << "\n"
-                 "%value" << i << " = OpLoad " << element << " %pointer" << i << memory_access << "\n";
+              << "%pointer" << i << " = OpAccessChain %ptr_element " << (split_buffers && i == n - 1 ? "%output" : "%input") << " %c0 %index" << i << "\n"
+              << "%value" << i << " = OpLoad " << element << " %pointer" << i << memory_access << "\n";
         }
         for (unsigned i = 0; i < n; i++)
             s << "%out" << i << " = OpAccessChain %ptr_element %output %c0 %c" << i << "\nOpStore %out" << i << " %value" << i << "\n";
         if (loop)
             s << "OpBranch %continue\n%continue = OpLabel\n"
-                 "%old = OpLoad %integer %local\n%next = OpIAdd %integer %old %c" << n << "\n"
-                 "OpStore %local %next\nOpBranch %header\n%merge = OpLabel\n";
+              << "%old = OpLoad %integer %local\n%next = OpIAdd %integer %old %c" << n << "\n"
+              << "OpStore %local %next\nOpBranch %header\n%merge = OpLabel\n";
         else if (branch)
             s << "OpBranch %merge\n%merge = OpLabel\n";
-        s << "OpReturn\nOpFunctionEnd\n" << functions;
+        s << "OpReturn\nOpFunctionEnd\n"
+          << functions;
         std::string text = s.str();
         if (scalar == "OpTypeInt 32 0")
         {

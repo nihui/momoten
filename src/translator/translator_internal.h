@@ -112,6 +112,8 @@ private:
 
     bool emit_memory_instruction(const Instruction& instruction, const uint32_t* ops);
     void require_statement_continue();
+    std::string buffer_scalar_type(const SPIRType& type);
+    void emit_buffer_load_result(uint32_t result_type, uint32_t result_id, uint32_t pointer, const std::string& expression);
     void track_aliased_buffer_access(const Instruction& instruction, const uint32_t* ops);
     std::string aliased_buffer_address(uint32_t pointer);
     std::string aliased_scalar_load(const SPIRType& type, const std::string& address, uint32_t offset);

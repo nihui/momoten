@@ -372,7 +372,7 @@ add_custom_target(momoten-test-spv DEPENDS ${momoten_test_spv_files})
 function(momoten_add_memory_lowering_test target translator)
     add_executable(${target} translator/memory_lowering_test.cpp)
     target_compile_features(${target} PRIVATE cxx_std_11)
-    target_link_libraries(${target} PRIVATE ${translator} momoten::headers SPIRV-Tools-static)
+    target_link_libraries(${target} PRIVATE ${translator} momoten::headers spirv-cross-core SPIRV-Tools-static)
     add_dependencies(${target} momoten-test-spv)
     add_test(NAME ${target} COMMAND ${target}
         "${momoten_memory_lowering_test_spv}" "${momoten_fp16_buffer_read_write_test_spv}" "${momoten_fp64_test_spv}")
@@ -536,7 +536,7 @@ if(TARGET momoten_test_opencl)
     target_compile_features(momoten_opencl_test PRIVATE cxx_std_11)
     target_compile_definitions(momoten_opencl_test PRIVATE CL_TARGET_OPENCL_VERSION=100)
     target_link_libraries(momoten_opencl_test PRIVATE
-        momoten::translator momoten_test_opencl)
+        momoten::translator momoten_test_opencl spirv-cross-core)
     add_dependencies(momoten_opencl_test momoten-test-spv)
     add_test(NAME momoten_opencl_simple
         COMMAND momoten_opencl_test "${momoten_test_spv}")

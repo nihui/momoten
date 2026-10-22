@@ -155,9 +155,7 @@ bool CompilerOpenCL::emit_aliased_buffer_access(const Instruction& instruction, 
         }
     if (load)
     {
-        emit_op(ops[0], ops[1], temporary, false);
-        register_read(ops[1], pointer, false);
-        inherit_expression_dependencies(ops[1], pointer);
+        emit_buffer_load_result(ops[0], ops[1], pointer, temporary);
     }
     else
     {

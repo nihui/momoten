@@ -17,7 +17,6 @@
 #include <string>
 #include <vector>
 
-
 static int fail(const char* operation, cl_int error)
 {
     fprintf(stderr, "opencl_test: %s failed with OpenCL error %d\n", operation, error);
@@ -1280,43 +1279,15 @@ static int run_buffer_alias_kernel(cl_context context, cl_command_queue queue, c
                     memcpy(expected_output + 17 + view * 4, expected + 1 + read * 4, sizeof(stored));
                 }
                 cl_int ret = CL_SUCCESS;
-                cl_mem memory = clCreateBuffer(context, CL_MEM_READ_WRITE | CL_MEM_COPY_HOST_PTR, sizeof(data), data, &ret);
-                if (!memory)
-                    return fail("alias input buffer", ret);
-                cl_mem result = clCreateBuffer(context, CL_MEM_READ_WRITE | CL_MEM_COPY_HOST_PTR, sizeof(output), output, &ret);
-                if (!result)
-                {
-                    clReleaseMemObject(memory);
-                    return fail("alias output buffer", ret);
-                }
-                for (size_t i = 0; ret == CL_SUCCESS && i < translated.abi.buffers.size(); i++)
-                {
-                    const momoten::BufferArgument& argument = translated.abi.buffers[i];
-                    const cl_mem buffer = argument.binding == 4 ? result : memory;
-                    ret = clSetKernelArg(kernel, argument.buffer_arg_index, sizeof(buffer), &buffer);
-                    if (ret == CL_SUCCESS && address_bits == 64)
-                    {
-                        const cl_ulong offset = 4;
-                        ret = clSetKernelArg(kernel, argument.offset_arg_index, sizeof(offset), &offset);
-                    }
-                    else if (ret == CL_SUCCESS)
-                    {
-                        const cl_uint offset = 4;
-                        ret = clSetKernelArg(kernel, argument.offset_arg_index, sizeof(offset), &offset);
-                    }
-                }
                 const cl_uint parameters[] = {read, write, kind};
                 for (size_t i = 0; ret == CL_SUCCESS && i < 3; i++)
                     ret = clSetKernelArg(kernel, translated.abi.push_constant_arg_index + i, sizeof(cl_uint), parameters + i);
-                const size_t size = 1;
+                const OpenCLTestBuffer buffers[] = {
+                    {data, sizeof(data), 4, true},
+                    {output, sizeof(output), 4, true}};
+                const size_t bindings[] = {0, 0, 0, 0, 1};
                 if (ret == CL_SUCCESS)
-                    ret = clEnqueueNDRangeKernel(queue, kernel, 1, 0, &size, &size, 0, 0, 0);
-                if (ret == CL_SUCCESS)
-                    ret = clEnqueueReadBuffer(queue, memory, CL_TRUE, 0, sizeof(data), data, 0, 0, 0);
-                if (ret == CL_SUCCESS)
-                    ret = clEnqueueReadBuffer(queue, result, CL_TRUE, 0, sizeof(output), output, 0, 0, 0);
-                clReleaseMemObject(result);
-                clReleaseMemObject(memory);
+                    ret = run_buffer_fixture(context, queue, kernel, translated, address_bits, buffers, 2, 1, bindings);
                 if (ret != CL_SUCCESS)
                     return fail("buffer alias dispatch", ret);
                 if (memcmp(data, expected, sizeof(data)) != 0 || memcmp(output, expected_output, sizeof(output)) != 0)
@@ -1327,7 +1298,6 @@ static int run_buffer_alias_kernel(cl_context context, cl_command_queue queue, c
             }
     return 0;
 }
-
 
 static int check_cpu_buffer_read_write(cl_context context, cl_command_queue queue, cl_device_id device,
                                        const momoten::TranslationResult& translated, cl_uint address_bits,
@@ -1938,22 +1908,8 @@ int main(int argc, char** argv)
         options.native_buffer_vector_stores = true;
         // MemoryAccess Volatile on OpStore must also disable native stores,
         // independently of the storage-buffer declaration's decoration.
-        std::vector<uint32_t> volatile_words(words.begin(), words.begin() + 5);
-        for (size_t offset = 5; offset < words.size();)
-        {
-            const uint32_t count = words[offset] >> 16;
-            const uint32_t opcode = words[offset] & 0xffffu;
-            if (opcode == 62u && count == 3u) // OpStore without optional operands.
-            {
-                volatile_words.push_back((4u << 16) | opcode);
-                volatile_words.push_back(words[offset + 1]);
-                volatile_words.push_back(words[offset + 2]);
-                volatile_words.push_back(1u); // MemoryAccessVolatileMask.
-            }
-            else
-                volatile_words.insert(volatile_words.end(), words.begin() + offset, words.begin() + offset + count);
-            offset += count;
-        }
+        std::vector<uint32_t> volatile_words = words;
+        make_stores_volatile(volatile_words);
         if (!momoten::translate_spirv_to_opencl_c(volatile_words.data(), volatile_words.size(), options, scalar)
             || scalar.source.find("vstore") != std::string::npos)
             return fail("volatile memory-access store lowering", CL_INVALID_VALUE);

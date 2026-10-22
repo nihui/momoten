@@ -41,6 +41,22 @@ void CompilerOpenCL::require_statement_continue()
     }
 }
 
+std::string CompilerOpenCL::buffer_scalar_type(const SPIRType& type)
+{
+    if (type.basetype == SPIRType::Double && type.width == 64)
+        return "ulong";
+    SPIRType scalar_type = type;
+    scalar_type.vecsize = 1;
+    return type_to_glsl(scalar_type);
+}
+
+void CompilerOpenCL::emit_buffer_load_result(uint32_t result_type, uint32_t result_id, uint32_t pointer, const std::string& expression)
+{
+    emit_op(result_type, result_id, expression, false);
+    register_read(result_id, pointer, false);
+    inherit_expression_dependencies(result_id, pointer);
+}
+
 bool CompilerOpenCL::prepare_access_chain_for_scalar_access(std::string& expression, const SPIRType& scalar_type,
                                                             StorageClass storage, bool& packed)
 {
@@ -55,8 +71,8 @@ bool CompilerOpenCL::prepare_access_chain_for_scalar_access(std::string& express
     // component stride is sizeof(int), not sizeof(bool).
     const std::string scalar_name = scalar_type.basetype == SPIRType::Boolean
                                         ? "int"
-                                    : global_storage && scalar_type.basetype == SPIRType::Double && scalar_type.width == 64
-                                        ? "ulong"
+                                    : global_storage
+                                        ? buffer_scalar_type(scalar_type)
                                         : type_to_glsl(scalar_type);
     // Preserve scalar accesses at descriptor tails instead of allowing a
     // compiler to speculate a wider vector load/store.
@@ -196,9 +212,7 @@ bool CompilerOpenCL::emit_coalesced_buffer_load(const Instruction& instruction, 
     cast_from_variable_load(ops[2], expression, type);
     // Materialize each original result at its original instruction. The wide
     // temporary snapshots the whole proven-safe group at the first load.
-    emit_op(ops[0], ops[1], expression, false);
-    register_read(ops[1], ops[2], false);
-    inherit_expression_dependencies(ops[1], ops[2]);
+    emit_buffer_load_result(ops[0], ops[1], ops[2], expression);
     return true;
 }
 
@@ -238,19 +252,13 @@ bool CompilerOpenCL::emit_storage_buffer_load(const Instruction& instruction, co
             const size_t dot = lvalue.rfind('.');
             if (storage_element.columns == 1 && (storage_element.vecsize == 2 || storage_element.vecsize == 3 || storage_element.vecsize == 4) && dot != std::string::npos && dot + 2 == lvalue.size() && std::string("xyzw").find(lvalue[dot + 1]) < storage_element.vecsize)
             {
-                SPIRType element_type = storage_element;
-                element_type.vecsize = 1;
-                const std::string storage_type = storage_element.basetype == SPIRType::Double && storage_element.width == 64
-                                                     ? "ulong"
-                                                     : type_to_glsl(element_type);
+                const std::string storage_type = buffer_scalar_type(storage_element);
                 const size_t component = std::string("xyzw").find(lvalue[dot + 1]);
                 std::string expression = "*((volatile __global const " + storage_type + " *)&(" + lvalue.substr(0, dot) + ") + " + std::to_string(component) + ")";
                 if (storage_element.basetype == SPIRType::Double && storage_element.width == 64)
                     expression = "as_double(" + expression + ")";
                 cast_from_variable_load(pointer_id, expression, type);
-                emit_op(result_type, result_id, expression, false);
-                register_read(result_id, pointer_id, false);
-                inherit_expression_dependencies(result_id, pointer_id);
+                emit_buffer_load_result(result_type, result_id, pointer_id, expression);
                 return true;
             }
             // Pointer-based scalar access chains already retain their address
@@ -267,9 +275,7 @@ bool CompilerOpenCL::emit_storage_buffer_load(const Instruction& instruction, co
             flush_variable_declaration(pointer_id);
             std::string expression = "as_double(" + to_dereferenced_expression(pointer_id, false) + ")";
             cast_from_variable_load(pointer_id, expression, type);
-            emit_op(result_type, result_id, expression, false);
-            register_read(result_id, pointer_id, false);
-            inherit_expression_dependencies(result_id, pointer_id);
+            emit_buffer_load_result(result_type, result_id, pointer_id, expression);
             return true;
         }
         return false;
@@ -279,11 +285,7 @@ bool CompilerOpenCL::emit_storage_buffer_load(const Instruction& instruction, co
     {
         flush_variable_declaration(pointer_id);
         const std::string lvalue = to_dereferenced_expression(pointer_id, false);
-        SPIRType element_type = type;
-        element_type.vecsize = 1;
-        const std::string storage_type = type.basetype == SPIRType::Double && type.width == 64
-                                             ? "ulong"
-                                             : type_to_glsl(element_type);
+        const std::string storage_type = buffer_scalar_type(type);
         const Bitset flags = get_buffer_block_flags(backing->self);
         const bool volatile_load = flags.get(DecorationVolatile) || (instruction.length > 3 && (ops[3] & MemoryAccessVolatileMask) != 0);
         if (translation_options.native_buffer_vector_loads && !volatile_load
@@ -298,9 +300,7 @@ bool CompilerOpenCL::emit_storage_buffer_load(const Instruction& instruction, co
             if (translation_options.packed_fp16_vector_loads && type.basetype == SPIRType::Half && type.vecsize == 4)
                 expression = "as_half4(*((__global const momo_alias_uint2 *)&(" + lvalue + ")))";
             cast_from_variable_load(pointer_id, expression, type);
-            emit_op(result_type, result_id, expression, false);
-            register_read(result_id, pointer_id, false);
-            inherit_expression_dependencies(result_id, pointer_id);
+            emit_buffer_load_result(result_type, result_id, pointer_id, expression);
             return true;
         }
         std::string expression = type.basetype == SPIRType::Double && type.width == 64
@@ -317,9 +317,7 @@ bool CompilerOpenCL::emit_storage_buffer_load(const Instruction& instruction, co
         }
         expression += ")";
         cast_from_variable_load(pointer_id, expression, type);
-        emit_op(result_type, result_id, expression, false);
-        register_read(result_id, pointer_id, false);
-        inherit_expression_dependencies(result_id, pointer_id);
+        emit_buffer_load_result(result_type, result_id, pointer_id, expression);
         return true;
     }
     return false;
@@ -346,8 +344,6 @@ bool CompilerOpenCL::emit_storage_buffer_store(const Instruction& instruction, c
     flush_variable_declaration(ops[1]);
     const std::string lhs = to_dereferenced_expression(ops[0]);
     const std::string rhs = to_expression(ops[1]);
-    SPIRType element_type = value_type;
-    element_type.vecsize = 1;
     if (uses_workgroup_storage)
     {
         require_statement_continue();
@@ -356,7 +352,7 @@ bool CompilerOpenCL::emit_storage_buffer_store(const Instruction& instruction, c
     }
     // vstoreN requires only scalar alignment. Scalar component stores and
     // vec3 tails continue through the conservative volatile lowering.
-    statement("vstore", value_type.vecsize, "(", rhs, ", 0, (__global ", type_to_glsl(element_type), " *)&(", lhs, "));");
+    statement("vstore", value_type.vecsize, "(", rhs, ", 0, (__global ", buffer_scalar_type(value_type), " *)&(", lhs, "));");
     register_write(ops[0]);
     if (uses_workgroup_storage)
         end_scope();
@@ -401,11 +397,7 @@ void CompilerOpenCL::emit_store_statement(uint32_t lhs_expression, uint32_t rhs_
         // widen/speculate native vector stores (including vstoreN) for tail
         // elements even when the descriptor access is valid.
         const SPIRType& value_type = expression_type(rhs_expression);
-        SPIRType element_type = value_type;
-        element_type.vecsize = 1;
-        const std::string storage_type = value_type.basetype == SPIRType::Double && value_type.width == 64
-                                             ? "ulong"
-                                             : type_to_glsl(element_type);
+        const std::string storage_type = buffer_scalar_type(value_type);
         flush_variable_declaration(rhs_expression);
         const std::string lhs = to_dereferenced_expression(lhs_expression);
         const std::string rhs = to_expression(rhs_expression);
