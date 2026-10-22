@@ -158,7 +158,14 @@ bool CompilerOpenCL::emit_coalesced_buffer_load(const Instruction& instruction, 
     {
         flush_variable_declaration(ops[2]);
         const std::string lvalue = to_dereferenced_expression(ops[2], false);
-        statement("uint4 ", temporary, " = vload4(0, (__global const uint *)&(", lvalue, "));");
+        // Float reads retain their access type. Packed half reads use a
+        // probed may_alias type so half stores invalidate the wide load.
+        if (type.basetype == SPIRType::Float)
+            statement("uint4 ", temporary, " = as_uint4(vload4(0, (__global const float *)&(", lvalue, ")));");
+        else if (type.basetype == SPIRType::Half)
+            statement("uint4 ", temporary, " = *((__global const momo_alias_uint4 *)&(", lvalue, "));");
+        else
+            statement("uint4 ", temporary, " = vload4(0, (__global const uint *)&(", lvalue, "));");
     }
 
     const uint32_t words = type.width * type.vecsize / 32;
@@ -267,10 +274,10 @@ bool CompilerOpenCL::emit_storage_buffer_load(const Instruction& instruction, co
             // vloadN requires only scalar alignment and reads the complete
             // SPIR-V vector. Partial-vector accesses keep the scalar path.
             std::string expression = "vload" + std::to_string(type.vecsize) + "(0, (__global const " + storage_type + " *)&(" + lvalue + "))";
-            // A complete half4 occupies eight bytes, so its array/column
-            // offset preserves the descriptor's verified uint alignment.
+            // Dereference the may_alias typedef directly: passing it to
+            // vloadN would discard the attribute in the builtin parameter.
             if (translation_options.packed_fp16_vector_loads && type.basetype == SPIRType::Half && type.vecsize == 4)
-                expression = "as_half4(vload2(0, (__global const uint *)&(" + lvalue + ")))";
+                expression = "as_half4(*((__global const momo_alias_uint2 *)&(" + lvalue + ")))";
             cast_from_variable_load(pointer_id, expression, type);
             emit_op(result_type, result_id, expression, false);
             register_read(result_id, pointer_id, false);

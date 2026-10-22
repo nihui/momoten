@@ -196,34 +196,47 @@ public:
 
     bool packed_fp16_vector_loads()
     {
-        // as_type between different vector widths has implementation-defined
-        // lane mapping. Check every 16-bit pattern in every lane, including
-        // subnormals, signed zeros, infinities and NaNs, before using this path.
+        // Packed reads require alias-safe vector types with four-byte
+        // alignment. Check 64-bit and 128-bit reads and the implementation-
+        // defined uint2-to-half4 mapping with every 16-bit pattern per lane.
         cl_device_type type = 0;
         if (g_opencl.p_clGetDeviceInfo(device, CL_DEVICE_TYPE, sizeof(type), &type, 0) != CL_SUCCESS || !(type & CL_DEVICE_TYPE_GPU))
             return false;
         static const char source[] = "#pragma OPENCL EXTENSION cl_khr_fp16 : enable\n"
-                                     "__kernel void momo_packed_half_probe(__global const uint* input, __global half* output)\n"
+                                     "#if !defined(__has_attribute)\n"
+                                     "#error Missing attribute support\n"
+                                     "#elif !__has_attribute(may_alias) || !__has_attribute(aligned)\n"
+                                     "#error Missing alias or alignment attributes\n"
+                                     "#endif\n"
+                                     "typedef uint2 momo_alias_uint2 __attribute__((may_alias, aligned(4)));\n"
+                                     "typedef uint4 momo_alias_uint4 __attribute__((may_alias, aligned(4)));\n"
+                                     "typedef char check_alignment[(__alignof__(momo_alias_uint2) == 4 && __alignof__(momo_alias_uint4) == 4) ? 1 : -1];\n"
+                                     "__kernel void momo_packed_half_probe(__global const half* input, __global half* output)\n"
                                      "{\n"
                                      "    size_t i = get_global_id(0);\n"
-                                     "    half4 value = as_half4(vload2(i, input));\n"
+                                     "    input += 2;\n"
+                                     "    uint2 narrow = ((__global const momo_alias_uint2*)input)[i];\n"
+                                     "    uint4 wide = ((__global const momo_alias_uint4*)input)[i / 2];\n"
+                                     "    uint2 grouped = (i & 1) ? wide.s23 : wide.s01;\n"
+                                     "    half4 value = as_half4(narrow);\n"
+                                     "    if (any(narrow != grouped)) value = (half4)(0.0f);\n"
                                      "    vstore4(value.wzyx, i, output);\n"
                                      "}\n";
         if (!build(source, "momo_packed_half_probe"))
             return false;
 
         const size_t count = 65536;
-        std::vector<cl_ushort> input(count * 4);
+        std::vector<cl_ushort> input(count * 4 + 2, 0);
         std::vector<cl_ushort> output(count * 4, 0);
         for (size_t i = 0; i < count; i++)
             for (size_t lane = 0; lane < 4; lane++)
-                input[i * 4 + lane] = static_cast<cl_ushort>(i + lane * 16381);
-        const size_t bytes = input.size() * sizeof(cl_ushort);
+                input[i * 4 + lane + 2] = static_cast<cl_ushort>(i + lane * 16381);
+        const size_t bytes = output.size() * sizeof(cl_ushort);
         cl_int ret = CL_SUCCESS;
         cl_command_queue queue = g_opencl.p_clCreateCommandQueue(context, device, 0, &ret);
         cl_mem buffers[2] = {};
         if (queue && ret == CL_SUCCESS)
-            buffers[0] = g_opencl.p_clCreateBuffer(context, CL_MEM_READ_ONLY | CL_MEM_COPY_HOST_PTR, bytes, input.data(), &ret);
+            buffers[0] = g_opencl.p_clCreateBuffer(context, CL_MEM_READ_ONLY | CL_MEM_COPY_HOST_PTR, input.size() * sizeof(cl_ushort), input.data(), &ret);
         if (buffers[0] && ret == CL_SUCCESS)
             buffers[1] = g_opencl.p_clCreateBuffer(context, CL_MEM_READ_WRITE | CL_MEM_COPY_HOST_PTR, bytes, output.data(), &ret);
         bool success = queue && buffers[0] && buffers[1] && ret == CL_SUCCESS;
@@ -242,7 +255,7 @@ public:
             return false;
         for (size_t i = 0; i < count; i++)
             for (size_t lane = 0; lane < 4; lane++)
-                if (output[i * 4 + lane] != input[i * 4 + 3 - lane])
+                if (output[i * 4 + lane] != input[i * 4 + 3 - lane + 2])
                     return false;
         return true;
     }

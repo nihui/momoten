@@ -249,8 +249,8 @@ bool BufferLoadPlanner::candidate(const BufferLoadInstruction& d, size_t positio
     const SPIRType& type = get_type(d.type);
     const bool word_type = type.width == 32 && (type.basetype == SPIRType::Float || type.basetype == SPIRType::Int || type.basetype == SPIRType::UInt)
                            && (type.vecsize == 1 || type.vecsize == 2);
-    // Reuse the existing device probe for the implementation-defined mapping
-    // from uint2 to half4. No unprobed cross-width bitcast is introduced.
+    // The device probe covers both alias-safe load widths and the uint2-to-half4
+    // mapping used to recover each original result from the packed read.
     const bool packed_half = options.packed_fp16_vector_loads && type.width == 16 && type.basetype == SPIRType::Half && type.vecsize == 4;
     if ((!word_type && !packed_half) || type.pointer || type.columns != 1 || !type.array.empty())
         return false;

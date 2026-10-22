@@ -360,6 +360,8 @@ momoten_compile_test_shader(momoten_buffer_vector_store_test_spv buffer_vector_s
 momoten_compile_test_shader(momoten_fp16_vector_load_test_spv fp16_vector_load.comp vulkan1.1)
 momoten_compile_test_shader(momoten_coalesced_buffer_load_test_spv coalesced_buffer_load.comp vulkan1.1)
 momoten_compile_test_shader(momoten_coalesced_fp16_load_test_spv coalesced_fp16_load.comp vulkan1.1)
+momoten_compile_test_shader(momoten_buffer_read_write_test_spv buffer_read_write.comp vulkan1.1)
+momoten_compile_test_shader(momoten_fp16_buffer_read_write_test_spv fp16_buffer_read_write.comp vulkan1.1)
 momoten_compile_test_shader(momoten_pow_constant_base_test_spv pow_constant_base.comp vulkan1.0)
 momoten_compile_test_shader(momoten_integer_ranges_test_spv integer_ranges.comp vulkan1.0)
 
@@ -560,6 +562,17 @@ if(TARGET momoten_test_opencl)
     add_test(NAME momoten_opencl_buffer_vector_load
         COMMAND momoten_opencl_test "${momoten_buffer_vector_load_test_spv}"
             buffer-vector-load)
+    foreach(prefix "" "fp16_")
+        string(REPLACE "_" "-" mode "${prefix}buffer-read-write")
+        add_test(NAME momoten_opencl_${prefix}buffer_read_write
+            COMMAND momoten_opencl_test "${momoten_${prefix}buffer_read_write_test_spv}" ${mode})
+        add_test(NAME momoten_opencl_${prefix}buffer_read_write_native_stores
+            COMMAND momoten_opencl_test "${momoten_${prefix}buffer_read_write_test_spv}" ${mode} native-vector-memory)
+        set_tests_properties(momoten_opencl_${prefix}buffer_read_write
+            momoten_opencl_${prefix}buffer_read_write_native_stores PROPERTIES
+            LABELS "momoten;runtime;direct-opencl"
+            SKIP_RETURN_CODE 77)
+    endforeach()
     foreach(width scalar vec2 vec3 vec4)
         add_test(NAME momoten_opencl_pow_${width}
             COMMAND momoten_opencl_test "${momoten_pow_constant_base_test_spv}"

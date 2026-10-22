@@ -171,6 +171,16 @@ void CompilerOpenCL::emit_header()
         // cl_khr_fp16 is present.
         statement("typedef struct { half4 c[4]; } momo_hmat4;");
         statement("typedef char momo_hmat4_size_must_be_32[(sizeof(momo_hmat4) == 32) ? 1 : -1];");
+        if (translation_options.packed_fp16_vector_loads)
+        {
+            statement("#if !defined(__has_attribute)");
+            statement("#error Packed half loads require may_alias and aligned attributes");
+            statement("#elif !__has_attribute(may_alias) || !__has_attribute(aligned)");
+            statement("#error Packed half loads require may_alias and aligned attributes");
+            statement("#endif");
+            statement("typedef uint2 momo_alias_uint2 __attribute__((may_alias, aligned(4)));");
+            statement("typedef uint4 momo_alias_uint4 __attribute__((may_alias, aligned(4)));");
+        }
     }
     if (requires_integer_dot_product)
         emit_integer_dot_product_helpers();

@@ -211,11 +211,11 @@ static cl_int CL_API_CALL set_kernel_arg(cl_kernel, cl_uint index, size_t bytes,
 
 static cl_int CL_API_CALL enqueue_kernel(cl_command_queue, cl_kernel, cl_uint dimensions, const size_t*, const size_t* global, const size_t*, cl_uint, const cl_event*, cl_event*)
 {
-    if (probe_failure == 5 || dimensions != 1 || *global * 4 != probe_buffers[0]->data.size())
+    if (probe_failure == 5 || dimensions != 1 || *global * 4 + 2 != probe_buffers[0]->data.size())
         return CL_INVALID_WORK_GROUP_SIZE;
     for (size_t i = 0; i < *global; i++)
         for (size_t lane = 0; lane < 4; lane++)
-            probe_buffers[1]->data[i * 4 + lane] = probe_buffers[0]->data[i * 4 + 3 - lane];
+            probe_buffers[1]->data[i * 4 + lane] = probe_buffers[0]->data[i * 4 + 3 - lane + 2];
     if (probe_failure == 7)
         probe_buffers[1]->data[3] ^= 1;
     return CL_SUCCESS;

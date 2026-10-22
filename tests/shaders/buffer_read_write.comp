@@ -1,0 +1,53 @@
+// Copyright 2026 nihui
+// SPDX-License-Identifier: Apache-2.0
+
+#version 450
+
+layout(local_size_x = 1) in;
+layout(binding = 0) buffer Scalars { float data[]; } scalars;
+layout(binding = 1) buffer Pairs { vec2 data[]; } pairs;
+layout(binding = 2) writeonly buffer Output { uint data[]; } output_buffer;
+layout(push_constant) uniform Parameters { uint read_index; uint write_index; } parameters;
+
+void main()
+{
+    uint r = parameters.read_index * 4;
+    uint w = parameters.write_index * 4;
+    float a = scalars.data[r];
+    float b = scalars.data[r + 1];
+    float c = scalars.data[r + 2];
+    float d = scalars.data[r + 3];
+    scalars.data[w] = 1.0;
+    scalars.data[w + 1] = 2.0;
+    scalars.data[w + 2] = 3.0;
+    scalars.data[w + 3] = 4.0;
+    float e = scalars.data[r];
+    float f = scalars.data[r + 1];
+    float g = scalars.data[r + 2];
+    float h = scalars.data[r + 3];
+    output_buffer.data[0] = floatBitsToUint(a);
+    output_buffer.data[1] = floatBitsToUint(b);
+    output_buffer.data[2] = floatBitsToUint(c);
+    output_buffer.data[3] = floatBitsToUint(d);
+    output_buffer.data[4] = floatBitsToUint(e);
+    output_buffer.data[5] = floatBitsToUint(f);
+    output_buffer.data[6] = floatBitsToUint(g);
+    output_buffer.data[7] = floatBitsToUint(h);
+
+    r = parameters.read_index * 2;
+    w = parameters.write_index * 2;
+    vec2 p = pairs.data[r];
+    vec2 q = pairs.data[r + 1];
+    pairs.data[w] = vec2(1.0, 2.0);
+    pairs.data[w + 1] = vec2(3.0, 4.0);
+    vec2 s = pairs.data[r];
+    vec2 t = pairs.data[r + 1];
+    output_buffer.data[8] = floatBitsToUint(p.x);
+    output_buffer.data[9] = floatBitsToUint(p.y);
+    output_buffer.data[10] = floatBitsToUint(q.x);
+    output_buffer.data[11] = floatBitsToUint(q.y);
+    output_buffer.data[12] = floatBitsToUint(s.x);
+    output_buffer.data[13] = floatBitsToUint(s.y);
+    output_buffer.data[14] = floatBitsToUint(t.x);
+    output_buffer.data[15] = floatBitsToUint(t.y);
+}

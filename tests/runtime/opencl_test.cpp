@@ -1149,6 +1149,66 @@ static int run_coalesced_load_kernel(cl_context context, cl_command_queue queue,
     return status;
 }
 
+template<typename T>
+static int run_buffer_read_write_kernel(cl_context context, cl_command_queue queue, cl_kernel kernel,
+                                        const momoten::TranslationResult& translated, cl_uint address_bits)
+{
+    const bool half = sizeof(T) == 2;
+    const size_t inputs = half ? 1 : 2;
+    const size_t block = half ? 16 : 4;
+    const size_t accessed = half ? 12 : 4;
+    const size_t prefix = 4 / sizeof(T);
+    if (translated.abi.buffers.size() != inputs + 1 || translated.abi.push_constant_size != 8)
+        return fail("buffer read/write fixture ABI", CL_INVALID_ARG_VALUE);
+    const cl_uint float_patterns[] = {0x00000001u, 0x80000000u, 0x7fc01234u, 0xff800000u,
+                                      0x3f800000u, 0xbf800000u, 0x7f800000u, 0x11223344u};
+    const cl_ushort half_patterns[] = {0x0001, 0x8000, 0x7c00, 0xfe35, 0x3c00, 0xbc00, 0x7e19, 0x8001};
+    const cl_uint float_stores[] = {0x3f800000u, 0x40000000u, 0x40400000u, 0x40800000u};
+    const cl_ushort half_stores[] = {0x3c00, 0x4000, 0x4200, 0x4400, 0x4500, 0x4600,
+                                     0x4700, 0x4800, 0x4880, 0x4900, 0x4980, 0x4a00};
+    for (cl_uint read_index = 0; read_index < 2; read_index++)
+        for (cl_uint write_index = 0; write_index < 2; write_index++)
+        {
+            std::vector<T> data[3];
+            std::vector<T> expected[3];
+            data[inputs].resize(prefix + inputs * accessed * 2 + prefix, static_cast<T>(0xdead));
+            expected[inputs] = data[inputs];
+            for (size_t input = 0; input < inputs; input++)
+            {
+                data[input].resize(prefix + 2 * block + prefix, static_cast<T>(0xbeef));
+                for (size_t i = 0; i < block * 2; i++)
+                    data[input][prefix + i] = static_cast<T>(half ? half_patterns[(i + input * 3) % 8] : float_patterns[(i + input * 3) % 8]);
+                expected[input] = data[input];
+                for (size_t i = 0; i < accessed; i++)
+                {
+                    expected[inputs][prefix + input * accessed * 2 + i] = data[input][prefix + read_index * block + i];
+                    expected[input][prefix + write_index * block + i] = static_cast<T>(half ? half_stores[i] : float_stores[i]);
+                }
+                for (size_t i = 0; i < accessed; i++)
+                    expected[inputs][prefix + input * accessed * 2 + accessed + i] = expected[input][prefix + read_index * block + i];
+            }
+            cl_int ret = clSetKernelArg(kernel, translated.abi.push_constant_arg_index, sizeof(read_index), &read_index);
+            if (ret == CL_SUCCESS)
+                ret = clSetKernelArg(kernel, translated.abi.push_constant_arg_index + 1, sizeof(write_index), &write_index);
+            OpenCLTestBuffer buffers[3];
+            for (size_t i = 0; i <= inputs; i++)
+                buffers[i] = {data[i].data(), data[i].size() * sizeof(T), 4, true};
+            if (ret == CL_SUCCESS)
+                ret = run_buffer_fixture(context, queue, kernel, translated, address_bits, buffers, inputs + 1, 1);
+            if (ret != CL_SUCCESS)
+                return fail("buffer read/write dispatch", ret);
+            for (size_t buffer = 0; buffer <= inputs; buffer++)
+                for (size_t i = 0; i < expected[buffer].size(); i++)
+                    if (data[buffer][i] != expected[buffer][i])
+                    {
+                        fprintf(stderr, "opencl_test: read=%u write=%u buffer=%zu word[%zu]=%08x expected=%08x\n",
+                                read_index, write_index, buffer, i, static_cast<unsigned>(data[buffer][i]), static_cast<unsigned>(expected[buffer][i]));
+                        return 1;
+                    }
+        }
+    return 0;
+}
+
 static int run_buffer_vector_load_kernel(cl_context context, cl_command_queue queue, cl_kernel kernel,
                                          const momoten::TranslationResult& translated, cl_uint address_bits)
 {
@@ -1407,6 +1467,8 @@ enum OpenCLTestFeature
     OpenCLTestFp16VectorLoad,
     OpenCLTestCoalescedBufferLoad,
     OpenCLTestCoalescedFp16Load,
+    OpenCLTestBufferReadWrite,
+    OpenCLTestFp16BufferReadWrite,
     OpenCLTestPowScalar,
     OpenCLTestPowVec2,
     OpenCLTestPowVec3,
@@ -1447,6 +1509,8 @@ static const OpenCLTestCase opencl_test_cases[] = {
     {"fp16-vector-load", OpenCLTestFp16VectorLoad, true, false, false, run_fp16_vector_load_kernel},
     {"coalesced-buffer-load", OpenCLTestCoalescedBufferLoad, false, false, false, run_coalesced_load_kernel},
     {"coalesced-fp16-load", OpenCLTestCoalescedFp16Load, true, false, false, run_coalesced_load_kernel},
+    {"buffer-read-write", OpenCLTestBufferReadWrite, false, false, false, run_buffer_read_write_kernel<cl_uint>},
+    {"fp16-buffer-read-write", OpenCLTestFp16BufferReadWrite, true, false, false, run_buffer_read_write_kernel<cl_ushort>},
     {"buffer-vector-store", OpenCLTestBufferVectorStore, false, false, false, run_buffer_vector_store_kernel},
     {"pow-scalar", OpenCLTestPowScalar, false, false, false, run_pow_constant_base_kernel<1>},
     {"pow-vec2", OpenCLTestPowVec2, false, false, false, run_pow_constant_base_kernel<2>},
@@ -1475,7 +1539,7 @@ int main(int argc, char** argv)
     const OpenCLTestCase* test_case = find_opencl_test_case(native_vector_loads || native_vector_memory ? 3 : argc, argv);
     if (!test_case)
     {
-        fprintf(stderr, "opencl_test: expected SPIR-V input path and optional fp16, fp64, int16, atomic-packed, scalar-16bit, subgroup-basic, integer-dot-product, integer-ranges, workgroup-split, workgroup-3d, vector-access, vector-access-fp64, vector-extract-int16, buffer-vector-load, buffer-vector-store, fp16-vector-load, coalesced-buffer-load, coalesced-fp16-load, pow-scalar, pow-vec2, pow-vec3, or pow-vec4 mode, followed optionally by native-vector-loads or native-vector-memory\n");
+        fprintf(stderr, "opencl_test: expected SPIR-V input path and optional fp16, fp64, int16, atomic-packed, scalar-16bit, subgroup-basic, integer-dot-product, integer-ranges, workgroup-split, workgroup-3d, vector-access, vector-access-fp64, vector-extract-int16, buffer-vector-load, buffer-vector-store, fp16-vector-load, coalesced-buffer-load, coalesced-fp16-load, buffer-read-write, fp16-buffer-read-write, pow-scalar, pow-vec2, pow-vec3, or pow-vec4 mode, followed optionally by native-vector-loads or native-vector-memory\n");
         return 1;
     }
 
@@ -1503,8 +1567,10 @@ int main(int argc, char** argv)
     options.address_bits = address_bits;
     options.native_buffer_vector_loads = native_vector_loads || native_vector_memory || test_case->feature == OpenCLTestBufferVectorLoad;
     options.native_buffer_vector_stores = native_vector_memory || test_case->feature == OpenCLTestBufferVectorStore;
-    if (test_case->feature == OpenCLTestCoalescedBufferLoad)
+    if (test_case->feature == OpenCLTestCoalescedBufferLoad || test_case->feature == OpenCLTestBufferReadWrite || test_case->feature == OpenCLTestFp16BufferReadWrite)
         options.native_buffer_vector_loads = true;
+    if (test_case->feature == OpenCLTestFp16BufferReadWrite)
+        options.packed_fp16_vector_loads = true;
     if (test_case->feature == OpenCLTestFp16VectorLoad || test_case->feature == OpenCLTestCoalescedFp16Load)
     {
         options.native_buffer_vector_loads = true;
@@ -1567,6 +1633,19 @@ int main(int argc, char** argv)
             return fail("coalesced load fixture did not exercise wide loads", CL_INVALID_VALUE);
     }
 
+    if (test_case->feature == OpenCLTestBufferReadWrite || test_case->feature == OpenCLTestFp16BufferReadWrite)
+    {
+        size_t count = 0;
+        size_t position = 0;
+        while ((position = translated.source.find("uint4 momo_buffer_load_", position)) != std::string::npos)
+        {
+            count++;
+            position++;
+        }
+        if (count != (test_case->feature == OpenCLTestBufferReadWrite ? 4u : 2u))
+            return fail("buffer read/write fixture must retain coalesced loads", CL_INVALID_VALUE);
+    }
+
     if (translated.abi.int64 && !device_has_int64(device))
     {
         fprintf(stderr, "opencl_test: shader requires unsupported int64; skipping\n");
@@ -1590,13 +1669,13 @@ int main(int argc, char** argv)
 
     if (test_case->feature == OpenCLTestFp16VectorLoad)
     {
-        const size_t load = translated.source.find("as_half4(vload2(");
-        if (load == std::string::npos || translated.source.find("as_half4(vload2(", load + 1) != std::string::npos)
+        const size_t load = translated.source.find("as_half4(*((__global const momo_alias_uint2 *)&(");
+        if (load == std::string::npos || translated.source.find("as_half4(*((__global const momo_alias_uint2 *)&(", load + 1) != std::string::npos)
             return fail("packed fp16 loads must exclude volatile and partial vectors", CL_INVALID_VALUE);
         options.packed_fp16_vector_loads = false;
         momoten::TranslationResult fallback;
         if (!momoten::translate_spirv_to_opencl_c(words.data(), words.size(), options, fallback)
-            || fallback.source.find("as_half4(vload2(") != std::string::npos
+            || fallback.source.find("as_half4(*((__global const momo_alias_uint2 *)&(") != std::string::npos
             || fallback.source.find("vload4(") == std::string::npos)
             return fail("unverified fp16 vector load fallback", CL_INVALID_VALUE);
     }

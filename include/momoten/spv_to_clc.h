@@ -143,9 +143,10 @@ struct TranslationOptions
     // Use native stores only for complete, non-volatile vec2/vec4 values.
     // CPU backends retain scalar stores to avoid widened tail writes.
     bool native_buffer_vector_stores;
-    // Read complete half4 values through uint2 after verifying the device's
-    // implementation-defined as_half4(uint2) component mapping. Requires
-    // native vector loads and storage-buffer byte offsets aligned to 4 bytes.
+    // Read complete half4 values through may_alias integer vectors after
+    // verifying the compiler attributes, four-byte alignment and uint2-to-half4
+    // component mapping. Requires native vector loads and storage-buffer byte
+    // offsets aligned to 4 bytes.
     bool packed_fp16_vector_loads;
     std::vector<SpecializationValue> specializations;
 

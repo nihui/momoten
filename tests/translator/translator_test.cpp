@@ -254,9 +254,9 @@ int main(int argc, char** argv)
     momoten::TranslationResult packed_fp16;
     if (require(momoten::translate_spirv_to_opencl_c(fp16.data(), fp16.size(), packed_options, packed_fp16),
                 "verified packed fp16 loads were rejected")
-        || require(packed_fp16.source.find("as_half4(vload2(") != std::string::npos,
+        || require(packed_fp16.source.find("as_half4(*((__global const momo_alias_uint2 *)&(") != std::string::npos,
                    "packed fp16 load was not emitted")
-        || require(fp16_result.source.find("as_half4(vload2(") == std::string::npos,
+        || require(fp16_result.source.find("as_half4(*((__global const momo_alias_uint2 *)&(") == std::string::npos,
                    "unverified packed fp16 load was emitted"))
         return 1;
     std::vector<uint32_t> volatile_fp16(fp16.begin(), fp16.begin() + 5);
@@ -276,7 +276,7 @@ int main(int argc, char** argv)
     }
     if (require(momoten::translate_spirv_to_opencl_c(volatile_fp16.data(), volatile_fp16.size(), packed_options, packed_fp16),
                 "volatile fp16 loads were rejected")
-        || require(packed_fp16.source.find("as_half4(vload2(") == std::string::npos,
+        || require(packed_fp16.source.find("as_half4(*((__global const momo_alias_uint2 *)&(") == std::string::npos,
                    "volatile fp16 load used the packed path"))
         return 1;
 
