@@ -61,4 +61,24 @@ void main()
     int signed_min = int(input_data.values[4]);
     output_data.values[15] = uint(dotPacked4x8AccSatEXT(
         signed_min, unsigned_b, signed_min));
+
+    // Exercise three-limb carries and cancellation in 32-bit vector products.
+    int signed_max = int(input_data.values[5]);
+    uint unsigned_max = input_data.values[8];
+    output_data.values[16] = uint(dotAccSatEXT(
+        ivec3(signed_min), ivec3(signed_min), 0));
+    output_data.values[17] = dotAccSatEXT(
+        uvec3(unsigned_max), uvec3(unsigned_max), 0u);
+    output_data.values[18] = uint(dotAccSatEXT(
+        ivec3(signed_min, signed_max, 1), uvec3(unsigned_max), 321));
+    output_data.values[19] = uint(dotAccSatEXT(
+        ivec4(signed_min, signed_min, signed_max, signed_max),
+        ivec4(signed_min, signed_max, signed_min, signed_max), -2));
+    output_data.values[20] = dotAccSatEXT(
+        uvec4(unsigned_max), uvec4(unsigned_max), 0u);
+    output_data.values[21] = uint(dotAccSatEXT(
+        ivec4(signed_min), uvec4(unsigned_max), 0));
+    output_data.values[22] = uint(dotAccSatEXT(
+        ivec4(signed_min), ivec4(signed_min), 0));
+    output_data.values[23] = dotEXT(uvec4(unsigned_max), uvec4(unsigned_max));
 }

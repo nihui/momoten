@@ -430,10 +430,10 @@ static int check_profile(const char* name, const char* vendor, const char* drive
     return 0;
 }
 
-static int check_copy_policy(const char* vendor, const char* driver, bool use_kernel)
+static int check_copy_policy(const char* vendor, const char* driver, bool use_kernel, bool copy_completion = false)
 {
     const momoten_detail::OpenCLDriverPolicy policy = momoten_detail::opencl_driver_policy(vendor, driver);
-    if (policy.use_buffer_copy_kernel != use_kernel || policy.split_packed_dot_acc_sat || policy.swap_mixed_dot_acc_sat)
+    if (policy.use_buffer_copy_kernel != use_kernel || policy.use_copy_completion_event != copy_completion || policy.split_packed_dot_acc_sat || policy.swap_mixed_dot_acc_sat)
     {
         fprintf(stderr, "driver_policy_test: incorrect copy policy for %s / %s\n", vendor, driver);
         return 1;
@@ -465,9 +465,17 @@ int main()
     const char* samsung_driver = "OpenCL 3.0 QUALCOMM build: 0800.64.7 Compiler E031.47.18.50";
     const char* honor_driver = "OpenCL 3.0 QUALCOMM build: 0800.74 Compiler E031.47.18.51";
     const char* mixed_driver = "OpenCL 3.0 QUALCOMM build: 0676.73 Compiler E031.41.03.62";
+    const char* adreno825_driver = "OpenCL 3.0 QUALCOMM build: 0800.48 Compiler E031.47.18.36";
+    const char* adreno750_driver = "OpenCL 3.0 QUALCOMM build: 0762.41 Compiler E031.45.02.26";
+    const char* oppo_driver = "OpenCL 3.0 QUALCOMM build: commit unknown Compiler E031.41.03.57";
     language_version = "OpenCL C 3.0";
     expected_build_options = "-cl-std=CL3.0";
     if (check_profile("CL3.0 integer dot uses the selected language", "QUALCOMM", honor_driver, true, true))
+        return 1;
+    if (check_profile("Adreno 825 CL3.0 packed saturation", "QUALCOMM", adreno825_driver, true, true)
+        || check_profile("Adreno 750 CL3.0 packed saturation", "QUALCOMM", adreno750_driver, true, true))
+        return 1;
+    if (check_profile("OPPO Adreno 740 CL3.0 mixed saturation", "QUALCOMM", oppo_driver, true, false, true))
         return 1;
     language_version = "OpenCL C 2.0";
     expected_build_options = "-cl-std=CL2.0";
@@ -494,6 +502,21 @@ int main()
            || check_profile("Honor other vendor", "another vendor", honor_driver, true, false)
            || check_profile("Honor same compiler other release", "QUALCOMM", "OpenCL 3.0 QUALCOMM build: 0800.75 Compiler E031.47.18.51", true, true)
            || check_profile("Honor compiler version prefix", "QUALCOMM", "OpenCL 3.0 QUALCOMM build: 0800.74 Compiler E031.47.18.510", true, false)
+           || check_profile("Adreno 825 packed-only", "QUALCOMM", adreno825_driver, false, true)
+           || check_profile("Adreno 825 other vendor", "another vendor", adreno825_driver, true, false)
+           || check_profile("Adreno 825 compiler followed by metadata", "QUALCOMM", "OpenCL 3.0 QUALCOMM build: unknown Compiler E031.47.18.36 extra", true, true)
+           || check_profile("Adreno 825 compiler version prefix", "QUALCOMM", "OpenCL 3.0 QUALCOMM build: unknown Compiler E031.47.18.360", true, false)
+           || check_profile("Adreno 825 compiler version suffix", "QUALCOMM", "OpenCL 3.0 QUALCOMM build: unknown Compiler E031.47.18.36-custom", true, false)
+           || check_profile("Adreno 750 packed-only", "QUALCOMM", adreno750_driver, false, true)
+           || check_profile("Adreno 750 other vendor", "another vendor", adreno750_driver, true, false)
+           || check_profile("Adreno 750 compiler followed by metadata", "QUALCOMM", "OpenCL 3.0 QUALCOMM build: unknown Compiler E031.45.02.26 extra", true, true)
+           || check_profile("Adreno 750 compiler version prefix", "QUALCOMM", "OpenCL 3.0 QUALCOMM build: unknown Compiler E031.45.02.260", true, false)
+           || check_profile("Adreno 750 compiler version suffix", "QUALCOMM", "OpenCL 3.0 QUALCOMM build: unknown Compiler E031.45.02.26-custom", true, false)
+           || check_profile("OPPO Adreno 740 packed-only", "QUALCOMM", oppo_driver, false, false, true)
+           || check_profile("OPPO other vendor", "another vendor", oppo_driver, true, false)
+           || check_profile("OPPO compiler followed by metadata", "QUALCOMM", "OpenCL 3.0 QUALCOMM build: commit unknown Compiler E031.41.03.57 extra", true, false, true)
+           || check_profile("OPPO compiler version prefix", "QUALCOMM", "OpenCL 3.0 QUALCOMM build: commit unknown Compiler E031.41.03.570", true, false)
+           || check_profile("OPPO compiler version suffix", "QUALCOMM", "OpenCL 3.0 QUALCOMM build: commit unknown Compiler E031.41.03.57-custom", true, false)
            || check_profile("mixed saturation driver", "QUALCOMM", mixed_driver, true, false, true)
            || check_profile("mixed saturation packed-only", "QUALCOMM", mixed_driver, false, false, true)
            || check_profile("mixed saturation other vendor", "another vendor", mixed_driver, true, false)
@@ -508,6 +531,10 @@ int main()
            || check_copy_policy("Imagination Technologies", "1.10@5130912", true)
            || check_copy_policy("Imagination Technologies", "1.11@5425693", true)
            || check_copy_policy("Imagination Technologies", "1.11@5425694", false)
+           || check_copy_policy("Imagination Technologies", "1.13@5776728", false, true)
+           || check_copy_policy("Imagination Technologies", "1.13@5776729", false)
+           || check_copy_policy("Imagination Technologies", "1.13@5776728-custom", false)
+           || check_copy_policy("another vendor", "1.13@5776728", false)
            || check_copy_policy("another vendor", "1.11@5425693", false)
            || check_copy_policy("", "", false);
 }

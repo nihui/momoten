@@ -21,16 +21,20 @@ OpenCLDriverPolicy opencl_driver_policy(const std::string& vendor, const std::st
         }
         // Select lowering before compiling the capability probe: a compiler
         // crash in negDp2accFolding cannot be recovered as a build error.
-        policy.split_packed_dot_acc_sat = compiler == "E031.47.18.50" || compiler == "E031.47.18.51";
-        // This compiler accepts unsigned x signed native saturation, including
+        policy.split_packed_dot_acc_sat = compiler == "E031.45.02.26" || compiler == "E031.47.18.36"
+                                          || compiler == "E031.47.18.50" || compiler == "E031.47.18.51";
+        // These compilers accept unsigned x signed native saturation, including
         // when the accumulator aliases the original signed input.
-        policy.swap_mixed_dot_acc_sat = compiler == "E031.41.03.62";
+        policy.swap_mixed_dot_acc_sat = compiler == "E031.41.03.57" || compiler == "E031.41.03.62";
     }
     else if (vendor == "Imagination Technologies")
     {
         // Copy events remain running after clFlush until a blocking wait.
         // A kernel copy allows submissions and fences to progress asynchronously.
         policy.use_buffer_copy_kernel = driver == "1.10@5130912" || driver == "1.11@5425693";
+        // Marker events stay submitted after clFlush on this revision, while
+        // native copy events complete asynchronously in queue order.
+        policy.use_copy_completion_event = driver == "1.13@5776728";
     }
     return policy;
 }
