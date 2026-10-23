@@ -235,7 +235,8 @@ void impl_get_physical_device_properties2(
         if (extension->sType == VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DRIVER_PROPERTIES)
         {
             VkPhysicalDeviceDriverProperties* driver = reinterpret_cast<VkPhysicalDeviceDriverProperties*>(extension);
-            driver->driverID = static_cast<VkDriverId>(0);
+            // VK_DRIVER_ID_MOMOTEN in Vulkan 1.4.366; keep compatibility with older headers.
+            driver->driverID = static_cast<VkDriverId>(34);
             strncpy(driver->driverName, "momoten",
                     VK_MAX_DRIVER_NAME_SIZE - 1);
             driver->driverName[VK_MAX_DRIVER_NAME_SIZE - 1] = '\0';
