@@ -68,6 +68,11 @@ int main()
     properties2.pNext = &driver;
     memset(driver.driverInfo, '!', sizeof(driver.driverInfo));
     momoten_detail::impl_get_physical_device_properties2(&physical, &properties2);
+    if (driver.driverID != static_cast<VkDriverId>(34))
+    {
+        fprintf(stderr, "driver_version_test: driverID does not report VK_DRIVER_ID_MOMOTEN (34)\n");
+        return 1;
+    }
     if (properties2.properties.driverVersion != expected_version
         || properties2.properties.driverVersion != properties.driverVersion
         || strcmp(properties2.properties.deviceName, properties.deviceName) != 0)
