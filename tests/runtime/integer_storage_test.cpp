@@ -20,6 +20,7 @@ enum TestMode
     Int8VectorStorage,
     Int16Arithmetic,
     Int16Conversion,
+    StructAtomic,
     Storage16,
     InvalidMode
 };
@@ -277,6 +278,34 @@ static void make_integer_conversion_data(std::vector<unsigned char>& input, std:
     memcpy(expected.data(), words.data(), expected.size());
 }
 
+static void make_struct_atomic_data(std::vector<unsigned char>& input, std::vector<unsigned char>& expected)
+{
+    std::vector<uint32_t> words(65536 * 8, 0xa5a5a5a5u);
+    for (uint32_t i = 0; i < 65536; i++)
+    {
+        words[i * 8] = i * 40503u + 13u;
+        words[i * 8 + 1] = uint32_t(int(i) - 32768);
+    }
+    input.resize(words.size() * sizeof(uint32_t));
+    memcpy(input.data(), words.data(), input.size());
+    for (uint32_t i = 0; i < 65535; i++)
+    {
+        uint32_t* item = words.data() + i * 8;
+        const uint32_t neighbor = (i & ~63u) | ((i + 1u) & 63u);
+        const uint32_t before = item[0];
+        item[0] ^= 0x80000000u | neighbor;
+        item[4] = item[1];
+        item[1] = uint32_t(int(neighbor) - 131072);
+        item[2] = before;
+        item[3] = item[0];
+        item[5] = item[1];
+        item[6] = before;
+        item[7] = item[0];
+    }
+    expected.resize(input.size());
+    memcpy(expected.data(), words.data(), expected.size());
+}
+
 static void make_data(TestMode mode, std::vector<unsigned char>& input, std::vector<unsigned char>& expected)
 {
     switch (mode)
@@ -285,6 +314,7 @@ static void make_data(TestMode mode, std::vector<unsigned char>& input, std::vec
     case Int8VectorStorage: make_int8_data(input, expected, true); break;
     case Int16Arithmetic: make_int16_data(input, expected); break;
     case Int16Conversion: make_integer_conversion_data(input, expected); break;
+    case StructAtomic: make_struct_atomic_data(input, expected); break;
     case Storage16: make_storage16_data(input, expected); break;
     default: break;
     }
@@ -528,11 +558,13 @@ int main(int argc, char** argv)
     if (argc != 2 && argc != 3)
         return 1;
     const char* name = argv[argc - 1];
+    const bool aliased_int8 = strcmp(name, "int8-aliased") == 0 || strcmp(name, "int8-vector-aliased") == 0;
     TestMode mode = InvalidMode;
-    if (strcmp(name, "int8") == 0) mode = Int8Storage;
-    if (strcmp(name, "int8-vector") == 0) mode = Int8VectorStorage;
+    if (strcmp(name, "int8") == 0 || strcmp(name, "int8-aliased") == 0) mode = Int8Storage;
+    if (strcmp(name, "int8-vector") == 0 || strcmp(name, "int8-vector-aliased") == 0) mode = Int8VectorStorage;
     if (strcmp(name, "int16") == 0) mode = Int16Arithmetic;
     if (strcmp(name, "int16-conversion") == 0) mode = Int16Conversion;
+    if (strcmp(name, "struct-atomic") == 0) mode = StructAtomic;
     if (strcmp(name, "storage16") == 0) mode = Storage16;
     if (mode == InvalidMode)
         return 1;
@@ -544,7 +576,10 @@ int main(int argc, char** argv)
     }
     else if (argc != 3 || !read_spirv(argv[1], words))
         return 1;
+    if (aliased_int8 && !decorate_aliased_buffers(words, 1))
+        return 1;
     const bool integer_arithmetic = mode == Int16Arithmetic || mode == Int16Conversion;
+    const bool byte_storage = mode == Int8Storage || mode == Int8VectorStorage;
     if (std::getenv("MOMOTEN_TEST_FP16_RTZ") && !set_fp16_rounding(words, spv::FPRoundingModeRTZ))
         return 1;
     VkApplicationInfo application = {};
@@ -582,7 +617,7 @@ int main(int argc, char** argv)
     vkGetPhysicalDeviceFeatures2(physical, &available);
     if (std::getenv("MOMOTEN_TEST_NO_NATIVE_FP16") && arithmetic.shaderFloat16)
         return fail("fp16 arithmetic was not disabled", VK_ERROR_FEATURE_NOT_PRESENT);
-    if ((integer_arithmetic && !available.features.shaderInt16) || (!integer_arithmetic && mode != Storage16 && !storage.storageBuffer8BitAccess)
+    if ((integer_arithmetic && !available.features.shaderInt16) || (byte_storage && !storage.storageBuffer8BitAccess)
         || (mode == Storage16 && (!storage16.storageBuffer16BitAccess || !storage16.uniformAndStorageBuffer16BitAccess || !storage16.storagePushConstant16)))
     {
         vkDestroyInstance(instance, 0);
@@ -606,6 +641,10 @@ int main(int argc, char** argv)
                  {"missing push constant feature", false, false, true, true, false, false},
                  {"all storage16 features", false, false, true, true, true, true},
                  {"storage8 permits storage16 buffers", false, true, false, true, true, true}};
+    }
+    else if (mode == StructAtomic)
+    {
+        cases.push_back({"global compare-exchange", false, false, false, false, false, true});
     }
     else
     {
@@ -642,7 +681,7 @@ int main(int argc, char** argv)
         device_info.pEnabledFeatures = &requested;
         device_info.enabledExtensionCount = static_cast<uint32_t>(extensions.size());
         device_info.ppEnabledExtensionNames = extensions.data();
-        if (!integer_arithmetic)
+        if (!integer_arithmetic && mode != StructAtomic)
             device_info.pNext = mode == Storage16 ? static_cast<void*>(&storage16) : static_cast<void*>(&storage);
         VkDevice device = VK_NULL_HANDLE;
         result = vkCreateDevice(physical, &device_info, 0, &device);

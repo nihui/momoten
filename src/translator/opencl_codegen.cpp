@@ -961,7 +961,19 @@ void CompilerOpenCL::emit_instruction(const Instruction& instruction)
         const char* function_name = result_type.basetype == SPIRType::Int
                                         ? "momo_atomic_cmpxchg_int"
                                         : "momo_atomic_cmpxchg_uint";
-        emit_atomic_func_op(ops[0], ops[1], ops[2], ops[7], ops[6], function_name);
+        const SPIRVariable* backing = maybe_get_backing_variable(ops[2]);
+        if (backing && uses_byte_addressing(backing->self))
+        {
+            require_statement_continue();
+            flush_variable_declaration(ops[2]);
+            to_expression(ops[2], true);
+            const std::string object = "*((volatile __global " + type_to_glsl(result_type) + " *)(" + byte_address(ops[2]) + "))";
+            forced_temporaries.insert(ops[1]);
+            emit_op(ops[0], ops[1], std::string(function_name) + "(" + object + ", " + to_unpacked_expression(ops[7]) + ", " + to_unpacked_expression(ops[6]) + ")", false);
+            flush_all_atomic_capable_variables();
+        }
+        else
+            emit_atomic_func_op(ops[0], ops[1], ops[2], ops[7], ops[6], function_name);
         return;
     }
 

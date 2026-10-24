@@ -34,23 +34,87 @@ static int check_integer_conversions(const char* output = 0)
     return 0;
 }
 
+static int check_aliased_storage(const char* input, const char* output = 0)
+{
+    std::vector<uint32_t> words;
+    spvtools::SpirvTools tools(SPV_ENV_VULKAN_1_1);
+    if (!read_spirv(input, words) || !decorate_aliased_buffers(words, 1) || !tools.Validate(words))
+        return 1;
+    for (uint32_t bits : {32u, 64u})
+    {
+        momoten::TranslationOptions options;
+        options.address_bits = bits;
+        options.byte_addressable_store = true;
+        options.native_buffer_vector_loads = options.native_buffer_vector_stores = true;
+        momoten::TranslationResult translated;
+        if (!momoten::translate_spirv_to_opencl_c(words.data(), words.size(), options, translated) || !translated.abi.storage_buffer8)
+        {
+            fprintf(stderr, "integer_storage_test: aliased storage failed: %s\n", translated.diagnostics.c_str());
+            return 1;
+        }
+        if (output && bits == 64)
+        {
+            std::ofstream stream(output);
+            if (!(stream << translated.source))
+                return 1;
+        }
+    }
+    return 0;
+}
+
+static int check_struct_atomics(const char* input, const char* output = 0)
+{
+    std::vector<uint32_t> original;
+    if (!read_spirv(input, original))
+        return 1;
+    for (bool aliased : {false, true})
+    {
+        std::vector<uint32_t> words = original;
+        spvtools::SpirvTools tools(SPV_ENV_VULKAN_1_1);
+        if ((aliased && !decorate_aliased_buffers(words, 1)) || !tools.Validate(words))
+            return 1;
+        for (uint32_t bits : {32u, 64u})
+        {
+            momoten::TranslationOptions options;
+            options.address_bits = bits;
+            momoten::TranslationResult translated;
+            if (!momoten::translate_spirv_to_opencl_c(words.data(), words.size(), options, translated))
+            {
+                fprintf(stderr, "integer_storage_test: struct atomic failed: %s\n", translated.diagnostics.c_str());
+                return 1;
+            }
+            if (output && bits == 64 && !aliased)
+            {
+                std::ofstream stream(output);
+                if (!(stream << translated.source))
+                    return 1;
+            }
+        }
+    }
+    return 0;
+}
+
 int main(int argc, char** argv)
 {
     if (argc == 3 && strcmp(argv[1], "--conversion-output") == 0)
         return check_integer_conversions(argv[2]);
-    if (argc != 8)
+    if (argc == 4 && strcmp(argv[1], "--aliased-output") == 0)
+        return check_aliased_storage(argv[2], argv[3]);
+    if (argc == 4 && strcmp(argv[1], "--atomic-output") == 0)
+        return check_struct_atomics(argv[2], argv[3]);
+    if (argc != 9)
         return 1;
-    for (int i = 6; i < argc; i++)
+    for (const char* path : {argv[6], argv[7]})
     {
         std::vector<uint32_t> words;
-        if (!read_spirv(argv[i], words))
+        if (!read_spirv(path, words))
             return 1;
         momoten::TranslationOptions options;
         momoten::TranslationResult translated;
         if (momoten::translate_spirv_to_opencl_c(words.data(), words.size(), options, translated)
             || translated.diagnostics.find("requires OpenCL byte-addressable stores") == std::string::npos)
         {
-            fprintf(stderr, "integer_storage_test: narrow arrays accepted without byte-addressable stores: %s\n", argv[i]);
+            fprintf(stderr, "integer_storage_test: narrow arrays accepted without byte-addressable stores: %s\n", path);
             return 1;
         }
         options.byte_addressable_store = true;
@@ -131,5 +195,5 @@ int main(int argc, char** argv)
         fprintf(stderr, "integer_storage_test: fp16 arithmetic accepted without native fp16\n");
         return 1;
     }
-    return check_integer_conversions();
+    return check_integer_conversions() || check_aliased_storage(argv[1]) || check_aliased_storage(argv[2]) || check_struct_atomics(argv[8]);
 }

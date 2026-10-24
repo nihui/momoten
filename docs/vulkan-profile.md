@@ -44,7 +44,7 @@ The translator accepts Vulkan GLCompute SPIR-V and emits conservative OpenCL C
 - optional BASIC emulation using either the width returned by the standard `cl_khr_subgroups` kernel query or a logical power-of-two width derived from `CL_KERNEL_PREFERRED_WORK_GROUP_SIZE_MULTIPLE`; the latter is explicitly an emulation choice rather than a native subgroup contract;
 - optional native subgroup BASIC lowering when `cl_khr_subgroups`, `cl_khr_subgroup_non_uniform_vote` and the kernel subgroup query are all available and the probed subgroup width satisfies the Vulkan contract;
 - the float32/float16 matrix subset currently used by ncnn Vulkan shaders;
-- optional global 32-bit compare-exchange with
+- optional global 32-bit compare-exchange, including struct-array members, with
   `cl_khr_global_int32_base_atomics`;
 - optional `VK_KHR_shader_integer_dot_product` through
   `cl_khr_integer_dot_product`, ARM INT8 dot-product extensions or

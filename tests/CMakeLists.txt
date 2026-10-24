@@ -381,6 +381,7 @@ momoten_compile_test_shader(momoten_int8_vector_storage_test_spv int8_vector_sto
 momoten_compile_test_shader(momoten_int16_arithmetic_test_spv int16_arithmetic.comp vulkan1.1)
 momoten_compile_test_shader(momoten_int16_workgroup_storage_test_spv int16_workgroup_storage.comp vulkan1.1)
 momoten_compile_test_shader(momoten_int16_private_storage_test_spv int16_private_storage.comp vulkan1.1)
+momoten_compile_test_shader(momoten_buffer_struct_atomic_test_spv buffer_struct_atomic.comp vulkan1.1)
 momoten_compile_test_shader(momoten_storage16_test_spv storage16.comp vulkan1.1)
 momoten_compile_test_shader(momoten_scalar_16bit_test_spv scalar_16bit_buffer.comp vulkan1.1)
 momoten_compile_test_shader(momoten_subgroup_basic_test_spv subgroup_basic.comp vulkan1.1)
@@ -413,7 +414,7 @@ function(momoten_add_integer_storage_translator_test target translator test_name
     add_dependencies(${target} momoten-test-spv)
     add_test(NAME ${test_name} COMMAND ${target}
         "${momoten_int8_storage_test_spv}" "${momoten_int8_vector_storage_test_spv}" "${momoten_int16_arithmetic_test_spv}" "${momoten_storage16_test_spv}" "${momoten_fp16_basic_test_spv}"
-        "${momoten_int16_workgroup_storage_test_spv}" "${momoten_int16_private_storage_test_spv}")
+        "${momoten_int16_workgroup_storage_test_spv}" "${momoten_int16_private_storage_test_spv}" "${momoten_buffer_struct_atomic_test_spv}")
     set_tests_properties(${test_name} PROPERTIES LABELS "momoten;translator;integer-storage")
 endfunction()
 
@@ -550,7 +551,8 @@ if(MOMOTEN_CLANG)
             -DINT8_VECTOR_STORAGE_SPV_FILE=${momoten_int8_vector_storage_test_spv}
             -DINT16_ARITHMETIC_SPV_FILE=${momoten_int16_arithmetic_test_spv}
             -DSTORAGE16_SPV_FILE=${momoten_storage16_test_spv}
-            -DCONVERSION_TRANSLATOR=$<TARGET_FILE:momoten_integer_storage_translator_test>
+            -DSTRUCT_ATOMIC_SPV_FILE=${momoten_buffer_struct_atomic_test_spv}
+            -DINTEGER_STORAGE_TRANSLATOR=$<TARGET_FILE:momoten_integer_storage_translator_test>
             -DOUTPUT_DIR=${CMAKE_CURRENT_BINARY_DIR}/strict-cl10
             -P "${CMAKE_CURRENT_SOURCE_DIR}/translator/strict_cl10_test.cmake")
     set_tests_properties(momoten_opencl_c_1_0_syntax PROPERTIES
@@ -586,7 +588,8 @@ if(MOMOTEN_CLANG)
             -DINT8_VECTOR_STORAGE_SPV_FILE=${momoten_int8_vector_storage_test_spv}
             -DINT16_ARITHMETIC_SPV_FILE=${momoten_int16_arithmetic_test_spv}
             -DSTORAGE16_SPV_FILE=${momoten_storage16_test_spv}
-            -DCONVERSION_TRANSLATOR=$<TARGET_FILE:momoten_integer_storage_translator_test>
+            -DSTRUCT_ATOMIC_SPV_FILE=${momoten_buffer_struct_atomic_test_spv}
+            -DINTEGER_STORAGE_TRANSLATOR=$<TARGET_FILE:momoten_integer_storage_translator_test>
             -DAPPLE_TYPE_ALIASES=ON
             -DOUTPUT_DIR=${CMAKE_CURRENT_BINARY_DIR}/apple-type-aliases
             -P "${CMAKE_CURRENT_SOURCE_DIR}/translator/strict_cl10_test.cmake")
@@ -750,14 +753,18 @@ function(momoten_add_integer_storage_test target driver prefix)
     add_dependencies(${target} momoten-test-spv)
     add_test(NAME ${prefix}_int8_storage COMMAND ${target} "${momoten_int8_storage_test_spv}" int8)
     add_test(NAME ${prefix}_int8_vector_storage COMMAND ${target} "${momoten_int8_vector_storage_test_spv}" int8-vector)
+    add_test(NAME ${prefix}_int8_storage_aliased COMMAND ${target} "${momoten_int8_storage_test_spv}" int8-aliased)
+    add_test(NAME ${prefix}_int8_vector_storage_aliased COMMAND ${target} "${momoten_int8_vector_storage_test_spv}" int8-vector-aliased)
+    add_test(NAME ${prefix}_struct_atomic COMMAND ${target} "${momoten_buffer_struct_atomic_test_spv}" struct-atomic)
     add_test(NAME ${prefix}_int16_arithmetic COMMAND ${target} "${momoten_int16_arithmetic_test_spv}" int16)
     add_test(NAME ${prefix}_int16_conversion COMMAND ${target} int16-conversion)
     add_test(NAME ${prefix}_storage16 COMMAND ${target} "${momoten_storage16_test_spv}" storage16)
     add_test(NAME ${prefix}_storage16_rtz
         COMMAND "${CMAKE_COMMAND}" -E env "MOMOTEN_TEST_FP16_RTZ=1" $<TARGET_FILE:${target}> "${momoten_storage16_test_spv}" storage16)
-    set_tests_properties(${prefix}_int8_storage ${prefix}_int8_vector_storage ${prefix}_int16_arithmetic ${prefix}_int16_conversion ${prefix}_storage16 ${prefix}_storage16_rtz PROPERTIES
+    set_tests_properties(${prefix}_int8_storage ${prefix}_int8_vector_storage ${prefix}_int8_storage_aliased ${prefix}_int8_vector_storage_aliased
+        ${prefix}_struct_atomic ${prefix}_int16_arithmetic ${prefix}_int16_conversion ${prefix}_storage16 ${prefix}_storage16_rtz PROPERTIES
         LABELS "momoten;runtime;integer-storage" SKIP_RETURN_CODE 77)
-    set_property(TEST ${prefix}_int16_arithmetic APPEND PROPERTY LABELS "requires-opencl-multilane-barrier")
+    set_property(TEST ${prefix}_int16_arithmetic ${prefix}_struct_atomic APPEND PROPERTY LABELS "requires-opencl-multilane-barrier")
     if(TARGET momoten_no_fp16_opencl)
         add_test(NAME ${prefix}_storage16_emulated
             COMMAND "${CMAKE_COMMAND}" -E env "MOMOTEN_OPENCL_DRIVER=$<TARGET_FILE:momoten_no_fp16_opencl>" "MOMOTEN_TEST_NO_NATIVE_FP16=1"

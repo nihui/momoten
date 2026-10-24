@@ -82,6 +82,11 @@ std::string CompilerOpenCL::byte_address(uint32_t pointer, uint32_t* matrix_stri
 std::string CompilerOpenCL::byte_addressed_load(const SPIRType& type, const std::string& address, uint32_t offset, const std::string& qualifiers)
 {
     const uint32_t bytes = type.width / 8;
+    if (bytes == 1)
+    {
+        const std::string value = "((" + qualifiers + " const uchar *)(" + address + "))[" + std::to_string(offset) + "]";
+        return type.basetype == SPIRType::SByte ? "as_char(" + value + ")" : value;
+    }
     std::string expression = "as_" + type_to_glsl(type) + "((uchar" + std::to_string(bytes) + ")(";
     for (uint32_t i = 0; i < bytes; i++)
     {
@@ -95,11 +100,12 @@ std::string CompilerOpenCL::byte_addressed_load(const SPIRType& type, const std:
 void CompilerOpenCL::emit_byte_addressed_store(const SPIRType& type, const std::string& address, uint32_t offset,
                                                const std::string& value, const std::string& temporary, const std::string& qualifiers)
 {
-    const uint32_t unit_bytes = type.width == 16 ? 1 : 4;
+    const uint32_t unit_bytes = type.width <= 16 ? 1 : 4;
     const uint32_t count = type.width / 8 / unit_bytes;
     const std::string unit_type = unit_bytes == 1 ? "uchar" : "uint";
     const std::string packed_type = unit_type + (count == 1 ? "" : std::to_string(count));
-    statement(packed_type, " ", temporary, " = as_", packed_type, "(", value, ");");
+    const std::string expression = packed_type == type_to_glsl(type) ? value : "as_" + packed_type + "(" + value + ")";
+    statement(packed_type, " ", temporary, " = ", expression, ";");
     for (uint32_t i = 0; i < count; i++)
         statement("((", qualifiers, " ", unit_type, " *)(", address, " + ", offset, "u))[", i, "] = ", temporary,
                   count == 1 ? "" : ".s" + std::to_string(i), ";");
@@ -118,11 +124,11 @@ bool CompilerOpenCL::emit_byte_addressed_access(const Instruction& instruction, 
     const SPIRType& type = load ? get<SPIRType>(ops[0]) : expression_type(ops[1]);
     if (!type.array.empty())
         throw std::runtime_error("byte-addressed buffer array accesses are not supported");
-    if (type.pointer || (type.width != 16 && type.width != 32 && type.width != 64) || type.vecsize > 4)
+    if (type.pointer || (type.width != 8 && type.width != 16 && type.width != 32 && type.width != 64) || type.vecsize > 4)
         throw std::runtime_error("byte-addressed buffer access has an unsupported value type");
 
-    if (!load && type.width == 16 && !translation_options.byte_addressable_store)
-        throw std::runtime_error("16-bit byte-addressed stores require OpenCL C 1.1 or cl_khr_byte_addressable_store");
+    if (!load && type.width < 32 && !translation_options.byte_addressable_store)
+        throw std::runtime_error("narrow byte-addressed stores require OpenCL C 1.1 or cl_khr_byte_addressable_store");
 
     require_statement_continue();
     flush_variable_declaration(pointer);

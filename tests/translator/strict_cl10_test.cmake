@@ -21,17 +21,7 @@ if(APPLE_TYPE_ALIASES)
     list(APPEND compile_options -Werror=macro-redefined)
 endif()
 
-function(check_opencl_c_1_0 name input)
-    set(source "${OUTPUT_DIR}/${name}.cl")
-    execute_process(
-        COMMAND "${TRANSLATOR}" ${ARGN} "${input}"
-        RESULT_VARIABLE translate_result
-        OUTPUT_FILE "${source}"
-        ERROR_VARIABLE translate_log)
-    if(NOT translate_result EQUAL 0)
-        message(FATAL_ERROR "${name} translation failed: ${translate_log}")
-    endif()
-
+function(check_opencl_source name source)
     if(APPLE_TYPE_ALIASES)
         # Cover every emitted vector width using native OpenCL constructors,
         # including scalar splats and mixed
@@ -67,9 +57,32 @@ function(check_opencl_c_1_0 name input)
         ERROR_VARIABLE compile_stderr)
     if(NOT compile_result EQUAL 0)
         message(FATAL_ERROR
-            "${name} is not valid OpenCL C 1.0:\n${compile_stdout}${compile_stderr}\n"
-            "translator log:\n${translate_log}")
+            "${name} is not valid OpenCL C 1.0:\n${compile_stdout}${compile_stderr}")
     endif()
+endfunction()
+
+function(check_opencl_c_1_0 name input)
+    set(source "${OUTPUT_DIR}/${name}.cl")
+    execute_process(
+        COMMAND "${TRANSLATOR}" ${ARGN} "${input}"
+        RESULT_VARIABLE translate_result
+        OUTPUT_FILE "${source}"
+        ERROR_VARIABLE translate_log)
+    if(NOT translate_result EQUAL 0)
+        message(FATAL_ERROR "${name} translation failed: ${translate_log}")
+    endif()
+
+    check_opencl_source("${name}" "${source}")
+endfunction()
+
+function(check_integer_fixture name input mode)
+    set(source "${OUTPUT_DIR}/${name}.cl")
+    execute_process(COMMAND "${INTEGER_STORAGE_TRANSLATOR}" ${mode} "${input}" "${source}"
+        RESULT_VARIABLE translate_result)
+    if(NOT translate_result EQUAL 0)
+        message(FATAL_ERROR "${name} translation failed")
+    endif()
+    check_opencl_source("${name}" "${source}")
 endfunction()
 
 check_opencl_c_1_0(simple_buffer "${SPV_FILE}")
@@ -97,15 +110,13 @@ if(INT8_STORAGE_SPV_FILE)
     check_opencl_c_1_0(fp16_storage "${STORAGE16_SPV_FILE}" --byte-addressable-store)
     check_opencl_c_1_0(storage16_emulated "${STORAGE16_SPV_FILE}" --byte-addressable-store --no-native-fp16)
     set(conversion_source "${OUTPUT_DIR}/integer-conversion.cl")
-    execute_process(COMMAND "${CONVERSION_TRANSLATOR}" --conversion-output "${conversion_source}"
+    execute_process(COMMAND "${INTEGER_STORAGE_TRANSLATOR}" --conversion-output "${conversion_source}"
         RESULT_VARIABLE conversion_result)
     if(NOT conversion_result EQUAL 0)
         message(FATAL_ERROR "integer conversion fixture translation failed")
     endif()
-    execute_process(COMMAND "${CLANG}" -target spir64 -x cl -cl-std=CL1.0 -fsyntax-only
-        ${compile_options} "${conversion_source}" RESULT_VARIABLE conversion_result
-        OUTPUT_VARIABLE conversion_stdout ERROR_VARIABLE conversion_stderr)
-    if(NOT conversion_result EQUAL 0)
-        message(FATAL_ERROR "integer conversion is not valid OpenCL C 1.0: ${conversion_stdout}${conversion_stderr}")
-    endif()
+    check_opencl_source(integer_conversion "${conversion_source}")
+    check_integer_fixture(int8_storage_aliased "${INT8_STORAGE_SPV_FILE}" --aliased-output)
+    check_integer_fixture(int8_vector_storage_aliased "${INT8_VECTOR_STORAGE_SPV_FILE}" --aliased-output)
+    check_integer_fixture(struct_atomic "${STRUCT_ATOMIC_SPV_FILE}" --atomic-output)
 endif()

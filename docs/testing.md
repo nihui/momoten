@@ -49,6 +49,13 @@ half-storage path through both modular and amalgamated drivers.
 
 The integer-storage fixtures exercise signed byte loads, scalar and vector byte stores, adjacent-byte writes and 16-bit scalar/vector arithmetic across all 65536 input bit patterns. The 16-bit fixture also exchanges vectors between invocations through a workgroup array and barrier. Runtime tests use nonzero buffer-binding and descriptor offsets and verify surrounding sentinel bytes. They first reject pipelines without the required device feature, then enable the feature and compare GPU output against integer references. Modular and amalgamated builds run the same fixtures; 8-bit storage tests leave `shaderInt8` disabled.
 
+Aliased variants repeat the signed scalar and unsigned vector byte-storage
+fixtures through byte-addressed loads and stores. The struct-array atomic
+fixture checks signed and unsigned compare-exchange, successful and failed
+comparisons, reads before and after the atomic operations, nonzero offsets and
+an inactive tail lane. Translation covers both address widths, and strict
+OpenCL C 1.0 syntax checks include the aliased byte and struct atomic paths.
+
 The integer-conversion fixture assembles and validates SPIR-V with input types
 whose signedness differs from the conversion opcode. Scalar and vector tests
 cover `OpUConvert`, `OpSConvert`, `OpConvertUToF` and `OpConvertSToF` across all
