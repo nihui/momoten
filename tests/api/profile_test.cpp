@@ -429,7 +429,6 @@ int main()
         vkDestroyDevice(fp64_device, 0);
     }
 
-    if (core_features.shaderInt16)
     {
         VkPhysicalDeviceFeatures requested_features = {};
         requested_features.shaderInt16 = VK_TRUE;
@@ -437,9 +436,10 @@ int main()
         int16_device_info.pEnabledFeatures = &requested_features;
         VkDevice int16_device = VK_NULL_HANDLE;
         result = vkCreateDevice(physical_device, &int16_device_info, 0, &int16_device);
-        if (check_result("vkCreateDevice(shaderInt16)", result))
+        if (expect_result("vkCreateDevice(shaderInt16)", result, core_features.shaderInt16 ? VK_SUCCESS : VK_ERROR_FEATURE_NOT_PRESENT))
             return 1;
-        vkDestroyDevice(int16_device, 0);
+        if (int16_device)
+            vkDestroyDevice(int16_device, 0);
     }
 
     if (int8_storage_supported)

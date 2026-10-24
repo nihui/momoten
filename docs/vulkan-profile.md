@@ -75,7 +75,7 @@ column-major mat4 members. Uniform buffers use the existing push-descriptor
 and descriptor-update-template paths; descriptor pools and dynamic uniform
 buffers remain outside this profile.
 
-The core `shaderInt16` feature uses the mandatory OpenCL C `short` and `ushort` types. Narrow arithmetic preserves the SPIR-V 16-bit result before subsequent conversions or bitcasts. This is functional support and does not claim hardware 16-bit arithmetic acceleration. Integer 16-bit storage shares the layouts of the floating-point 16-bit storage path.
+The core `shaderInt16` feature requires byte-addressable stores because shaders can write scalar `short` and `ushort` arrays in local and private memory. OpenCL C 1.0 devices without `cl_khr_byte_addressable_store` leave this feature disabled. The translator rejects these narrow arrays and struct members when byte-addressable stores are unavailable; register arithmetic and complete vector accesses remain supported. Narrow arithmetic preserves the SPIR-V 16-bit result before subsequent conversions or bitcasts. This is functional support and does not claim hardware 16-bit arithmetic acceleration. Integer 16-bit storage shares the layouts of the floating-point 16-bit storage path.
 
 `VK_KHR_8bit_storage` reports only `storageBuffer8BitAccess`, backed by core byte-addressable stores on OpenCL 1.1 or newer, or `cl_khr_byte_addressable_store` on OpenCL 1.0. Uniform and push-constant 8-bit storage remain unsupported. The translator accepts SPIR-V `StorageBuffer8BitAccess` independently of `Int8`; `shaderInt8` remains disabled. Pipelines requiring either 8-bit storage or 16-bit integer arithmetic are rejected if the corresponding Vulkan device feature was not enabled.
 

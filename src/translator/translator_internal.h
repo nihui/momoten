@@ -142,6 +142,8 @@ private:
     static const char* function_pointer_address_space(StorageClass storage);
 
     void validate_capabilities();
+    void validate_variable_storage();
+    void validate_int16_storage_type(const SPIRType& type, bool member);
     void apply_specializations();
     void localize_workgroup_variables();
     void validate_barrier_instruction(Op opcode, const uint32_t* ops);

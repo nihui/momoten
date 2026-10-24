@@ -38,8 +38,28 @@ int main(int argc, char** argv)
 {
     if (argc == 3 && strcmp(argv[1], "--conversion-output") == 0)
         return check_integer_conversions(argv[2]);
-    if (argc != 6)
+    if (argc != 8)
         return 1;
+    for (int i = 6; i < argc; i++)
+    {
+        std::vector<uint32_t> words;
+        if (!read_spirv(argv[i], words))
+            return 1;
+        momoten::TranslationOptions options;
+        momoten::TranslationResult translated;
+        if (momoten::translate_spirv_to_opencl_c(words.data(), words.size(), options, translated)
+            || translated.diagnostics.find("requires OpenCL byte-addressable stores") == std::string::npos)
+        {
+            fprintf(stderr, "integer_storage_test: narrow arrays accepted without byte-addressable stores: %s\n", argv[i]);
+            return 1;
+        }
+        options.byte_addressable_store = true;
+        if (!momoten::translate_spirv_to_opencl_c(words.data(), words.size(), options, translated) || !translated.abi.int16)
+        {
+            fprintf(stderr, "integer_storage_test: narrow array translation failed: %s\n", translated.diagnostics.c_str());
+            return 1;
+        }
+    }
     struct Fixture
     {
         const char* path;
@@ -58,6 +78,11 @@ int main(int argc, char** argv)
         if (fixture.storage8 && momoten::translate_spirv_to_opencl_c(words.data(), words.size(), options, translated))
         {
             fprintf(stderr, "integer_storage_test: byte storage accepted without byte-addressable stores\n");
+            return 1;
+        }
+        if (fixture.int16 && !momoten::translate_spirv_to_opencl_c(words.data(), words.size(), options, translated))
+        {
+            fprintf(stderr, "integer_storage_test: int16 register/vector translation failed: %s\n", translated.diagnostics.c_str());
             return 1;
         }
         options.byte_addressable_store = true;

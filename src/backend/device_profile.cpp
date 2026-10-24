@@ -524,8 +524,8 @@ ShaderDeviceProfile probe_shader_device_profile(
     OpenCLCapabilityProbe probe(device, profile.compiler);
     profile.fp16 = extension_string_contains(extensions, "cl_khr_fp16");
     profile.packed_fp16_vector_loads = profile.fp16 && probe_packed_fp16_vector_loads(probe, device);
-    // short and ushort arithmetic are core OpenCL C functionality
-    profile.int16 = true;
+    // int16 shaders can write short and ushort arrays in local and private memory
+    profile.int16 = profile.byte_addressable_store;
     profile.int64 = declares_int64(device, extensions);
 
     cl_device_fp_config double_config = 0;

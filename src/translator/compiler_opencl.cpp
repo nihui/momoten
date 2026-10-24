@@ -83,6 +83,7 @@ void CompilerOpenCL::prepare(KernelABI& abi)
     set_entry_point(translation_options.entry_point, ExecutionModelGLCompute);
     validate_capabilities();
     apply_specializations();
+    validate_variable_storage();
     reflect_float_controls(abi);
     const SmallVector<Capability>& capabilities = get_declared_capabilities();
     abi.fp16 = std::find(capabilities.begin(), capabilities.end(), CapabilityFloat16) != capabilities.end();
@@ -224,6 +225,25 @@ void CompilerOpenCL::validate_capabilities()
 
     if (requires_integer_dot_product && !translation_options.integer_dot_product)
         throw std::runtime_error("SPIR-V integer dot product requires a probed cl_khr_integer_dot_product device profile");
+}
+
+void CompilerOpenCL::validate_int16_storage_type(const SPIRType& type, bool member)
+{
+    if ((type.basetype == SPIRType::Short || type.basetype == SPIRType::UShort)
+        && type.vecsize == 1 && (member || !type.array.empty()))
+        throw std::runtime_error("int16 array and struct-member storage requires OpenCL byte-addressable stores");
+    for (uint32_t member_type : type.member_types)
+        validate_int16_storage_type(get_type(member_type), true);
+}
+
+void CompilerOpenCL::validate_variable_storage()
+{
+    if (translation_options.byte_addressable_store)
+        return;
+    ir.for_each_typed_id<SPIRVariable>([&](uint32_t, const SPIRVariable& variable) {
+        if (variable.storage == StorageClassFunction || variable.storage == StorageClassPrivate || variable.storage == StorageClassWorkgroup)
+            validate_int16_storage_type(get_variable_data_type(variable), false);
+    });
 }
 
 void CompilerOpenCL::apply_specializations()

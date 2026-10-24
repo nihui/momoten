@@ -379,6 +379,8 @@ momoten_compile_test_shader(momoten_int16_test_spv int16_buffer.comp vulkan1.1)
 momoten_compile_test_shader(momoten_int8_storage_test_spv int8_storage.comp vulkan1.1)
 momoten_compile_test_shader(momoten_int8_vector_storage_test_spv int8_vector_storage.comp vulkan1.1)
 momoten_compile_test_shader(momoten_int16_arithmetic_test_spv int16_arithmetic.comp vulkan1.1)
+momoten_compile_test_shader(momoten_int16_workgroup_storage_test_spv int16_workgroup_storage.comp vulkan1.1)
+momoten_compile_test_shader(momoten_int16_private_storage_test_spv int16_private_storage.comp vulkan1.1)
 momoten_compile_test_shader(momoten_storage16_test_spv storage16.comp vulkan1.1)
 momoten_compile_test_shader(momoten_scalar_16bit_test_spv scalar_16bit_buffer.comp vulkan1.1)
 momoten_compile_test_shader(momoten_subgroup_basic_test_spv subgroup_basic.comp vulkan1.1)
@@ -410,7 +412,8 @@ function(momoten_add_integer_storage_translator_test target translator test_name
     target_link_libraries(${target} PRIVATE ${translator} momoten::headers spirv-cross-core SPIRV-Tools-static)
     add_dependencies(${target} momoten-test-spv)
     add_test(NAME ${test_name} COMMAND ${target}
-        "${momoten_int8_storage_test_spv}" "${momoten_int8_vector_storage_test_spv}" "${momoten_int16_arithmetic_test_spv}" "${momoten_storage16_test_spv}" "${momoten_fp16_basic_test_spv}")
+        "${momoten_int8_storage_test_spv}" "${momoten_int8_vector_storage_test_spv}" "${momoten_int16_arithmetic_test_spv}" "${momoten_storage16_test_spv}" "${momoten_fp16_basic_test_spv}"
+        "${momoten_int16_workgroup_storage_test_spv}" "${momoten_int16_private_storage_test_spv}")
     set_tests_properties(${test_name} PROPERTIES LABELS "momoten;translator;integer-storage")
 endfunction()
 

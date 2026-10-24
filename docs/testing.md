@@ -55,6 +55,11 @@ cover `OpUConvert`, `OpSConvert`, `OpConvertUToF` and `OpConvertSToF` across all
 65,536 input bit patterns. Strict OpenCL C 1.0 syntax tests include these
 conversions, byte storage, int16 arithmetic and native/software half storage.
 
+Device-profile tests check int16 availability on OpenCL C 1.0 with and without
+byte-addressable stores, and on newer OpenCL C versions. Scalar int16 workgroup
+and private array fixtures are rejected without byte-addressable stores and
+accepted when they are available; register-only conversions remain accepted.
+
 The vendor integer-dot tests translate packed and unpacked SPIR-V for all
 backends. The OpenCL execution test runs the ARM and QCOM lowerings against
 specification-based builtin emulation, covering every byte pair, asymmetric
