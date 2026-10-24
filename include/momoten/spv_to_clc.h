@@ -70,7 +70,10 @@ struct BufferArgument
     uint32_t buffer_arg_index;
     uint32_t offset_arg_index;
     BufferAccess access;
+    bool uniform;
     std::string name;
+
+    BufferArgument();
 };
 
 enum FloatingPointWidth
@@ -106,8 +109,15 @@ struct KernelABI
     std::vector<std::string> required_extensions;
     SubgroupMode subgroup_mode;
     uint32_t subgroup_size;
+    // arithmetic features are independent of native OpenCL storage types
+    bool fp16;
+    bool int16;
     bool int64;
     bool fp64;
+    bool storage_buffer8;
+    bool storage_buffer16;
+    bool uniform_buffer16;
+    bool push_constant16;
     bool integer_dot_product;
     bool float_controls2;
     FloatingPointControls floating_point;
@@ -116,8 +126,9 @@ struct KernelABI
     // physical OpenCL workgroups by the driver.
     bool workgroup_splittable;
     WorkgroupMode workgroup_mode;
-    // First of the consecutive 32-bit scalar arguments for push constants.
-    // Each tightly packed member occupies one argument; size is in bytes.
+    // first of the consecutive 32-bit scalar arguments for push constants
+    // packed scalar members use one argument each; other layouts use raw words
+    // push_constant_size is the byte size, rounded up to a whole word
     int push_constant_arg_index;
     size_t push_constant_size;
 
@@ -157,6 +168,8 @@ struct TranslationOptions
     // component mapping. Requires native vector loads and storage-buffer byte
     // offsets aligned to 4 bytes.
     bool packed_fp16_vector_loads;
+    // use ushort bit patterns for fp16 storage on devices without cl_khr_fp16
+    bool native_fp16;
     // OpenCL C 1.1 or cl_khr_byte_addressable_store. Needed for narrow
     // aliased stores; 32/64-bit stores remain valid without this feature.
     bool byte_addressable_store;

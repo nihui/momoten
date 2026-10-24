@@ -53,6 +53,7 @@ struct ShaderDeviceProfile
     bool byte_addressable_store;
     bool fp16;
     bool packed_fp16_vector_loads;
+    bool int16;
     bool int64;
     bool fp64;
     bool float_controls2;
@@ -69,8 +70,14 @@ struct ShaderDeviceProfile
 
 struct EnabledShaderProfile
 {
+    bool fp16;
+    bool int16;
     bool int64;
     bool fp64;
+    bool storage_buffer8;
+    bool storage_buffer16;
+    bool uniform_buffer16;
+    bool push_constant16;
     bool integer_dot_product;
     bool float_controls2;
 

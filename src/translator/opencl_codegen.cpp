@@ -62,13 +62,17 @@ void CompilerOpenCL::emit_entry_point_declarations()
     {
         const SPIRType& push_type = get_variable_data_type(get<SPIRVariable>(push_constant_variable_id));
         std::string values;
-        for (size_t i = 0; i < push_type.member_types.size(); i++)
+        const size_t count = raw_push_constants ? push_constant_bytes / 4 : push_type.member_types.size();
+        for (size_t i = 0; i < count; i++)
         {
             if (i != 0)
                 values += ", ";
             values += "momo_push_constant_" + std::to_string(i);
         }
-        statement(type_to_glsl(push_type), " momo_push_constants = {", values, "};");
+        if (raw_push_constants)
+            statement("const uint momo_push_constants[", count, "] = {", values, "};");
+        else
+            statement(type_to_glsl(push_type), " momo_push_constants = {", values, "};");
     }
     if (translation_options.workgroup_mode == WorkgroupModeVirtual)
     {
@@ -171,6 +175,8 @@ void CompilerOpenCL::emit_header()
     // with a value-copyable struct containing four float4 columns.
     statement("typedef struct { float4 c[4]; } momo_mat4;");
     statement("typedef char momo_mat4_size_must_be_64[(sizeof(momo_mat4) == 64) ? 1 : -1];");
+    if (!translation_options.native_fp16)
+        statement("typedef struct { ushort4 c[4]; } momo_hmat4;");
     if (requires_fp16)
     {
         // A Vulkan f16mat4 is four tightly packed half4 columns (32 bytes).
@@ -238,14 +244,9 @@ void CompilerOpenCL::emit_header()
     statement("    bits = sign;");
     statement("else");
     begin_scope();
-    statement("int unbiased_exponent = -14;");
-    statement("while ((mantissa & 0x400u) == 0u)");
-    begin_scope();
-    statement("mantissa <<= 1;");
-    statement("unbiased_exponent--;");
-    end_scope();
-    statement("mantissa &= 0x3ffu;");
-    statement("bits = sign | ((uint)(unbiased_exponent + 127) << 23) | (mantissa << 13);");
+    statement("uint shift = clz(mantissa) - 21u;");
+    statement("mantissa = (mantissa << shift) & 0x3ffu;");
+    statement("bits = sign | ((113u - shift) << 23) | (mantissa << 13);");
     end_scope();
     end_scope();
     statement("else if (exponent == 31u)");
@@ -293,6 +294,26 @@ void CompilerOpenCL::emit_header()
     end_scope();
     end_scope();
     statement("return (ushort)(sign | ((uint)half_exponent << 10) | half_mantissa);");
+    end_scope();
+    statement("");
+    statement("ushort momo_float_to_half_rtz_scalar(float value)");
+    begin_scope();
+    statement("uint bits = as_uint(value);");
+    statement("uint sign = (bits >> 16) & 0x8000u;");
+    statement("uint exponent = (bits >> 23) & 0xffu;");
+    statement("uint mantissa = bits & 0x7fffffu;");
+    statement("if (exponent == 255u)");
+    statement("    return (ushort)(sign | (mantissa == 0u ? 0x7c00u : 0x7e00u));");
+    statement("int half_exponent = (int)exponent - 112;");
+    statement("if (half_exponent >= 31)");
+    statement("    return (ushort)(sign | 0x7bffu);");
+    statement("if (half_exponent <= 0)");
+    begin_scope();
+    statement("if (half_exponent < -10)");
+    statement("    return (ushort)sign;");
+    statement("return (ushort)(sign | ((mantissa | 0x800000u) >> (uint)(14 - half_exponent)));");
+    end_scope();
+    statement("return (ushort)(sign | ((uint)half_exponent << 10) | (mantissa >> 13));");
     end_scope();
     statement("");
     statement("float2 momo_unpack_half2x16(uint value)");
@@ -396,7 +417,7 @@ std::string CompilerOpenCL::type_to_glsl(const SPIRType& type, uint32_t id)
         base = "ulong";
         break;
     case SPIRType::Half:
-        base = "half";
+        base = translation_options.native_fp16 ? "half" : "ushort";
         break;
     case SPIRType::Float:
         base = "float";
@@ -448,7 +469,7 @@ std::string CompilerOpenCL::bitcast_glsl_op(const SPIRType& result_type, const S
     std::string type = type_to_glsl(result_type);
     // Mixed-signedness arithmetic can request an identity bitcast for one
     // operand. Older PowerVR compilers omit these as_type overloads.
-    if (result_type.basetype == argument_type.basetype && result_type.width == argument_type.width && result_type.vecsize == argument_type.vecsize)
+    if (type_to_glsl(result_type) == type_to_glsl(argument_type) && result_type.width == argument_type.width && result_type.vecsize == argument_type.vecsize)
         return "(" + type + ")";
     return "as_" + type;
 }
@@ -662,6 +683,12 @@ void CompilerOpenCL::emit_instruction(const Instruction& instruction)
         return;
 
     if (emit_fp64_vector_instruction(instruction, ops))
+        return;
+
+    if (emit_integer_conversion_instruction(instruction, ops))
+        return;
+
+    if (emit_int16_arithmetic_instruction(instruction, ops))
         return;
 
     if (emit_integer_dot_product_instruction(instruction, ops))
@@ -901,10 +928,12 @@ void CompilerOpenCL::emit_instruction(const Instruction& instruction)
         if (composite_type.columns > 1)
         {
             const bool supported_base = (composite_type.basetype == SPIRType::Float && composite_type.width == 32) || (composite_type.basetype == SPIRType::Half && composite_type.width == 16);
-            if (!supported_base || composite_type.vecsize != 4 || composite_type.columns != 4 || instruction.length != 4 || ops[3] >= 4)
-                throw std::runtime_error("only literal column extraction from float32 mat4 is supported");
+            if (!supported_base || composite_type.vecsize != 4 || composite_type.columns != 4 || (instruction.length != 4 && instruction.length != 5) || ops[3] >= 4 || (instruction.length == 5 && ops[4] >= 4))
+                throw std::runtime_error("only literal column or scalar extraction from float32/float16 mat4 is supported");
 
-            const std::string expression = "(" + to_expression(ops[2]) + ").c[" + std::to_string(ops[3]) + "]";
+            std::string expression = "(" + to_expression(ops[2]) + ").c[" + std::to_string(ops[3]) + "]";
+            if (instruction.length == 5)
+                expression += "." + std::string(1, "xyzw"[ops[4]]);
             emit_op(ops[0], ops[1], expression, should_forward(ops[2]));
             inherit_expression_dependencies(ops[1], ops[2]);
             return;
@@ -947,6 +976,8 @@ void CompilerOpenCL::emit_instruction(const Instruction& instruction)
         if (condition_type.vecsize == 1)
         {
             expression = "(" + to_expression(ops[2]) + " ? " + to_expression(ops[3]) + " : " + to_expression(ops[4]) + ")";
+            if (result_type.width == 16 && (result_type.basetype == SPIRType::Short || result_type.basetype == SPIRType::UShort || (result_type.basetype == SPIRType::Half && !translation_options.native_fp16)))
+                expression = "((" + type_to_glsl(result_type) + ")" + expression + ")";
         }
         else
         {
@@ -978,10 +1009,45 @@ void CompilerOpenCL::emit_instruction(const Instruction& instruction)
         return;
     }
 
-    if (opcode == OpSConvert || opcode == OpUConvert || opcode == OpConvertSToF || opcode == OpConvertUToF || opcode == OpConvertFToS || opcode == OpConvertFToU || opcode == OpFConvert)
+    if (opcode == OpFConvert)
     {
         const SPIRType& result_type = get<SPIRType>(ops[0]);
-        const std::string expression = "convert_" + type_to_glsl(result_type) + "(" + to_expression(ops[2]) + ")";
+        const SPIRType& source_type = expression_type(ops[2]);
+        const bool to_half = result_type.basetype == SPIRType::Half;
+        const uint32_t rounding = to_half && has_decoration(ops[1], DecorationFPRoundingMode) ? get_decoration(ops[1], DecorationFPRoundingMode) : uint32_t(FPRoundingModeRTE);
+        if (to_half && rounding != FPRoundingModeRTE && rounding != FPRoundingModeRTZ)
+            throw std::runtime_error("fp16 storage conversion supports RTE and RTZ rounding only");
+        if (!translation_options.native_fp16 && (source_type.basetype == SPIRType::Half || result_type.basetype == SPIRType::Half))
+        {
+            if (source_type.columns != 1 || result_type.columns != 1 || source_type.vecsize != result_type.vecsize || (result_type.basetype == SPIRType::Half && source_type.width != 32))
+                throw std::runtime_error("storage-only fp16 conversion requires matching scalar/vector float32 values");
+            const std::string source = to_expression(ops[2]);
+            const char* conversion = result_type.basetype == SPIRType::Half ? (rounding == FPRoundingModeRTZ ? "momo_float_to_half_rtz_scalar" : "momo_float_to_half_scalar") : "momo_half_to_float_scalar";
+            std::string expression;
+            for (uint32_t i = 0; i < source_type.vecsize; i++)
+            {
+                if (i)
+                    expression += ", ";
+                expression += std::string(conversion) + "((" + source + ")" + (source_type.vecsize == 1 ? "" : ".s" + std::to_string(i)) + ")";
+            }
+            if (source_type.vecsize > 1)
+            {
+                SPIRType converted = result_type;
+                if (converted.basetype == SPIRType::Double)
+                {
+                    converted.basetype = SPIRType::Float;
+                    converted.width = 32;
+                }
+                expression = "((" + type_to_glsl(converted) + ")(" + expression + "))";
+            }
+            if (result_type.basetype == SPIRType::Double)
+                expression = "convert_" + type_to_glsl(result_type) + "(" + expression + ")";
+            emit_op(ops[0], ops[1], expression, should_forward(ops[2]));
+            inherit_expression_dependencies(ops[1], ops[2]);
+            return;
+        }
+        const std::string conversion = "convert_" + type_to_glsl(result_type) + (to_half ? (rounding == FPRoundingModeRTZ ? "_rtz" : "_rte") : "");
+        std::string expression = conversion + "(" + to_expression(ops[2]) + ")";
         emit_op(ops[0], ops[1], expression, should_forward(ops[2]));
         inherit_expression_dependencies(ops[1], ops[2]);
         return;
@@ -1017,6 +1083,25 @@ void CompilerOpenCL::emit_glsl_op(uint32_t result_type, uint32_t result_id, uint
             expression = "((" + value + ") < 0 ? -(" + value + ") : (" + value + "))";
         else
             expression = "select((" + value + "), -(" + value + "), (" + value + ") < (" + type_to_glsl(type) + ")(0))";
+        if (type.width == 16)
+        {
+            SPIRType wide = type;
+            wide.basetype = SPIRType::Int;
+            wide.width = 32;
+            const std::string signed_value = bitcast_expression(SPIRType::Short, args[0]);
+            expression = narrow_int16(type, "abs(" + convert_value(wide, signed_value) + ")");
+        }
+        emit_op(result_type, result_id, expression, should_forward(args[0]));
+        inherit_expression_dependencies(result_id, args[0]);
+        return;
+    }
+    if (op == GLSLstd450SSign && count == 1 && result.width == 16)
+    {
+        SPIRType wide = result;
+        wide.basetype = SPIRType::Int;
+        wide.width = 32;
+        const std::string value = convert_value(wide, bitcast_expression(SPIRType::Short, args[0]));
+        const std::string expression = narrow_int16(result, "clamp(" + value + ", (" + type_to_glsl(wide) + ")(-1), (" + type_to_glsl(wide) + ")(1))");
         emit_op(result_type, result_id, expression, should_forward(args[0]));
         inherit_expression_dependencies(result_id, args[0]);
         return;
@@ -1058,8 +1143,21 @@ std::string CompilerOpenCL::constant_op_expression(const SPIRConstantOp& operati
 
 std::string CompilerOpenCL::constant_expression_vector(const SPIRConstant& constant, uint32_t vector)
 {
-    std::string expression = CompilerGLSL::constant_expression_vector(constant, vector);
     const SPIRType& type = get<SPIRType>(constant.constant_type);
+    if (type.basetype == SPIRType::Half && !translation_options.native_fp16)
+    {
+        std::string expression;
+        for (uint32_t i = 0; i < type.vecsize; i++)
+        {
+            if (i)
+                expression += ", ";
+            expression += std::to_string(constant.scalar_u16(vector, i));
+        }
+        SPIRType vector_type = type;
+        vector_type.columns = 1;
+        return "((" + type_to_glsl(vector_type) + ")(" + expression + "))";
+    }
+    std::string expression = CompilerGLSL::constant_expression_vector(constant, vector);
     if (type.basetype == SPIRType::Double && type.width == 64 && type.columns == 1 && type.vecsize >= 2 && type.vecsize <= 4)
     {
         const std::string constructor = "double" + std::to_string(type.vecsize) + "(";

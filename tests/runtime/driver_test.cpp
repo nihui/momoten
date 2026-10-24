@@ -116,12 +116,12 @@ int main(int argc, char** argv)
         physical_device, 0, &extension_count, extension_properties.data());
     if (result != VK_SUCCESS)
         return fail("vkEnumerateDeviceExtensionProperties", result);
-    bool reports_fp16_storage = false;
+    bool reports_storage16 = false;
     bool reports_fp16_arithmetic = false;
     bool reports_integer_dot_product = false;
     for (uint32_t i = 0; i < extension_count; i++)
     {
-        reports_fp16_storage = reports_fp16_storage || strcmp(extension_properties[i].extensionName, VK_KHR_16BIT_STORAGE_EXTENSION_NAME) == 0;
+        reports_storage16 = reports_storage16 || strcmp(extension_properties[i].extensionName, VK_KHR_16BIT_STORAGE_EXTENSION_NAME) == 0;
         reports_fp16_arithmetic = reports_fp16_arithmetic || strcmp(extension_properties[i].extensionName, VK_KHR_SHADER_FLOAT16_INT8_EXTENSION_NAME) == 0;
         reports_integer_dot_product = reports_integer_dot_product || strcmp(extension_properties[i].extensionName, VK_KHR_SHADER_INTEGER_DOT_PRODUCT_EXTENSION_NAME) == 0;
     }
@@ -138,7 +138,7 @@ int main(int argc, char** argv)
     features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
     features.pNext = &fp16_storage;
     vkGetPhysicalDeviceFeatures2KHR(physical_device, &features);
-    if (reports_fp16_storage != (fp16_storage.storageBuffer16BitAccess == VK_TRUE) || reports_fp16_arithmetic != (fp16_arithmetic.shaderFloat16 == VK_TRUE) || reports_fp16_storage != reports_fp16_arithmetic || fp16_storage.uniformAndStorageBuffer16BitAccess || fp16_storage.storagePushConstant16 || fp16_storage.storageInputOutput16 || fp16_arithmetic.shaderInt8 || reports_integer_dot_product != (integer_dot_feature.shaderIntegerDotProduct == VK_TRUE))
+    if (reports_storage16 != (fp16_storage.storagePushConstant16 == VK_TRUE) || fp16_storage.storageBuffer16BitAccess != fp16_storage.uniformAndStorageBuffer16BitAccess || reports_fp16_arithmetic != (fp16_arithmetic.shaderFloat16 == VK_TRUE) || fp16_storage.storageInputOutput16 || fp16_arithmetic.shaderInt8 || reports_integer_dot_product != (integer_dot_feature.shaderIntegerDotProduct == VK_TRUE))
     {
         fprintf(stderr, "driver_test: fp16 Vulkan extensions/features are inconsistent\n");
         return 1;

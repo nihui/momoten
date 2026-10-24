@@ -119,6 +119,7 @@ void impl_get_physical_device_features(
     if (features)
     {
         memset(features, 0, sizeof(*features));
+        features->shaderInt16 = physical && physical->shader_profile.int16 ? VK_TRUE : VK_FALSE;
         features->shaderInt64 = physical && physical->shader_profile.int64 ? VK_TRUE : VK_FALSE;
         features->shaderFloat64 = physical && physical->shader_profile.fp64 ? VK_TRUE : VK_FALSE;
     }
@@ -131,6 +132,7 @@ void impl_get_physical_device_features2(
         return;
     impl_get_physical_device_features(physical, &features->features);
     const VkBool32 fp16 = physical && physical->shader_profile.fp16 ? VK_TRUE : VK_FALSE;
+    const VkBool32 storage16 = physical && physical->shader_profile.byte_addressable_store ? VK_TRUE : VK_FALSE;
     VkBaseOutStructure* next = reinterpret_cast<VkBaseOutStructure*>(features->pNext);
     while (next)
     {
@@ -139,12 +141,18 @@ void impl_get_physical_device_features2(
         case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_16BIT_STORAGE_FEATURES:
         {
             VkPhysicalDevice16BitStorageFeatures* storage = reinterpret_cast<VkPhysicalDevice16BitStorageFeatures*>(next);
-            storage->storageBuffer16BitAccess = fp16;
-            // momoten currently maps descriptor-backed storage buffers only;
-            // uniform and push-constant 16-bit storage are not implemented.
-            storage->uniformAndStorageBuffer16BitAccess = VK_FALSE;
-            storage->storagePushConstant16 = VK_FALSE;
+            storage->storageBuffer16BitAccess = storage16;
+            storage->uniformAndStorageBuffer16BitAccess = storage16;
+            storage->storagePushConstant16 = physical ? VK_TRUE : VK_FALSE;
             storage->storageInputOutput16 = VK_FALSE;
+            break;
+        }
+        case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_8BIT_STORAGE_FEATURES:
+        {
+            VkPhysicalDevice8BitStorageFeatures* storage = reinterpret_cast<VkPhysicalDevice8BitStorageFeatures*>(next);
+            storage->storageBuffer8BitAccess = physical && physical->shader_profile.byte_addressable_store;
+            storage->uniformAndStorageBuffer8BitAccess = VK_FALSE;
+            storage->storagePushConstant8 = VK_FALSE;
             break;
         }
         case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_FLOAT16_INT8_FEATURES:
@@ -198,11 +206,15 @@ void impl_get_physical_device_properties(
         std::min<size_t>(16, parameter_budget / bytes_per_buffer_argument));
     limits.maxStorageBufferRange = static_cast<uint32_t>(
         std::min<cl_ulong>(physical->max_allocation, 0xffffffffull));
+    limits.maxUniformBufferRange = limits.maxStorageBufferRange;
+    limits.minUniformBufferOffsetAlignment = 16;
     limits.maxMemoryAllocationCount = 4096;
     limits.maxBoundDescriptorSets = 1;
     limits.maxPerStageDescriptorStorageBuffers = max_storage_buffers;
+    limits.maxPerStageDescriptorUniformBuffers = max_storage_buffers;
     limits.maxPerStageResources = max_storage_buffers;
     limits.maxDescriptorSetStorageBuffers = max_storage_buffers;
+    limits.maxDescriptorSetUniformBuffers = max_storage_buffers;
     // Workgroup storage/barriers are not translated by the baseline profile,
     // even when the selected OpenCL device has local memory.
     limits.maxComputeSharedMemorySize = static_cast<uint32_t>(std::min<cl_ulong>(
