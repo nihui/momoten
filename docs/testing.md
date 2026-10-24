@@ -61,6 +61,9 @@ whose signedness differs from the conversion opcode. Scalar and vector tests
 cover `OpUConvert`, `OpSConvert`, `OpConvertUToF` and `OpConvertSToF` across all
 65,536 input bit patterns. Strict OpenCL C 1.0 syntax tests include these
 conversions, byte storage, int16 arithmetic and native/software half storage.
+The byte-conversion fixture covers signed and unsigned 8-to-16-bit extension
+for scalars, vec2 and vec4, with `shaderInt8` disabled. Runtime checks exercise
+all 256 byte values and reject pipelines missing either required feature.
 
 Device-profile tests check int16 availability on OpenCL C 1.0 with and without
 byte-addressable stores, and on newer OpenCL C versions. Scalar int16 workgroup

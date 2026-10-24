@@ -18,6 +18,7 @@ enum TestMode
 {
     Int8Storage,
     Int8VectorStorage,
+    Int8Conversion,
     Int16Arithmetic,
     Int16Conversion,
     StructAtomic,
@@ -187,6 +188,28 @@ static void make_int8_data(std::vector<unsigned char>& input, std::vector<unsign
         }
 }
 
+static void make_int8_conversion_data(std::vector<unsigned char>& input, std::vector<unsigned char>& expected)
+{
+    const uint32_t count = 65536;
+    input.assign(count * 70, 0xa5);
+    const size_t widths[] = {1, 2, 4};
+    const size_t input_offsets[] = {0, count, count * 3, count * 7, count * 8, count * 10};
+    const size_t output_offsets[] = {0, 1, 3, 7, 8, 10};
+    for (uint32_t i = 0; i < count; i++)
+        for (size_t conversion = 0; conversion < 6; conversion++)
+            for (size_t lane = 0; lane < widths[conversion % 3]; lane++)
+                input[input_offsets[conversion] + i * widths[conversion % 3] + lane] = static_cast<unsigned char>(i * 37 + conversion * 13 + lane * 61);
+    expected = input;
+    for (uint32_t i = 0; i < count; i++)
+        for (size_t conversion = 0; conversion < 6; conversion++)
+            for (size_t lane = 0; lane < widths[conversion % 3]; lane++)
+            {
+                const int value = input[input_offsets[conversion] + i * widths[conversion % 3] + lane];
+                const int result = conversion < 3 && value >= 128 ? value - 256 : value;
+                write_value<uint32_t>(expected, count * 14 + (i * 14 + output_offsets[conversion] + lane) * 4, uint32_t(result));
+            }
+}
+
 static void make_int16_data(std::vector<unsigned char>& input, std::vector<unsigned char>& expected)
 {
     const uint32_t count = 65536;
@@ -312,6 +335,7 @@ static void make_data(TestMode mode, std::vector<unsigned char>& input, std::vec
     {
     case Int8Storage: make_int8_data(input, expected, false); break;
     case Int8VectorStorage: make_int8_data(input, expected, true); break;
+    case Int8Conversion: make_int8_conversion_data(input, expected); break;
     case Int16Arithmetic: make_int16_data(input, expected); break;
     case Int16Conversion: make_integer_conversion_data(input, expected); break;
     case StructAtomic: make_struct_atomic_data(input, expected); break;
@@ -322,8 +346,9 @@ static void make_data(TestMode mode, std::vector<unsigned char>& input, std::vec
 
 static int run_kernel(VkPhysicalDevice physical, VkDevice device, VkQueue queue, const std::vector<uint32_t>& words, TestMode mode, bool enabled, bool native_fp16, bool use_template = false)
 {
-    const uint32_t binding_count = mode == Storage16 ? 3 : 1;
-    VkDescriptorSetLayoutBinding bindings[3] = {};
+    const uint32_t binding_count = mode == Int8Conversion ? 7 : mode == Storage16 ? 3
+                                                                                  : 1;
+    VkDescriptorSetLayoutBinding bindings[7] = {};
     for (uint32_t i = 0; i < binding_count; i++)
     {
         bindings[i].binding = i;
@@ -426,12 +451,22 @@ static int run_kernel(VkPhysicalDevice physical, VkDevice device, VkQueue queue,
     range.size = VK_WHOLE_SIZE;
     result = vkFlushMappedMemoryRanges(device, 1, &range);
     if (result != VK_SUCCESS) return fail("vkFlushMappedMemoryRanges", result);
-    VkDescriptorBufferInfo descriptors[3] = {{buffer, descriptor_offset, input.size()},
+    VkDescriptorBufferInfo descriptors[7] = {{buffer, descriptor_offset, input.size()},
                                              {buffer, descriptor_offset + storage16_uniform_bytes, storage16_output_bytes},
                                              {buffer, descriptor_offset + storage16_uniform_bytes + storage16_output_bytes, 65536 * 8}};
     if (mode == Storage16)
         descriptors[0].range = storage16_uniform_bytes;
-    VkWriteDescriptorSet writes[3] = {};
+    if (mode == Int8Conversion)
+    {
+        const VkDeviceSize sizes[] = {65536, 65536 * 2, 65536 * 4, 65536, 65536 * 2, 65536 * 4, 65536 * 14 * 4};
+        VkDeviceSize position = descriptor_offset;
+        for (uint32_t i = 0; i < binding_count; i++)
+        {
+            descriptors[i] = {buffer, position, sizes[i]};
+            position += sizes[i];
+        }
+    }
+    VkWriteDescriptorSet writes[7] = {};
     for (uint32_t i = 0; i < binding_count; i++)
     {
         writes[i].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
@@ -443,7 +478,7 @@ static int run_kernel(VkPhysicalDevice physical, VkDevice device, VkQueue queue,
     VkDescriptorUpdateTemplate descriptor_template = VK_NULL_HANDLE;
     if (use_template)
     {
-        VkDescriptorUpdateTemplateEntry entries[3] = {};
+        VkDescriptorUpdateTemplateEntry entries[7] = {};
         for (uint32_t i = 0; i < binding_count; i++)
         {
             entries[i].dstBinding = i;
@@ -562,6 +597,7 @@ int main(int argc, char** argv)
     TestMode mode = InvalidMode;
     if (strcmp(name, "int8") == 0 || strcmp(name, "int8-aliased") == 0) mode = Int8Storage;
     if (strcmp(name, "int8-vector") == 0 || strcmp(name, "int8-vector-aliased") == 0) mode = Int8VectorStorage;
+    if (strcmp(name, "int8-conversion") == 0) mode = Int8Conversion;
     if (strcmp(name, "int16") == 0) mode = Int16Arithmetic;
     if (strcmp(name, "int16-conversion") == 0) mode = Int16Conversion;
     if (strcmp(name, "struct-atomic") == 0) mode = StructAtomic;
@@ -578,8 +614,8 @@ int main(int argc, char** argv)
         return 1;
     if (aliased_int8 && !decorate_aliased_buffers(words, 1))
         return 1;
-    const bool integer_arithmetic = mode == Int16Arithmetic || mode == Int16Conversion;
-    const bool byte_storage = mode == Int8Storage || mode == Int8VectorStorage;
+    const bool integer_arithmetic = mode == Int16Arithmetic || mode == Int16Conversion || mode == Int8Conversion;
+    const bool byte_storage = mode == Int8Storage || mode == Int8VectorStorage || mode == Int8Conversion;
     if (std::getenv("MOMOTEN_TEST_FP16_RTZ") && !set_fp16_rounding(words, spv::FPRoundingModeRTZ))
         return 1;
     VkApplicationInfo application = {};
@@ -642,6 +678,12 @@ int main(int argc, char** argv)
                  {"all storage16 features", false, false, true, true, true, true},
                  {"storage8 permits storage16 buffers", false, true, false, true, true, true}};
     }
+    else if (mode == Int8Conversion)
+    {
+        cases = {{"missing int16 feature", false, true, false, false, false, false},
+                 {"missing storage8 feature", true, false, false, false, false, false},
+                 {"enabled integer features", true, true, false, false, false, true}};
+    }
     else if (mode == StructAtomic)
     {
         cases.push_back({"global compare-exchange", false, false, false, false, false, true});
@@ -672,7 +714,7 @@ int main(int argc, char** argv)
         std::vector<const char*> extensions = {VK_KHR_PUSH_DESCRIPTOR_EXTENSION_NAME};
         if (mode == Storage16)
             extensions.push_back(VK_KHR_16BIT_STORAGE_EXTENSION_NAME);
-        if (test.storage8 || mode == Int8Storage || mode == Int8VectorStorage)
+        if (test.storage8 || byte_storage)
             extensions.push_back(VK_KHR_8BIT_STORAGE_EXTENSION_NAME);
         VkDeviceCreateInfo device_info = {};
         device_info.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
@@ -681,7 +723,7 @@ int main(int argc, char** argv)
         device_info.pEnabledFeatures = &requested;
         device_info.enabledExtensionCount = static_cast<uint32_t>(extensions.size());
         device_info.ppEnabledExtensionNames = extensions.data();
-        if (!integer_arithmetic && mode != StructAtomic)
+        if (byte_storage || mode == Storage16)
             device_info.pNext = mode == Storage16 ? static_cast<void*>(&storage16) : static_cast<void*>(&storage);
         VkDevice device = VK_NULL_HANDLE;
         result = vkCreateDevice(physical, &device_info, 0, &device);

@@ -102,7 +102,7 @@ int main(int argc, char** argv)
         return check_aliased_storage(argv[2], argv[3]);
     if (argc == 4 && strcmp(argv[1], "--atomic-output") == 0)
         return check_struct_atomics(argv[2], argv[3]);
-    if (argc != 9)
+    if (argc != 10)
         return 1;
     for (const char* path : {argv[6], argv[7]})
     {
@@ -131,7 +131,7 @@ int main(int argc, char** argv)
         bool int16;
         bool storage16;
     };
-    const Fixture fixtures[] = {{argv[1], true, false, false}, {argv[2], true, false, false}, {argv[3], false, true, false}, {argv[4], false, false, true}};
+    const Fixture fixtures[] = {{argv[1], true, false, false}, {argv[2], true, false, false}, {argv[3], false, true, false}, {argv[4], false, false, true}, {argv[9], true, true, false}};
     for (const Fixture& fixture : fixtures)
     {
         std::vector<uint32_t> words;
@@ -144,7 +144,7 @@ int main(int argc, char** argv)
             fprintf(stderr, "integer_storage_test: byte storage accepted without byte-addressable stores\n");
             return 1;
         }
-        if (fixture.int16 && !momoten::translate_spirv_to_opencl_c(words.data(), words.size(), options, translated))
+        if (fixture.int16 && !fixture.storage8 && !momoten::translate_spirv_to_opencl_c(words.data(), words.size(), options, translated))
         {
             fprintf(stderr, "integer_storage_test: int16 register/vector translation failed: %s\n", translated.diagnostics.c_str());
             return 1;

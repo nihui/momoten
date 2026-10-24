@@ -41,7 +41,7 @@ bool CompilerOpenCL::emit_integer_conversion_instruction(const Instruction& inst
         value = bitcast_expression(signed_value ? to_signed_basetype(source_type.width) : to_unsigned_basetype(source_type.width), ops[2]);
 
     std::string expression;
-    if (integer_width && result_type.width == 16)
+    if (integer_width && result_type.width == 16 && source_type.width > 16)
     {
         expression = narrow_int16(result_type, value);
     }
