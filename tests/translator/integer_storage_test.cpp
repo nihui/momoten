@@ -62,6 +62,43 @@ static int check_aliased_storage(const char* input, const char* output = 0)
     return 0;
 }
 
+static int check_storage_capabilities(const char* input, const char* output = 0)
+{
+    std::vector<uint32_t> original;
+    if (!read_spirv(input, original))
+        return 1;
+    std::vector<uint32_t> words = original;
+    spvtools::SpirvTools tools(SPV_ENV_VULKAN_1_1);
+    if (!use_16bit_arithmetic_capabilities(words) || !tools.Validate(words))
+        return 1;
+    for (uint32_t bits : {32u, 64u})
+    {
+        momoten::TranslationOptions options;
+        options.address_bits = bits;
+        options.byte_addressable_store = true;
+        momoten::TranslationResult reference;
+        momoten::TranslationResult translated;
+        if (!momoten::translate_spirv_to_opencl_c(original.data(), original.size(), options, reference)
+            || !momoten::translate_spirv_to_opencl_c(words.data(), words.size(), options, translated))
+        {
+            fprintf(stderr, "integer_storage_test: arithmetic storage capabilities failed: %s %s\n", reference.diagnostics.c_str(), translated.diagnostics.c_str());
+            return 1;
+        }
+        if (reference.abi.storage_buffer16 != translated.abi.storage_buffer16 || reference.abi.uniform_buffer16 != translated.abi.uniform_buffer16 || reference.abi.push_constant16 != translated.abi.push_constant16)
+        {
+            fprintf(stderr, "integer_storage_test: storage requirements changed without explicit capabilities\n");
+            return 1;
+        }
+        if (output && bits == 64)
+        {
+            std::ofstream stream(output);
+            if (!(stream << translated.source))
+                return 1;
+        }
+    }
+    return 0;
+}
+
 static int check_struct_atomics(const char* input, const char* output = 0)
 {
     std::vector<uint32_t> original;
@@ -102,7 +139,9 @@ int main(int argc, char** argv)
         return check_aliased_storage(argv[2], argv[3]);
     if (argc == 4 && strcmp(argv[1], "--atomic-output") == 0)
         return check_struct_atomics(argv[2], argv[3]);
-    if (argc != 10)
+    if (argc == 4 && strcmp(argv[1], "--storage-output") == 0)
+        return check_storage_capabilities(argv[2], argv[3]);
+    if (argc != 11)
         return 1;
     for (const char* path : {argv[6], argv[7]})
     {
@@ -195,5 +234,6 @@ int main(int argc, char** argv)
         fprintf(stderr, "integer_storage_test: fp16 arithmetic accepted without native fp16\n");
         return 1;
     }
-    return check_integer_conversions() || check_aliased_storage(argv[1]) || check_aliased_storage(argv[2]) || check_struct_atomics(argv[8]);
+    return check_integer_conversions() || check_aliased_storage(argv[1]) || check_aliased_storage(argv[2]) || check_struct_atomics(argv[8])
+           || check_storage_capabilities(argv[4]) || check_storage_capabilities(argv[5]) || check_storage_capabilities(argv[10]);
 }

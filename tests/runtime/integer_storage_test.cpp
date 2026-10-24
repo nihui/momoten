@@ -594,6 +594,7 @@ int main(int argc, char** argv)
         return 1;
     const char* name = argv[argc - 1];
     const bool aliased_int8 = strcmp(name, "int8-aliased") == 0 || strcmp(name, "int8-vector-aliased") == 0;
+    const bool arithmetic_storage = strcmp(name, "storage16-arithmetic") == 0;
     TestMode mode = InvalidMode;
     if (strcmp(name, "int8") == 0 || strcmp(name, "int8-aliased") == 0) mode = Int8Storage;
     if (strcmp(name, "int8-vector") == 0 || strcmp(name, "int8-vector-aliased") == 0) mode = Int8VectorStorage;
@@ -601,7 +602,7 @@ int main(int argc, char** argv)
     if (strcmp(name, "int16") == 0) mode = Int16Arithmetic;
     if (strcmp(name, "int16-conversion") == 0) mode = Int16Conversion;
     if (strcmp(name, "struct-atomic") == 0) mode = StructAtomic;
-    if (strcmp(name, "storage16") == 0) mode = Storage16;
+    if (strcmp(name, "storage16") == 0 || arithmetic_storage) mode = Storage16;
     if (mode == InvalidMode)
         return 1;
     std::vector<uint32_t> words;
@@ -614,6 +615,12 @@ int main(int argc, char** argv)
         return 1;
     if (aliased_int8 && !decorate_aliased_buffers(words, 1))
         return 1;
+    if (arithmetic_storage)
+    {
+        spvtools::SpirvTools tools(SPV_ENV_VULKAN_1_1);
+        if (!use_16bit_arithmetic_capabilities(words) || !tools.Validate(words))
+            return 1;
+    }
     const bool integer_arithmetic = mode == Int16Arithmetic || mode == Int16Conversion || mode == Int8Conversion;
     const bool byte_storage = mode == Int8Storage || mode == Int8VectorStorage || mode == Int8Conversion;
     if (std::getenv("MOMOTEN_TEST_FP16_RTZ") && !set_fp16_rounding(words, spv::FPRoundingModeRTZ))
@@ -651,9 +658,11 @@ int main(int argc, char** argv)
     available.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
     available.pNext = &storage;
     vkGetPhysicalDeviceFeatures2(physical, &available);
+    const bool native_fp16 = arithmetic.shaderFloat16 != 0;
     if (std::getenv("MOMOTEN_TEST_NO_NATIVE_FP16") && arithmetic.shaderFloat16)
         return fail("fp16 arithmetic was not disabled", VK_ERROR_FEATURE_NOT_PRESENT);
-    if ((integer_arithmetic && !available.features.shaderInt16) || (byte_storage && !storage.storageBuffer8BitAccess)
+    if ((arithmetic_storage && (!available.features.shaderInt16 || !native_fp16))
+        || (integer_arithmetic && !available.features.shaderInt16) || (byte_storage && !storage.storageBuffer8BitAccess)
         || (mode == Storage16 && (!storage16.storageBuffer16BitAccess || !storage16.uniformAndStorageBuffer16BitAccess || !storage16.storagePushConstant16)))
     {
         vkDestroyInstance(instance, 0);
@@ -701,19 +710,24 @@ int main(int argc, char** argv)
     VkPhysicalDeviceFeatures requested = {};
     storage.uniformAndStorageBuffer8BitAccess = VK_FALSE;
     storage.storagePushConstant8 = VK_FALSE;
-    storage.pNext = 0;
+    arithmetic.shaderFloat16 = arithmetic_storage;
+    arithmetic.shaderInt8 = VK_FALSE;
+    arithmetic.pNext = 0;
+    storage.pNext = arithmetic_storage ? &arithmetic : 0;
     storage16.pNext = 0;
     for (const FeatureCase& test : cases)
     {
-        requested.shaderInt16 = test.int16;
+        requested.shaderInt16 = test.int16 || arithmetic_storage;
         storage.storageBuffer8BitAccess = test.storage8;
         storage16.storageBuffer16BitAccess = test.storage16;
         storage16.uniformAndStorageBuffer16BitAccess = test.uniform16;
         storage16.storagePushConstant16 = test.push16;
-        storage16.pNext = test.storage8 ? &storage : 0;
+        storage16.pNext = test.storage8 ? &storage : storage.pNext;
         std::vector<const char*> extensions = {VK_KHR_PUSH_DESCRIPTOR_EXTENSION_NAME};
         if (mode == Storage16)
             extensions.push_back(VK_KHR_16BIT_STORAGE_EXTENSION_NAME);
+        if (arithmetic_storage)
+            extensions.push_back(VK_KHR_SHADER_FLOAT16_INT8_EXTENSION_NAME);
         if (test.storage8 || byte_storage)
             extensions.push_back(VK_KHR_8BIT_STORAGE_EXTENSION_NAME);
         VkDeviceCreateInfo device_info = {};
@@ -730,9 +744,9 @@ int main(int argc, char** argv)
         if (result != VK_SUCCESS) return fail("vkCreateDevice", result);
         VkQueue queue = VK_NULL_HANDLE;
         vkGetDeviceQueue(device, 0, 0, &queue);
-        int status = run_kernel(physical, device, queue, words, mode, test.succeeds, arithmetic.shaderFloat16 != 0);
+        int status = run_kernel(physical, device, queue, words, mode, test.succeeds, native_fp16);
         if (status == 0 && mode == Storage16 && test.succeeds)
-            status = run_kernel(physical, device, queue, words, mode, true, arithmetic.shaderFloat16 != 0, true);
+            status = run_kernel(physical, device, queue, words, mode, true, native_fp16, true);
         vkDestroyDevice(device, 0);
         if (status)
         {

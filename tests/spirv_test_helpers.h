@@ -50,6 +50,47 @@ inline bool decorate_aliased_buffers(std::vector<uint32_t>& words, uint32_t bind
     return true;
 }
 
+inline bool use_16bit_arithmetic_capabilities(std::vector<uint32_t>& words)
+{
+    if (words.size() < 5)
+        return false;
+    bool int16 = false;
+    bool fp16 = false;
+    bool has_int16 = false;
+    bool has_fp16 = false;
+    std::vector<uint32_t> rewritten(words.begin(), words.begin() + 5);
+    for (size_t offset = 5; offset < words.size(); offset += words[offset] >> spv::WordCountShift)
+    {
+        const uint32_t count = words[offset] >> spv::WordCountShift;
+        const spv::Op opcode = static_cast<spv::Op>(words[offset] & spv::OpCodeMask);
+        if (!count || count > words.size() - offset)
+            return false;
+        if (opcode == spv::OpCapability && count == 2)
+        {
+            const uint32_t capability = words[offset + 1];
+            has_int16 |= capability == spv::CapabilityInt16;
+            has_fp16 |= capability == spv::CapabilityFloat16;
+            if (capability == spv::CapabilityStorageBuffer16BitAccess || capability == spv::CapabilityUniformAndStorageBuffer16BitAccess || capability == spv::CapabilityStoragePushConstant16)
+                continue;
+        }
+        int16 |= opcode == spv::OpTypeInt && count == 4 && words[offset + 2] == 16;
+        fp16 |= opcode == spv::OpTypeFloat && count == 3 && words[offset + 2] == 16;
+        rewritten.insert(rewritten.end(), words.begin() + offset, words.begin() + offset + count);
+    }
+    if (int16 && !has_int16)
+    {
+        const uint32_t declaration[] = {(2u << spv::WordCountShift) | spv::OpCapability, spv::CapabilityInt16};
+        rewritten.insert(rewritten.begin() + 5, declaration, declaration + 2);
+    }
+    if (fp16 && !has_fp16)
+    {
+        const uint32_t declaration[] = {(2u << spv::WordCountShift) | spv::OpCapability, spv::CapabilityFloat16};
+        rewritten.insert(rewritten.begin() + 5, declaration, declaration + 2);
+    }
+    words.swap(rewritten);
+    return int16 || fp16;
+}
+
 inline void copy_access_chain_pointers(std::vector<uint32_t>& words)
 {
     std::vector<uint32_t> copied(words.begin(), words.begin() + 5);

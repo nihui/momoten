@@ -415,7 +415,7 @@ function(momoten_add_integer_storage_translator_test target translator test_name
     add_dependencies(${target} momoten-test-spv)
     add_test(NAME ${test_name} COMMAND ${target}
         "${momoten_int8_storage_test_spv}" "${momoten_int8_vector_storage_test_spv}" "${momoten_int16_arithmetic_test_spv}" "${momoten_storage16_test_spv}" "${momoten_fp16_basic_test_spv}"
-        "${momoten_int16_workgroup_storage_test_spv}" "${momoten_int16_private_storage_test_spv}" "${momoten_buffer_struct_atomic_test_spv}" "${momoten_int8_conversion_test_spv}")
+        "${momoten_int16_workgroup_storage_test_spv}" "${momoten_int16_private_storage_test_spv}" "${momoten_buffer_struct_atomic_test_spv}" "${momoten_int8_conversion_test_spv}" "${momoten_int16_test_spv}")
     set_tests_properties(${test_name} PROPERTIES LABELS "momoten;translator;integer-storage")
 endfunction()
 
@@ -551,6 +551,8 @@ if(MOMOTEN_CLANG)
             -DINT8_STORAGE_SPV_FILE=${momoten_int8_storage_test_spv}
             -DINT8_VECTOR_STORAGE_SPV_FILE=${momoten_int8_vector_storage_test_spv}
             -DINT8_CONVERSION_SPV_FILE=${momoten_int8_conversion_test_spv}
+            -DINT16_STORAGE_SPV_FILE=${momoten_int16_test_spv}
+            -DFP16_BASIC_SPV_FILE=${momoten_fp16_basic_test_spv}
             -DINT16_ARITHMETIC_SPV_FILE=${momoten_int16_arithmetic_test_spv}
             -DSTORAGE16_SPV_FILE=${momoten_storage16_test_spv}
             -DSTRUCT_ATOMIC_SPV_FILE=${momoten_buffer_struct_atomic_test_spv}
@@ -589,6 +591,8 @@ if(MOMOTEN_CLANG)
             -DINT8_STORAGE_SPV_FILE=${momoten_int8_storage_test_spv}
             -DINT8_VECTOR_STORAGE_SPV_FILE=${momoten_int8_vector_storage_test_spv}
             -DINT8_CONVERSION_SPV_FILE=${momoten_int8_conversion_test_spv}
+            -DINT16_STORAGE_SPV_FILE=${momoten_int16_test_spv}
+            -DFP16_BASIC_SPV_FILE=${momoten_fp16_basic_test_spv}
             -DINT16_ARITHMETIC_SPV_FILE=${momoten_int16_arithmetic_test_spv}
             -DSTORAGE16_SPV_FILE=${momoten_storage16_test_spv}
             -DSTRUCT_ATOMIC_SPV_FILE=${momoten_buffer_struct_atomic_test_spv}
@@ -763,10 +767,11 @@ function(momoten_add_integer_storage_test target driver prefix)
     add_test(NAME ${prefix}_int16_arithmetic COMMAND ${target} "${momoten_int16_arithmetic_test_spv}" int16)
     add_test(NAME ${prefix}_int16_conversion COMMAND ${target} int16-conversion)
     add_test(NAME ${prefix}_storage16 COMMAND ${target} "${momoten_storage16_test_spv}" storage16)
+    add_test(NAME ${prefix}_storage16_arithmetic_capabilities COMMAND ${target} "${momoten_storage16_test_spv}" storage16-arithmetic)
     add_test(NAME ${prefix}_storage16_rtz
         COMMAND "${CMAKE_COMMAND}" -E env "MOMOTEN_TEST_FP16_RTZ=1" $<TARGET_FILE:${target}> "${momoten_storage16_test_spv}" storage16)
     set_tests_properties(${prefix}_int8_storage ${prefix}_int8_vector_storage ${prefix}_int8_storage_aliased ${prefix}_int8_vector_storage_aliased
-        ${prefix}_int8_conversion ${prefix}_struct_atomic ${prefix}_int16_arithmetic ${prefix}_int16_conversion ${prefix}_storage16 ${prefix}_storage16_rtz PROPERTIES
+        ${prefix}_int8_conversion ${prefix}_struct_atomic ${prefix}_int16_arithmetic ${prefix}_int16_conversion ${prefix}_storage16 ${prefix}_storage16_rtz ${prefix}_storage16_arithmetic_capabilities PROPERTIES
         LABELS "momoten;runtime;integer-storage" SKIP_RETURN_CODE 77)
     set_property(TEST ${prefix}_int16_arithmetic ${prefix}_struct_atomic APPEND PROPERTY LABELS "requires-opencl-multilane-barrier")
     if(TARGET momoten_no_fp16_opencl)

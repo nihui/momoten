@@ -270,11 +270,7 @@ void CompilerOpenCL::validate_storage_block(const Resource& resource)
     const bool supported_half_matrix = member.basetype == SPIRType::Half && member.width == 16 && member.vecsize == 4 && member.columns == 4;
     const bool byte_integer = member.width == 8 && (member.basetype == SPIRType::SByte || member.basetype == SPIRType::UByte);
     if (member.width == 16)
-    {
-        if (!requires_storage_buffer16 && !requires_uniform_buffer16 && !requires_storage_buffer8)
-            throw std::runtime_error("16-bit storage buffers require a SPIR-V storage capability");
         requires_storage_buffer16 = true;
-    }
     if (byte_integer && !requires_storage_buffer8)
         throw std::runtime_error("8-bit storage buffers require SPIR-V StorageBuffer8BitAccess");
     const bool supported_scalar_vector = member.columns == 1 && ((member.width == 64 && (member.basetype == SPIRType::Double || member.basetype == SPIRType::Int64 || member.basetype == SPIRType::UInt64)) || (member.width == 32 && (member.basetype == SPIRType::Int || member.basetype == SPIRType::UInt || member.basetype == SPIRType::Float)) || (member.width == 16 && (member.basetype == SPIRType::Short || member.basetype == SPIRType::UShort || member.basetype == SPIRType::Int || member.basetype == SPIRType::UInt)) || (member.width == 16 && member.basetype == SPIRType::Half) || byte_integer);
@@ -317,10 +313,12 @@ void CompilerOpenCL::validate_raw_block_type(uint32_t type_id, StorageClass stor
         throw std::runtime_error("unsupported buffer or push-constant scalar, vector or matrix type");
     if (type.basetype == SPIRType::Half && translation_options.native_fp16)
         requires_fp16 = true;
-    if (type.width == 16 && ((storage == StorageClassUniform && !requires_uniform_buffer16) || (storage == StorageClassPushConstant && !requires_push_constant16) || (storage == StorageClassStorageBuffer && !requires_storage_buffer16 && !requires_uniform_buffer16 && !requires_storage_buffer8)))
-        throw std::runtime_error("16-bit block member requires its corresponding SPIR-V storage capability");
-    if (type.width == 16 && storage == StorageClassStorageBuffer)
-        requires_storage_buffer16 = true;
+    if (type.width == 16)
+    {
+        requires_storage_buffer16 |= storage == StorageClassStorageBuffer;
+        requires_uniform_buffer16 |= storage == StorageClassUniform;
+        requires_push_constant16 |= storage == StorageClassPushConstant;
+    }
 }
 
 void CompilerOpenCL::validate_push_constant_block(const Resource& resource, size_t& size)

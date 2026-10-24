@@ -65,6 +65,12 @@ The byte-conversion fixture covers signed and unsigned 8-to-16-bit extension
 for scalars, vec2 and vec4, with `shaderInt8` disabled. Runtime checks exercise
 all 256 byte values and reject pipelines missing either required feature.
 
+Arithmetic-capability variants remove the explicit 16-bit storage capabilities
+and declare `Int16`/`Float16` instead. They validate SPIR-V, preserve reflected
+SSBO, UBO and push-constant storage requirements, and check OpenCL C 1.0 syntax.
+Runtime variants repeat the storage16 feature-rejection and numerical tests
+with arithmetic features enabled through modular and amalgamated drivers.
+
 Device-profile tests check int16 availability on OpenCL C 1.0 with and without
 byte-addressable stores, and on newer OpenCL C versions. Scalar int16 workgroup
 and private array fixtures are rejected without byte-addressable stores and

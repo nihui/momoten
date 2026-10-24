@@ -63,6 +63,8 @@ require byte-addressable stores. These storage features are independent of
 `cl_khr_fp16`; only `shaderFloat16` arithmetic requires that extension.
 `storageInputOutput16` remains disabled because this profile supports compute
 shaders only.
+Required storage features are also inferred from resource types when a module
+declares `Int16` or `Float16` without explicit 16-bit storage capabilities.
 
 Without native half support, storage-only half values are represented by
 `ushort` bit patterns. Loads, stores and copies preserve the stored bits, and
