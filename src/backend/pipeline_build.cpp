@@ -104,7 +104,14 @@ static void dump_pipeline_artifacts(const std::shared_ptr<ShaderModule>& module,
                 : "singleton")
         << '\n'
         << "subgroup_size=" << translated.abi.subgroup_size << '\n'
+        << "int16=" << translated.abi.int16 << '\n'
+        << "fp16=" << translated.abi.fp16 << '\n'
         << "int64=" << translated.abi.int64 << '\n'
+        << "storage_buffer8=" << translated.abi.storage_buffer8 << '\n'
+        << "storage_buffer16=" << translated.abi.storage_buffer16 << '\n'
+        << "uniform_buffer16=" << translated.abi.uniform_buffer16 << '\n'
+        << "push_constant16=" << translated.abi.push_constant16 << '\n'
+        << "native_fp16=" << options.native_fp16 << '\n'
         << "fp64=" << translated.abi.fp64 << '\n'
         << "integer_dot_product=" << translated.abi.integer_dot_product << '\n'
         << "integer_dot_product_backend=" << options.integer_dot_product_backend << '\n'
@@ -365,7 +372,8 @@ VkResult build_compute_pipelines(
                     const std::vector<VkDescriptorSetLayoutBinding>& bindings = layout->descriptor_layout->bindings;
                     for (size_t j = 0; j < bindings.size(); j++)
                     {
-                        if (bindings[j].binding == translated.abi.buffers[b].binding && bindings[j].descriptorType == VK_DESCRIPTOR_TYPE_STORAGE_BUFFER && bindings[j].descriptorCount == 1)
+                        const VkDescriptorType descriptor_type = translated.abi.buffers[b].uniform ? VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER : VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+                        if (bindings[j].binding == translated.abi.buffers[b].binding && bindings[j].descriptorType == descriptor_type && bindings[j].descriptorCount == 1)
                         {
                             binding_found = true;
                             break;

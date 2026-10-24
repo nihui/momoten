@@ -24,7 +24,7 @@ endif()
 function(check_opencl_c_1_0 name input)
     set(source "${OUTPUT_DIR}/${name}.cl")
     execute_process(
-        COMMAND "${TRANSLATOR}" "${input}"
+        COMMAND "${TRANSLATOR}" ${ARGN} "${input}"
         RESULT_VARIABLE translate_result
         OUTPUT_FILE "${source}"
         ERROR_VARIABLE translate_log)
@@ -88,4 +88,24 @@ if(VECTOR_EXTRACT_INT16_SPV_FILE)
 endif()
 if(POW_CONSTANT_BASE_SPV_FILE)
     check_opencl_c_1_0(pow_constant_base "${POW_CONSTANT_BASE_SPV_FILE}")
+endif()
+
+if(INT8_STORAGE_SPV_FILE)
+    check_opencl_c_1_0(int8_storage "${INT8_STORAGE_SPV_FILE}" --byte-addressable-store)
+    check_opencl_c_1_0(int8_vector_storage "${INT8_VECTOR_STORAGE_SPV_FILE}" --byte-addressable-store)
+    check_opencl_c_1_0(int16_arithmetic "${INT16_ARITHMETIC_SPV_FILE}" --byte-addressable-store)
+    check_opencl_c_1_0(fp16_storage "${STORAGE16_SPV_FILE}" --byte-addressable-store)
+    check_opencl_c_1_0(storage16_emulated "${STORAGE16_SPV_FILE}" --byte-addressable-store --no-native-fp16)
+    set(conversion_source "${OUTPUT_DIR}/integer-conversion.cl")
+    execute_process(COMMAND "${CONVERSION_TRANSLATOR}" --conversion-output "${conversion_source}"
+        RESULT_VARIABLE conversion_result)
+    if(NOT conversion_result EQUAL 0)
+        message(FATAL_ERROR "integer conversion fixture translation failed")
+    endif()
+    execute_process(COMMAND "${CLANG}" -target spir64 -x cl -cl-std=CL1.0 -fsyntax-only
+        ${compile_options} "${conversion_source}" RESULT_VARIABLE conversion_result
+        OUTPUT_VARIABLE conversion_stdout ERROR_VARIABLE conversion_stderr)
+    if(NOT conversion_result EQUAL 0)
+        message(FATAL_ERROR "integer conversion is not valid OpenCL C 1.0: ${conversion_stdout}${conversion_stderr}")
+    endif()
 endif()

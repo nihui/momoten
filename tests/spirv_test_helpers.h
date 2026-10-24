@@ -99,4 +99,49 @@ inline void make_stores_volatile(std::vector<uint32_t>& words)
     words.swap(rewritten);
 }
 
+inline bool set_fp16_rounding(std::vector<uint32_t>& words, spv::FPRoundingMode rounding)
+{
+    std::map<uint32_t, bool> half_types;
+    std::map<uint32_t, bool> conversions;
+    size_t first_type = words.size();
+    for (size_t i = 5; i < words.size(); i += words[i] >> 16)
+    {
+        const uint32_t count = words[i] >> 16;
+        const spv::Op opcode = static_cast<spv::Op>(words[i] & 65535u);
+        if (count == 0 || count > words.size() - i)
+            return false;
+        if (opcode >= spv::OpTypeVoid && opcode <= spv::OpTypeForwardPointer && first_type == words.size())
+            first_type = i;
+        if (opcode == spv::OpTypeFloat && count == 3 && words[i + 2] == 16)
+            half_types[words[i + 1]] = true;
+        if (opcode == spv::OpTypeVector && count == 4 && half_types[words[i + 2]])
+            half_types[words[i + 1]] = true;
+        if (opcode == spv::OpFConvert && count == 4 && half_types[words[i + 1]])
+            conversions[words[i + 2]] = false;
+    }
+    if (conversions.empty() || first_type == words.size())
+        return false;
+    for (size_t i = 5; i < first_type; i += words[i] >> 16)
+    {
+        if ((words[i] & 65535u) == spv::OpDecorate && (words[i] >> 16) == 4
+            && words[i + 2] == spv::DecorationFPRoundingMode && conversions.count(words[i + 1]))
+        {
+            words[i + 3] = rounding;
+            conversions[words[i + 1]] = true;
+        }
+    }
+    std::vector<uint32_t> decorations;
+    for (const auto& conversion : conversions)
+    {
+        if (conversion.second)
+            continue;
+        decorations.push_back((4u << 16) | spv::OpDecorate);
+        decorations.push_back(conversion.first);
+        decorations.push_back(spv::DecorationFPRoundingMode);
+        decorations.push_back(rounding);
+    }
+    words.insert(words.begin() + first_type, decorations.begin(), decorations.end());
+    return true;
+}
+
 #endif // MOMOTEN_SPIRV_TEST_HELPERS_H

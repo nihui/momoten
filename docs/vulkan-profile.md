@@ -29,12 +29,15 @@ The translator accepts Vulkan GLCompute SPIR-V and emits conservative OpenCL C
 1.0 source. The supported shader subset includes:
 
 - 32-bit scalar and vector arithmetic;
+- 16-bit integer scalar and vector arithmetic through core OpenCL `short` and `ushort` types;
 - structured control flow and compute builtins;
-- storage buffers, push constants and specialization constants;
+- storage buffers, uniform buffers, push constants and specialization constants;
 - common GLSL.std.450 operations;
-- fixed 32-bit workgroup arrays and workgroup barriers;
+- fixed 16-bit integer and 32-bit workgroup arrays and workgroup barriers;
 - ncnn-style 32-bit-carrier packed fp16/int8 forms;
-- conditional native half storage and arithmetic with `cl_khr_fp16`;
+- 16-bit storage with native half conversions when `cl_khr_fp16` is available and software conversions otherwise;
+- conditional native half arithmetic with `cl_khr_fp16`;
+- native 8-bit storage-buffer scalar, vec2 and vec4 elements when byte-addressable stores are available;
 - conditional 64-bit integer scalar/vector storage and arithmetic, including fixed workgroup arrays, from the OpenCL profile, extension and feature declarations;
 - conditional double scalar/vector storage and arithmetic with `cl_khr_fp64`;
 - Vulkan 1.1 subgroup BASIC operations and built-ins through an exact size-one subgroup fallback on OpenCL C 1.0;
@@ -53,9 +56,28 @@ chain, flags, layers, queue parameters and object-specific fields. Custom
 allocation callbacks and create-info extensions outside this restricted profile
 are rejected explicitly instead of being ignored.
 
-When `cl_khr_fp16` is present, the implementation reports only the relevant
-`storageBuffer16BitAccess` and `shaderFloat16` Vulkan features. It does not
-report uniform, push-constant or I/O 16-bit storage.
+`VK_KHR_16bit_storage` exposes `storageBuffer16BitAccess` and
+`uniformAndStorageBuffer16BitAccess` when byte-addressable stores are available.
+`storagePushConstant16` uses the existing 32-bit kernel-argument ABI and does not
+require byte-addressable stores. These storage features are independent of
+`cl_khr_fp16`; only `shaderFloat16` arithmetic requires that extension.
+`storageInputOutput16` remains disabled because this profile supports compute
+shaders only.
+
+Without native half support, storage-only half values are represented by
+`ushort` bit patterns. Loads, stores and copies preserve the stored bits, and
+16/32-bit floating-point width conversions use software helpers. Conversion
+rounding supports RTE and RTZ. Other rounding modes are rejected explicitly.
+Uniform buffers and mixed-layout push constants use SPIR-V offsets, array
+strides and matrix strides rather than the OpenCL struct ABI. The supported
+layouts include nested structs, fixed arrays, scalar/vector members and
+column-major mat4 members. Uniform buffers use the existing push-descriptor
+and descriptor-update-template paths; descriptor pools and dynamic uniform
+buffers remain outside this profile.
+
+The core `shaderInt16` feature uses the mandatory OpenCL C `short` and `ushort` types. Narrow arithmetic preserves the SPIR-V 16-bit result before subsequent conversions or bitcasts. This is functional support and does not claim hardware 16-bit arithmetic acceleration. Integer 16-bit storage shares the layouts of the floating-point 16-bit storage path.
+
+`VK_KHR_8bit_storage` reports only `storageBuffer8BitAccess`, backed by core byte-addressable stores on OpenCL 1.1 or newer, or `cl_khr_byte_addressable_store` on OpenCL 1.0. Uniform and push-constant 8-bit storage remain unsupported. The translator accepts SPIR-V `StorageBuffer8BitAccess` independently of `Int8`; `shaderInt8` remains disabled. Pipelines requiring either 8-bit storage or 16-bit integer arithmetic are rejected if the corresponding Vulkan device feature was not enabled.
 
 The core `shaderInt64` feature is reported for OpenCL `FULL_PROFILE` devices, for `EMBEDDED_PROFILE` devices reporting `cles_khr_int64`, or when the OpenCL 3.0 `CL_DEVICE_OPENCL_C_FEATURES` list contains `__opencl_c_int64`. Querying the OpenCL 3.0 property is opportunistic and does not raise the OpenCL 1.0 host API baseline; older drivers simply reject the property query. Device discovery does not invoke the online compiler for int64 detection. The translator accepts SPIR-V `Int64`, maps signed and unsigned scalar/vector values to OpenCL `long` and `ulong`, and supports fixed int64/uint64 workgroup arrays and representable storage-buffer layouts. This path supplies ncnn's packed-half local-memory representation when fp16 storage and arithmetic are available but fp16 uniforms are not. It does not imply 64-bit atomic support.
 
@@ -73,7 +95,7 @@ same helpers. Failure advances to the next candidate; failure of every
 candidate leaves the Vulkan feature disabled.
 
 Vendor backends support both packed words and four-byte vectors. Packed words
-are reinterpreted in registers, without enabling Vulkan `shaderInt8` or 8-bit
+are reinterpreted in registers, without requiring Vulkan `shaderInt8` or 8-bit
 storage. Acceleration is reported for direct native mappings only:
 
 | Backend | Signed | Unsigned | Mixed | Signed saturating | Unsigned saturating | Mixed saturating |
@@ -106,7 +128,7 @@ using its existing fallback branch.
 Only `VK_SUBGROUP_FEATURE_BASIC_BIT` is reported. Arithmetic, ballot, shuffle,
 shuffle-relative, clustered and quad subgroup operations remain unreported and
 their SPIR-V instructions are rejected until exact lowerings exist. Images,
-samplers, native 8-bit/integer-16-bit storage, device-scope barriers, general
+samplers, 8-bit integer arithmetic, device-scope barriers, general
 atomics, graphics pipelines and general matrix operations are likewise outside
 the current profile and must be rejected rather than silently approximated.
 

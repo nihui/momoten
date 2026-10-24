@@ -48,11 +48,19 @@ static bool extension_enabled(const VkDeviceCreateInfo* create_info,
 
 static VkResult enable_core_features(
     VkPhysicalDevice physical, const VkPhysicalDeviceFeatures& requested,
-    bool& int64, bool& fp64)
+    bool& int16, bool& int64, bool& fp64)
 {
     VkPhysicalDeviceFeatures remaining = requested;
+    int16 = false;
     int64 = false;
     fp64 = false;
+    if (remaining.shaderInt16)
+    {
+        if (!physical->shader_profile.int16)
+            return VK_ERROR_FEATURE_NOT_PRESENT;
+        int16 = true;
+        remaining.shaderInt16 = VK_FALSE;
+    }
     if (remaining.shaderInt64)
     {
         if (!physical->shader_profile.int64)
@@ -98,7 +106,7 @@ VkResult impl_create_device(
     {
         const VkResult result = enable_core_features(
             physical, *create_info->pEnabledFeatures,
-            enabled_shader_profile.int64, enabled_shader_profile.fp64);
+            enabled_shader_profile.int16, enabled_shader_profile.int64, enabled_shader_profile.fp64);
         if (result != VK_SUCCESS)
             return result;
     }
@@ -137,7 +145,7 @@ VkResult impl_create_device(
             const VkPhysicalDeviceFeatures2* features2 = reinterpret_cast<const VkPhysicalDeviceFeatures2*>(feature);
             const VkResult result = enable_core_features(
                 physical, features2->features,
-                enabled_shader_profile.int64, enabled_shader_profile.fp64);
+                enabled_shader_profile.int16, enabled_shader_profile.int64, enabled_shader_profile.fp64);
             if (result != VK_SUCCESS)
                 return result;
             core_features_specified = true;
@@ -146,12 +154,23 @@ VkResult impl_create_device(
                  == VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_16BIT_STORAGE_FEATURES)
         {
             const VkPhysicalDevice16BitStorageFeatures* storage = reinterpret_cast<const VkPhysicalDevice16BitStorageFeatures*>(feature);
-            if ((storage->storageBuffer16BitAccess
-                 && !physical->shader_profile.fp16)
-                || storage->uniformAndStorageBuffer16BitAccess
-                || storage->storagePushConstant16
+            if (((storage->storageBuffer16BitAccess || storage->uniformAndStorageBuffer16BitAccess)
+                 && !physical->shader_profile.byte_addressable_store)
                 || storage->storageInputOutput16)
                 return VK_ERROR_FEATURE_NOT_PRESENT;
+            enabled_shader_profile.storage_buffer16 = storage->storageBuffer16BitAccess;
+            enabled_shader_profile.uniform_buffer16 = storage->uniformAndStorageBuffer16BitAccess;
+            enabled_shader_profile.push_constant16 = storage->storagePushConstant16;
+        }
+        else if (feature->sType == VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_8BIT_STORAGE_FEATURES)
+        {
+            const VkPhysicalDevice8BitStorageFeatures* storage = reinterpret_cast<const VkPhysicalDevice8BitStorageFeatures*>(feature);
+            if ((storage->storageBuffer8BitAccess && !physical->shader_profile.byte_addressable_store)
+                || storage->uniformAndStorageBuffer8BitAccess || storage->storagePushConstant8)
+                return VK_ERROR_FEATURE_NOT_PRESENT;
+            if (storage->storageBuffer8BitAccess && !extension_enabled(create_info, VK_KHR_8BIT_STORAGE_EXTENSION_NAME))
+                return VK_ERROR_EXTENSION_NOT_PRESENT;
+            enabled_shader_profile.storage_buffer8 = storage->storageBuffer8BitAccess;
         }
         else if (feature->sType
                  == VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_FLOAT16_INT8_FEATURES)
@@ -164,6 +183,7 @@ VkResult impl_create_device(
                 && !extension_enabled(
                     create_info, VK_KHR_SHADER_FLOAT16_INT8_EXTENSION_NAME))
                 return VK_ERROR_EXTENSION_NOT_PRESENT;
+            enabled_shader_profile.fp16 = arithmetic->shaderFloat16;
         }
         else if (feature->sType == VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_INTEGER_DOT_PRODUCT_FEATURES)
         {

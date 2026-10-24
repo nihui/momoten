@@ -33,7 +33,7 @@ static bool descriptor_set_layout_supported(
     for (uint32_t i = 0; i < info->bindingCount; i++)
     {
         const VkDescriptorSetLayoutBinding& binding = info->pBindings[i];
-        if (binding.descriptorType != VK_DESCRIPTOR_TYPE_STORAGE_BUFFER
+        if ((binding.descriptorType != VK_DESCRIPTOR_TYPE_STORAGE_BUFFER && binding.descriptorType != VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER)
             || binding.descriptorCount != 1
             || binding.stageFlags != VK_SHADER_STAGE_COMPUTE_BIT
             || binding.pImmutableSamplers)
@@ -194,7 +194,7 @@ VkResult impl_create_descriptor_update_template(
     for (uint32_t i = 0; i < info->descriptorUpdateEntryCount; i++)
     {
         const VkDescriptorUpdateTemplateEntry& entry = info->pDescriptorUpdateEntries[i];
-        if (entry.descriptorType != VK_DESCRIPTOR_TYPE_STORAGE_BUFFER
+        if ((entry.descriptorType != VK_DESCRIPTOR_TYPE_STORAGE_BUFFER && entry.descriptorType != VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER)
             || entry.descriptorCount != 1 || entry.dstArrayElement != 0)
             return VK_ERROR_FEATURE_NOT_PRESENT;
         bool binding_found = false;
@@ -204,8 +204,7 @@ VkResult impl_create_descriptor_update_template(
             for (size_t b = 0; b < bindings.size(); b++)
             {
                 if (bindings[b].binding == entry.dstBinding
-                    && bindings[b].descriptorType
-                           == VK_DESCRIPTOR_TYPE_STORAGE_BUFFER
+                    && bindings[b].descriptorType == entry.descriptorType
                     && bindings[b].descriptorCount == 1)
                 {
                     binding_found = true;

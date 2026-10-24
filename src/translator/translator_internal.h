@@ -24,6 +24,7 @@ struct ResourceInfo
     uint32_t descriptor_set;
     uint32_t binding;
     BufferAccess access;
+    bool uniform;
     // Original shader name for ABI reflection; source symbols are allocated separately.
     std::string name;
 };
@@ -114,19 +115,24 @@ private:
     void require_statement_continue();
     std::string buffer_scalar_type(const SPIRType& type);
     void emit_buffer_load_result(uint32_t result_type, uint32_t result_id, uint32_t pointer, const std::string& expression);
-    void track_aliased_buffer_access(const Instruction& instruction, const uint32_t* ops);
-    std::string aliased_buffer_address(uint32_t pointer);
-    std::string aliased_scalar_load(const SPIRType& type, const std::string& address, uint32_t offset);
-    void emit_aliased_scalar_store(const SPIRType& type, const std::string& address, uint32_t offset,
-                                   const std::string& value, const std::string& temporary);
+    void track_byte_addressed_access(const Instruction& instruction, const uint32_t* ops);
+    bool uses_byte_addressing(uint32_t variable) const;
+    std::string byte_address(uint32_t pointer, uint32_t* matrix_stride = 0);
+    std::string byte_addressed_load(const SPIRType& type, const std::string& address, uint32_t offset, const std::string& qualifiers);
+    void emit_byte_addressed_store(const SPIRType& type, const std::string& address, uint32_t offset,
+                                   const std::string& value, const std::string& temporary, const std::string& qualifiers);
     void track_private_vector_access(const Instruction& instruction, const uint32_t* ops);
     bool emit_private_vector_access(const Instruction& instruction, const uint32_t* ops);
     bool emit_coalesced_buffer_load(const Instruction& instruction, const uint32_t* ops);
-    bool emit_aliased_buffer_access(const Instruction& instruction, const uint32_t* ops);
+    bool emit_byte_addressed_access(const Instruction& instruction, const uint32_t* ops);
     bool emit_storage_buffer_load(const Instruction& instruction, const uint32_t* ops);
     bool emit_storage_buffer_store(const Instruction& instruction, const uint32_t* ops);
     void emit_fp64_vector_helpers();
     bool emit_fp64_vector_instruction(const Instruction& instruction, const uint32_t* ops);
+    std::string convert_value(const SPIRType& type, const std::string& value);
+    std::string narrow_int16(const SPIRType& type, const std::string& value);
+    bool emit_integer_conversion_instruction(const Instruction& instruction, const uint32_t* ops);
+    bool emit_int16_arithmetic_instruction(const Instruction& instruction, const uint32_t* ops);
     void emit_integer_dot_product_helpers();
     bool emit_integer_dot_product_instruction(const Instruction& instruction, const uint32_t* ops);
     bool emit_basic_subgroup_instruction(const Instruction& instruction, const uint32_t* ops);
@@ -142,6 +148,7 @@ private:
     void override_workgroup_size();
 
     void validate_storage_block(const Resource& resource);
+    void validate_raw_block_type(uint32_t type_id, StorageClass storage);
     void validate_push_constant_block(const Resource& resource, size_t& size);
     void reflect_resources(KernelABI& abi);
     uint32_t floating_point_scalar_type(uint32_t type_id) const;
@@ -151,8 +158,13 @@ private:
     FloatingPointControls floating_point_controls;
     bool requires_global_int32_atomics;
     bool requires_fp16;
+    bool requires_int16;
     bool requires_int64;
     bool requires_fp64;
+    bool requires_storage_buffer8;
+    bool requires_storage_buffer16;
+    bool requires_uniform_buffer16;
+    bool requires_push_constant16;
     bool requires_integer_dot_product;
     bool requires_scalar_pow;
     bool uses_workgroup_storage;
@@ -160,8 +172,11 @@ private:
     std::vector<ResourceInfo> resources;
     std::map<uint32_t, size_t> resource_indices;
     uint32_t push_constant_variable_id;
+    bool raw_push_constants;
+    size_t push_constant_bytes;
     uint32_t local_size[3];
     std::set<uint32_t> storage_block_types;
+    std::set<uint32_t> raw_buffer_variables;
     std::map<uint32_t, CoalescedBufferLoad> coalesced_buffer_loads;
     std::map<uint32_t, PrivateVectorAccess> private_vector_accesses;
     std::map<uint32_t, BufferAccessChain> buffer_access_chains;

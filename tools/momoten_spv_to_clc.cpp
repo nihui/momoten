@@ -17,7 +17,8 @@ static void print_usage(const char* executable)
 {
     fprintf(stderr,
             "Usage: %s [--entry name] [--address-bits 32|64] "
-            "[--local-size x,y,z] [--specialize id=value] input.spv [output.cl]\n",
+            "[--local-size x,y,z] [--specialize id=value] [--no-native-fp16] "
+            "[--byte-addressable-store] input.spv [output.cl]\n",
             executable);
 }
 
@@ -108,6 +109,10 @@ int main(int argc, char** argv)
             }
             options.specializations.push_back(value);
         }
+        else if (strcmp(argv[i], "--no-native-fp16") == 0)
+            options.native_fp16 = false;
+        else if (strcmp(argv[i], "--byte-addressable-store") == 0)
+            options.byte_addressable_store = true;
         else if (!input_path)
         {
             input_path = argv[i];

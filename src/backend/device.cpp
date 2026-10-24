@@ -112,10 +112,16 @@ std::vector<VkExtensionProperties> device_extensions(VkPhysicalDevice physical)
         make_extension(VK_KHR_DRIVER_PROPERTIES_EXTENSION_NAME, VK_KHR_DRIVER_PROPERTIES_SPEC_VERSION),
         make_extension(VK_KHR_MAINTENANCE1_EXTENSION_NAME, VK_KHR_MAINTENANCE1_SPEC_VERSION),
         make_extension(VK_KHR_MAINTENANCE3_EXTENSION_NAME, VK_KHR_MAINTENANCE3_SPEC_VERSION)};
-    if (physical && physical->shader_profile.fp16)
+    if (physical && physical->shader_profile.byte_addressable_store)
+        extensions.push_back(make_extension(VK_KHR_8BIT_STORAGE_EXTENSION_NAME,
+                                            VK_KHR_8BIT_STORAGE_SPEC_VERSION));
+    if (physical)
     {
         extensions.push_back(make_extension(VK_KHR_16BIT_STORAGE_EXTENSION_NAME,
                                             VK_KHR_16BIT_STORAGE_SPEC_VERSION));
+    }
+    if (physical && physical->shader_profile.fp16)
+    {
         extensions.push_back(make_extension(VK_KHR_SHADER_FLOAT16_INT8_EXTENSION_NAME,
                                             VK_KHR_SHADER_FLOAT16_INT8_SPEC_VERSION));
     }

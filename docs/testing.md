@@ -35,6 +35,26 @@ explicitly supplied and never changes the driver's link dependencies.
 
 The fp16 fixture reproduces ncnn's packed-half workgroup representation with `uint64_t`, validates `ushort4`/`ulong` bitcasts, and exercises the width conversion required by OpenCL `select` for a half-vector result. The fp64 fixture checks capability reflection, guarded extension setup, scalar/vector lowering, `ulong` storage-buffer bitcasts and numerical execution through an actual OpenCL compiler. The integer dot-product fixture covers packed 4x8-bit signed, unsigned and mixed-signedness operations, their accumulating-saturating variants, and 32-bit vector modulo/saturating corner cases. The driver test also enables Vulkan features and executes translated SPIR-V through public Vulkan entry points. Device acceleration properties are tested independently from functional extension support.
 
+The storage16 fixture combines std140 uniform arrays, nested structs and matrix
+arrays with mixed-width push constants and storage-buffer struct arrays. It
+checks all 65,536 half bit patterns, exact copies, floating-point widening,
+RTE/RTZ narrowing, subnormals, rounding boundaries and overflow. The runtime
+test checks nonzero buffer and descriptor offsets, both direct push descriptors
+and update templates, missing-feature rejection, and the storage8 permission
+for storage-buffer16 access. Shader float16 and int16 arithmetic are disabled
+for this storage-only shader. On Unix builds with direct OpenCL tests enabled,
+a test wrapper hides `cl_khr_fp16` while forwarding all other OpenCL calls to
+the configured backend. The same public Vulkan tests then execute the software
+half-storage path through both modular and amalgamated drivers.
+
+The integer-storage fixtures exercise signed byte loads, scalar and vector byte stores, adjacent-byte writes and 16-bit scalar/vector arithmetic across all 65536 input bit patterns. The 16-bit fixture also exchanges vectors between invocations through a workgroup array and barrier. Runtime tests use nonzero buffer-binding and descriptor offsets and verify surrounding sentinel bytes. They first reject pipelines without the required device feature, then enable the feature and compare GPU output against integer references. Modular and amalgamated builds run the same fixtures; 8-bit storage tests leave `shaderInt8` disabled.
+
+The integer-conversion fixture assembles and validates SPIR-V with input types
+whose signedness differs from the conversion opcode. Scalar and vector tests
+cover `OpUConvert`, `OpSConvert`, `OpConvertUToF` and `OpConvertSToF` across all
+65,536 input bit patterns. Strict OpenCL C 1.0 syntax tests include these
+conversions, byte storage, int16 arithmetic and native/software half storage.
+
 The vendor integer-dot tests translate packed and unpacked SPIR-V for all
 backends. The OpenCL execution test runs the ARM and QCOM lowerings against
 specification-based builtin emulation, covering every byte pair, asymmetric
