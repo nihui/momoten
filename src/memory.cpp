@@ -220,7 +220,7 @@ VkResult impl_create_buffer(
         || info->sharingMode != VK_SHARING_MODE_EXCLUSIVE)
         return VK_ERROR_FEATURE_NOT_PRESENT;
     const VkBufferUsageFlags supported_usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT
-                                               | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT;
+                                               | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT;
     if (info->usage == 0 || (info->usage & ~supported_usage) != 0)
         return VK_ERROR_FEATURE_NOT_PRESENT;
     std::shared_ptr<Buffer> value(new Buffer);

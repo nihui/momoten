@@ -13,11 +13,11 @@ bool CompilerOpenCL::emit_memory_instruction(const Instruction& instruction, con
     if (opcode == OpAccessChain || opcode == OpInBoundsAccessChain)
         track_private_vector_access(instruction, ops);
     if (opcode == OpAccessChain || opcode == OpInBoundsAccessChain || opcode == OpCopyObject)
-        track_aliased_buffer_access(instruction, ops);
+        track_byte_addressed_access(instruction, ops);
     if ((opcode == OpLoad || opcode == OpStore) && emit_private_vector_access(instruction, ops))
         return true;
 
-    if ((opcode == OpLoad || opcode == OpStore) && emit_aliased_buffer_access(instruction, ops))
+    if ((opcode == OpLoad || opcode == OpStore) && emit_byte_addressed_access(instruction, ops))
         return true;
 
     if (opcode == OpLoad && (emit_coalesced_buffer_load(instruction, ops) || emit_storage_buffer_load(instruction, ops)))

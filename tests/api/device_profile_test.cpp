@@ -275,9 +275,9 @@ static int check_byte_stores(const char* version, const char* extensions, bool e
     language_version = version;
     const momoten_detail::ShaderDeviceProfile profile = momoten_detail::probe_shader_device_profile(
         reinterpret_cast<cl_device_id>(1), extensions, 128, 128, momoten_detail::OpenCLDriverPolicy());
-    if (profile.byte_addressable_store != expected)
+    if (profile.byte_addressable_store != expected || profile.int16 != expected)
     {
-        fprintf(stderr, "device_profile_test: byte stores: %s, %s\n", version, extensions);
+        fprintf(stderr, "device_profile_test: byte stores and int16: %s, %s\n", version, extensions);
         return 1;
     }
     return 0;

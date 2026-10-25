@@ -1,0 +1,19 @@
+// Copyright 2026 nihui
+// SPDX-License-Identifier: Apache-2.0
+
+#version 450
+#extension GL_EXT_shader_explicit_arithmetic_types_int16 : require
+
+layout(local_size_x = 1) in;
+layout(binding = 0) buffer Data
+{
+    uint values[];
+} data;
+
+void main()
+{
+    int16_t lanes[4];
+    for (uint i = 0; i < 4; i++)
+        lanes[i] = int16_t(data.values[i]);
+    data.values[0] = uint(int(lanes[data.values[4] & 3u]));
+}

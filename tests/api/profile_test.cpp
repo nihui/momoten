@@ -144,6 +144,8 @@ int main()
     bool float_controls_supported = false;
     bool float_controls2_supported = false;
     bool fp16_supported = false;
+    bool int8_storage_supported = false;
+    bool storage16_supported = false;
     for (size_t i = 0; i < available_device_extensions.size(); i++)
     {
         if (strcmp(available_device_extensions[i].extensionName,
@@ -186,6 +188,16 @@ int main()
                 return 1;
             }
         }
+        else if (strcmp(available_device_extensions[i].extensionName, VK_KHR_8BIT_STORAGE_EXTENSION_NAME) == 0)
+        {
+            int8_storage_supported = true;
+            if (available_device_extensions[i].specVersion != VK_KHR_8BIT_STORAGE_SPEC_VERSION)
+                return 1;
+        }
+        else if (strcmp(available_device_extensions[i].extensionName, VK_KHR_16BIT_STORAGE_EXTENSION_NAME) == 0)
+        {
+            storage16_supported = true;
+        }
         else if (strcmp(available_device_extensions[i].extensionName, VK_KHR_SHADER_FLOAT16_INT8_EXTENSION_NAME) == 0)
         {
             fp16_supported = true;
@@ -207,10 +219,30 @@ int main()
     VkPhysicalDeviceShaderFloatControls2FeaturesKHR float_controls2_features = {};
     float_controls2_features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_FLOAT_CONTROLS_2_FEATURES_KHR;
     integer_dot_features.pNext = &float_controls2_features;
+    VkPhysicalDevice8BitStorageFeatures storage8_features = {};
+    storage8_features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_8BIT_STORAGE_FEATURES;
+    float_controls2_features.pNext = &storage8_features;
+    VkPhysicalDevice16BitStorageFeatures storage16_features = {};
+    storage16_features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_16BIT_STORAGE_FEATURES;
+    storage8_features.pNext = &storage16_features;
     VkPhysicalDeviceFeatures2 features2 = {};
     features2.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
     features2.pNext = &integer_dot_features;
     vkGetPhysicalDeviceFeatures2(physical_device, &features2);
+    if (bool(storage16_features.storageBuffer16BitAccess) != int8_storage_supported
+        || bool(storage16_features.uniformAndStorageBuffer16BitAccess) != int8_storage_supported
+        || !storage16_features.storagePushConstant16 || !storage16_supported || storage16_features.storageInputOutput16)
+    {
+        fprintf(stderr, "profile_test: 16-bit storage features are inconsistent\n");
+        return 1;
+    }
+    if (features2.features.shaderInt16 != core_features.shaderInt16
+        || (storage8_features.storageBuffer8BitAccess == VK_TRUE) != int8_storage_supported
+        || storage8_features.uniformAndStorageBuffer8BitAccess || storage8_features.storagePushConstant8)
+    {
+        fprintf(stderr, "profile_test: narrow integer features are inconsistent\n");
+        return 1;
+    }
     if (features2.features.shaderFloat64 != core_features.shaderFloat64)
     {
         fprintf(stderr, "profile_test: core and Features2 shaderFloat64 reports disagree\n");
@@ -397,6 +429,45 @@ int main()
         vkDestroyDevice(fp64_device, 0);
     }
 
+    {
+        VkPhysicalDeviceFeatures requested_features = {};
+        requested_features.shaderInt16 = VK_TRUE;
+        VkDeviceCreateInfo int16_device_info = minimal_device_info;
+        int16_device_info.pEnabledFeatures = &requested_features;
+        VkDevice int16_device = VK_NULL_HANDLE;
+        result = vkCreateDevice(physical_device, &int16_device_info, 0, &int16_device);
+        if (expect_result("vkCreateDevice(shaderInt16)", result, core_features.shaderInt16 ? VK_SUCCESS : VK_ERROR_FEATURE_NOT_PRESENT))
+            return 1;
+        if (int16_device)
+            vkDestroyDevice(int16_device, 0);
+    }
+
+    if (int8_storage_supported)
+    {
+        VkPhysicalDevice8BitStorageFeatures storage8 = {};
+        storage8.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_8BIT_STORAGE_FEATURES;
+        storage8.storageBuffer8BitAccess = VK_TRUE;
+        VkDeviceCreateInfo storage8_info = minimal_device_info;
+        storage8_info.pNext = &storage8;
+        VkDevice storage8_device = VK_NULL_HANDLE;
+        if (expect_result("vkCreateDevice(storage8 without extension)", vkCreateDevice(physical_device, &storage8_info, 0, &storage8_device), VK_ERROR_EXTENSION_NOT_PRESENT))
+            return 1;
+        const char* extension = VK_KHR_8BIT_STORAGE_EXTENSION_NAME;
+        storage8_info.enabledExtensionCount = 1;
+        storage8_info.ppEnabledExtensionNames = &extension;
+        if (check_result("vkCreateDevice(storage8)", vkCreateDevice(physical_device, &storage8_info, 0, &storage8_device)))
+            return 1;
+        vkDestroyDevice(storage8_device, 0);
+        storage8.uniformAndStorageBuffer8BitAccess = VK_TRUE;
+        if (expect_result("vkCreateDevice(storage8 uniform)", vkCreateDevice(physical_device, &storage8_info, 0, &storage8_device), VK_ERROR_FEATURE_NOT_PRESENT))
+            return 1;
+        storage8.uniformAndStorageBuffer8BitAccess = VK_FALSE;
+        storage8.storagePushConstant8 = VK_TRUE;
+        if (expect_result("vkCreateDevice(storage8 push constant)", vkCreateDevice(physical_device, &storage8_info, 0, &storage8_device), VK_ERROR_FEATURE_NOT_PRESENT))
+            return 1;
+    }
+
+    float_controls2_features.pNext = 0;
     if (core_features.shaderInt64)
     {
         VkPhysicalDeviceFeatures requested_features = {};
@@ -447,7 +518,7 @@ int main()
     VkBufferCreateInfo invalid_buffer_info = {};
     invalid_buffer_info.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
     invalid_buffer_info.size = 16;
-    invalid_buffer_info.usage = VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT;
+    invalid_buffer_info.usage = VK_BUFFER_USAGE_INDEX_BUFFER_BIT;
     invalid_buffer_info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
     VkBuffer invalid_buffer = VK_NULL_HANDLE;
     if (expect_result("vkCreateBuffer(unsupported usage)",

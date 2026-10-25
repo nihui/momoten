@@ -36,8 +36,13 @@ static void qualify_file_scope_constants(std::string& source)
     }
 }
 
+BufferArgument::BufferArgument()
+    : variable_id(0), descriptor_set(0), binding(0), buffer_arg_index(0), offset_arg_index(0), access(BufferAccessReadWrite), uniform(false)
+{
+}
+
 KernelABI::KernelABI()
-    : address_bits(0), subgroup_mode(SubgroupModeSingleton), subgroup_size(1), int64(false), fp64(false), integer_dot_product(false), float_controls2(false), workgroup_splittable(false), workgroup_mode(WorkgroupModeDirect), push_constant_arg_index(-1), push_constant_size(0)
+    : address_bits(0), subgroup_mode(SubgroupModeSingleton), subgroup_size(1), fp16(false), int16(false), int64(false), fp64(false), storage_buffer8(false), storage_buffer16(false), uniform_buffer16(false), push_constant16(false), integer_dot_product(false), float_controls2(false), workgroup_splittable(false), workgroup_mode(WorkgroupModeDirect), push_constant_arg_index(-1), push_constant_size(0)
 {
     local_size[0] = 1;
     local_size[1] = 1;
@@ -45,7 +50,7 @@ KernelABI::KernelABI()
 }
 
 TranslationOptions::TranslationOptions()
-    : entry_point("main"), address_bits(32), override_local_size(false), workgroup_mode(WorkgroupModeDirect), subgroup_mode(SubgroupModeSingleton), subgroup_size(1), integer_dot_product(false), integer_dot_product_backend(IntegerDotProductKhr), integer_dot_product_input_4x8bit(false), integer_dot_product_input_4x8bit_packed(false), integer_dot_product_split_packed_acc_sat(false), integer_dot_product_swap_mixed_acc_sat(false), native_buffer_vector_loads(false), native_buffer_vector_stores(false), packed_fp16_vector_loads(false), byte_addressable_store(false)
+    : entry_point("main"), address_bits(32), override_local_size(false), workgroup_mode(WorkgroupModeDirect), subgroup_mode(SubgroupModeSingleton), subgroup_size(1), integer_dot_product(false), integer_dot_product_backend(IntegerDotProductKhr), integer_dot_product_input_4x8bit(false), integer_dot_product_input_4x8bit_packed(false), integer_dot_product_split_packed_acc_sat(false), integer_dot_product_swap_mixed_acc_sat(false), native_buffer_vector_loads(false), native_buffer_vector_stores(false), packed_fp16_vector_loads(false), native_fp16(true), byte_addressable_store(false)
 {
     local_size[0] = 1;
     local_size[1] = 1;
@@ -54,7 +59,7 @@ TranslationOptions::TranslationOptions()
 
 CompilerOpenCL::CompilerOpenCL(const uint32_t* words, size_t word_count, const TranslationOptions& options_,
                                bool requires_global_int32_atomics_, bool contains_synchronization_barrier)
-    : CompilerGLSL(words, word_count), translation_options(options_), requires_global_int32_atomics(requires_global_int32_atomics_), requires_fp16(false), requires_int64(false), requires_fp64(false), requires_integer_dot_product(false), requires_scalar_pow(false), uses_workgroup_storage(false), workgroup_splittable(!contains_synchronization_barrier), push_constant_variable_id(0)
+    : CompilerGLSL(words, word_count), translation_options(options_), requires_global_int32_atomics(requires_global_int32_atomics_), requires_fp16(false), requires_int16(false), requires_int64(false), requires_fp64(false), requires_storage_buffer8(false), requires_storage_buffer16(false), requires_uniform_buffer16(false), requires_push_constant16(false), requires_integer_dot_product(false), requires_scalar_pow(false), uses_workgroup_storage(false), workgroup_splittable(!contains_synchronization_barrier), push_constant_variable_id(0), raw_push_constants(false), push_constant_bytes(0)
 {
     if (translation_options.native_buffer_vector_loads)
         coalesced_buffer_loads = plan_coalesced_buffer_loads(words, word_count, translation_options);
@@ -78,8 +83,10 @@ void CompilerOpenCL::prepare(KernelABI& abi)
     set_entry_point(translation_options.entry_point, ExecutionModelGLCompute);
     validate_capabilities();
     apply_specializations();
+    validate_variable_storage();
     reflect_float_controls(abi);
     const SmallVector<Capability>& capabilities = get_declared_capabilities();
+    abi.fp16 = std::find(capabilities.begin(), capabilities.end(), CapabilityFloat16) != capabilities.end();
     abi.float_controls2 = std::find(capabilities.begin(), capabilities.end(), CapabilityFloatControls2) != capabilities.end();
 
     if (translation_options.override_local_size)
@@ -111,8 +118,13 @@ void CompilerOpenCL::prepare(KernelABI& abi)
 
     abi.entry_point = "momo_main";
     abi.address_bits = translation_options.address_bits;
+    abi.int16 = requires_int16;
     abi.int64 = requires_int64;
     abi.fp64 = requires_fp64;
+    abi.storage_buffer8 = requires_storage_buffer8;
+    abi.storage_buffer16 = requires_storage_buffer16;
+    abi.uniform_buffer16 = requires_uniform_buffer16;
+    abi.push_constant16 = requires_push_constant16;
     abi.subgroup_mode = translation_options.subgroup_mode;
     abi.subgroup_size = translation_options.subgroup_size;
     abi.integer_dot_product = requires_integer_dot_product;
@@ -141,8 +153,27 @@ void CompilerOpenCL::validate_capabilities()
     for (size_t i = 0; i < capabilities.size(); i++)
     {
         const Capability capability = capabilities[i];
-        if (capability == CapabilityShader || capability == CapabilityGroupNonUniform || capability == CapabilityInt16 || capability == CapabilityStorageBuffer16BitAccess || capability == CapabilityUniformAndStorageBuffer16BitAccess || capability == CapabilityFloatControls2 || capability == CapabilityDenormPreserve || capability == CapabilityDenormFlushToZero || capability == CapabilitySignedZeroInfNanPreserve || capability == CapabilityRoundingModeRTE || capability == CapabilityRoundingModeRTZ)
+        if (capability == CapabilityShader || capability == CapabilityGroupNonUniform || capability == CapabilityFloatControls2 || capability == CapabilityDenormPreserve || capability == CapabilityDenormFlushToZero || capability == CapabilitySignedZeroInfNanPreserve || capability == CapabilityRoundingModeRTE || capability == CapabilityRoundingModeRTZ)
             continue;
+        if (capability == CapabilityStorageBuffer16BitAccess || capability == CapabilityUniformAndStorageBuffer16BitAccess || capability == CapabilityStoragePushConstant16)
+        {
+            requires_storage_buffer16 |= capability == CapabilityStorageBuffer16BitAccess;
+            requires_uniform_buffer16 |= capability == CapabilityUniformAndStorageBuffer16BitAccess;
+            requires_push_constant16 |= capability == CapabilityStoragePushConstant16;
+            continue;
+        }
+        if (capability == CapabilityInt16)
+        {
+            requires_int16 = true;
+            continue;
+        }
+        if (capability == CapabilityStorageBuffer8BitAccess)
+        {
+            if (!translation_options.byte_addressable_store)
+                throw std::runtime_error("SPIR-V StorageBuffer8BitAccess requires OpenCL byte-addressable storage");
+            requires_storage_buffer8 = true;
+            continue;
+        }
         if (capability == CapabilityInt64)
         {
             requires_int64 = true;
@@ -174,6 +205,8 @@ void CompilerOpenCL::validate_capabilities()
         }
         if (capability == CapabilityFloat16)
         {
+            if (!translation_options.native_fp16)
+                throw std::runtime_error("SPIR-V Float16 arithmetic requires cl_khr_fp16");
             requires_fp16 = true;
             continue;
         }
@@ -192,6 +225,25 @@ void CompilerOpenCL::validate_capabilities()
 
     if (requires_integer_dot_product && !translation_options.integer_dot_product)
         throw std::runtime_error("SPIR-V integer dot product requires a probed cl_khr_integer_dot_product device profile");
+}
+
+void CompilerOpenCL::validate_int16_storage_type(const SPIRType& type, bool member)
+{
+    if ((type.basetype == SPIRType::Short || type.basetype == SPIRType::UShort)
+        && type.vecsize == 1 && (member || !type.array.empty()))
+        throw std::runtime_error("int16 array and struct-member storage requires OpenCL byte-addressable stores");
+    for (uint32_t member_type : type.member_types)
+        validate_int16_storage_type(get_type(member_type), true);
+}
+
+void CompilerOpenCL::validate_variable_storage()
+{
+    if (translation_options.byte_addressable_store)
+        return;
+    ir.for_each_typed_id<SPIRVariable>([&](uint32_t, const SPIRVariable& variable) {
+        if (variable.storage == StorageClassFunction || variable.storage == StorageClassPrivate || variable.storage == StorageClassWorkgroup)
+            validate_int16_storage_type(get_variable_data_type(variable), false);
+    });
 }
 
 void CompilerOpenCL::apply_specializations()
@@ -243,9 +295,10 @@ void CompilerOpenCL::localize_workgroup_variables()
         const SPIRType& type = get_variable_data_type(variable);
         const bool supported_32 = (type.basetype == SPIRType::Int || type.basetype == SPIRType::UInt || type.basetype == SPIRType::Float) && type.width == 32;
         const bool supported_64 = (type.basetype == SPIRType::Int64 || type.basetype == SPIRType::UInt64) && type.width == 64;
+        const bool supported_16 = (type.basetype == SPIRType::Short || type.basetype == SPIRType::UShort) && type.width == 16;
         const bool supported_half = type.basetype == SPIRType::Half && type.width == 16;
-        if ((!supported_32 && !supported_64 && !supported_half) || type.columns != 1 || type.vecsize == 3 || type.vecsize > 4)
-            throw std::runtime_error("OpenCL workgroup storage requires scalar, vec2 or vec4 int32/uint32/float32/int64/uint64/float16 elements");
+        if ((!supported_32 && !supported_64 && !supported_16 && !supported_half) || type.columns != 1 || type.vecsize == 3 || type.vecsize > 4)
+            throw std::runtime_error("OpenCL workgroup storage requires scalar, vec2 or vec4 int16/uint16/int32/uint32/float32/int64/uint64/float16 elements");
         for (size_t dimension = 0; dimension < type.array.size(); dimension++)
         {
             if (!type.array_size_literal[dimension] || type.array[dimension] == 0)

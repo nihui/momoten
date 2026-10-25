@@ -50,6 +50,47 @@ inline bool decorate_aliased_buffers(std::vector<uint32_t>& words, uint32_t bind
     return true;
 }
 
+inline bool use_16bit_arithmetic_capabilities(std::vector<uint32_t>& words)
+{
+    if (words.size() < 5)
+        return false;
+    bool int16 = false;
+    bool fp16 = false;
+    bool has_int16 = false;
+    bool has_fp16 = false;
+    std::vector<uint32_t> rewritten(words.begin(), words.begin() + 5);
+    for (size_t offset = 5; offset < words.size(); offset += words[offset] >> spv::WordCountShift)
+    {
+        const uint32_t count = words[offset] >> spv::WordCountShift;
+        const spv::Op opcode = static_cast<spv::Op>(words[offset] & spv::OpCodeMask);
+        if (!count || count > words.size() - offset)
+            return false;
+        if (opcode == spv::OpCapability && count == 2)
+        {
+            const uint32_t capability = words[offset + 1];
+            has_int16 |= capability == spv::CapabilityInt16;
+            has_fp16 |= capability == spv::CapabilityFloat16;
+            if (capability == spv::CapabilityStorageBuffer16BitAccess || capability == spv::CapabilityUniformAndStorageBuffer16BitAccess || capability == spv::CapabilityStoragePushConstant16)
+                continue;
+        }
+        int16 |= opcode == spv::OpTypeInt && count == 4 && words[offset + 2] == 16;
+        fp16 |= opcode == spv::OpTypeFloat && count == 3 && words[offset + 2] == 16;
+        rewritten.insert(rewritten.end(), words.begin() + offset, words.begin() + offset + count);
+    }
+    if (int16 && !has_int16)
+    {
+        const uint32_t declaration[] = {(2u << spv::WordCountShift) | spv::OpCapability, spv::CapabilityInt16};
+        rewritten.insert(rewritten.begin() + 5, declaration, declaration + 2);
+    }
+    if (fp16 && !has_fp16)
+    {
+        const uint32_t declaration[] = {(2u << spv::WordCountShift) | spv::OpCapability, spv::CapabilityFloat16};
+        rewritten.insert(rewritten.begin() + 5, declaration, declaration + 2);
+    }
+    words.swap(rewritten);
+    return int16 || fp16;
+}
+
 inline void copy_access_chain_pointers(std::vector<uint32_t>& words)
 {
     std::vector<uint32_t> copied(words.begin(), words.begin() + 5);
@@ -97,6 +138,51 @@ inline void make_stores_volatile(std::vector<uint32_t>& words)
             rewritten.insert(rewritten.end(), words.begin() + offset, words.begin() + offset + count);
     }
     words.swap(rewritten);
+}
+
+inline bool set_fp16_rounding(std::vector<uint32_t>& words, spv::FPRoundingMode rounding)
+{
+    std::map<uint32_t, bool> half_types;
+    std::map<uint32_t, bool> conversions;
+    size_t first_type = words.size();
+    for (size_t i = 5; i < words.size(); i += words[i] >> 16)
+    {
+        const uint32_t count = words[i] >> 16;
+        const spv::Op opcode = static_cast<spv::Op>(words[i] & 65535u);
+        if (count == 0 || count > words.size() - i)
+            return false;
+        if (opcode >= spv::OpTypeVoid && opcode <= spv::OpTypeForwardPointer && first_type == words.size())
+            first_type = i;
+        if (opcode == spv::OpTypeFloat && count == 3 && words[i + 2] == 16)
+            half_types[words[i + 1]] = true;
+        if (opcode == spv::OpTypeVector && count == 4 && half_types[words[i + 2]])
+            half_types[words[i + 1]] = true;
+        if (opcode == spv::OpFConvert && count == 4 && half_types[words[i + 1]])
+            conversions[words[i + 2]] = false;
+    }
+    if (conversions.empty() || first_type == words.size())
+        return false;
+    for (size_t i = 5; i < first_type; i += words[i] >> 16)
+    {
+        if ((words[i] & 65535u) == spv::OpDecorate && (words[i] >> 16) == 4
+            && words[i + 2] == spv::DecorationFPRoundingMode && conversions.count(words[i + 1]))
+        {
+            words[i + 3] = rounding;
+            conversions[words[i + 1]] = true;
+        }
+    }
+    std::vector<uint32_t> decorations;
+    for (const auto& conversion : conversions)
+    {
+        if (conversion.second)
+            continue;
+        decorations.push_back((4u << 16) | spv::OpDecorate);
+        decorations.push_back(conversion.first);
+        decorations.push_back(spv::DecorationFPRoundingMode);
+        decorations.push_back(rounding);
+    }
+    words.insert(words.begin() + first_type, decorations.begin(), decorations.end());
+    return true;
 }
 
 #endif // MOMOTEN_SPIRV_TEST_HELPERS_H

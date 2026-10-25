@@ -524,6 +524,8 @@ ShaderDeviceProfile probe_shader_device_profile(
     OpenCLCapabilityProbe probe(device, profile.compiler);
     profile.fp16 = extension_string_contains(extensions, "cl_khr_fp16");
     profile.packed_fp16_vector_loads = profile.fp16 && probe_packed_fp16_vector_loads(probe, device);
+    // int16 shaders can write short and ushort arrays in local and private memory
+    profile.int16 = profile.byte_addressable_store;
     profile.int64 = declares_int64(device, extensions);
 
     cl_device_fp_config double_config = 0;
@@ -592,12 +594,12 @@ IntegerDotProductProfile::IntegerDotProductProfile()
 }
 
 ShaderDeviceProfile::ShaderDeviceProfile()
-    : byte_addressable_store(false), fp16(false), packed_fp16_vector_loads(false), int64(false), fp64(false), float_controls2(true), denorm_preserve_widths(0), round_to_nearest_widths(0), signed_zero_inf_nan_preserve_widths(0), subgroup_mode(momoten::SubgroupModeSingleton), subgroup_size(1), subgroup_operations(VK_SUBGROUP_FEATURE_BASIC_BIT)
+    : byte_addressable_store(false), fp16(false), packed_fp16_vector_loads(false), int16(false), int64(false), fp64(false), float_controls2(true), denorm_preserve_widths(0), round_to_nearest_widths(0), signed_zero_inf_nan_preserve_widths(0), subgroup_mode(momoten::SubgroupModeSingleton), subgroup_size(1), subgroup_operations(VK_SUBGROUP_FEATURE_BASIC_BIT)
 {
 }
 
 EnabledShaderProfile::EnabledShaderProfile()
-    : int64(false), fp64(false), integer_dot_product(false), float_controls2(false)
+    : fp16(false), int16(false), int64(false), fp64(false), storage_buffer8(false), storage_buffer16(false), uniform_buffer16(false), push_constant16(false), integer_dot_product(false), float_controls2(false)
 {
 }
 
@@ -609,6 +611,7 @@ void configure_translation_options(
     options.address_bits = device->physical_device->address_bits;
     options.byte_addressable_store = physical.byte_addressable_store;
     options.native_buffer_vector_loads = (device->physical_device->opencl_device_type & CL_DEVICE_TYPE_GPU) != 0;
+    options.native_fp16 = physical.fp16;
     options.native_buffer_vector_stores = options.native_buffer_vector_loads;
     const cl_uint offset_alignment = device->physical_device->mem_base_alignment_bits / 8;
     options.packed_fp16_vector_loads = options.native_buffer_vector_loads && physical.packed_fp16_vector_loads && offset_alignment >= 4 && offset_alignment % 4 == 0;
@@ -682,6 +685,28 @@ bool validate_pipeline_abi(
     if (abi.subgroup_mode != profile.subgroup_mode || abi.subgroup_size != profile.subgroup_size)
     {
         diagnostic = "translated subgroup ABI does not match the physical device profile";
+        return false;
+    }
+    if (abi.fp16 && !device->enabled_shader_profile.fp16)
+    {
+        diagnostic = "shader float16 arithmetic was not enabled when the Vulkan device was created";
+        return false;
+    }
+    if (abi.int16 && !device->enabled_shader_profile.int16)
+    {
+        diagnostic = "shader int16 was not enabled when the Vulkan device was created";
+        return false;
+    }
+    if ((abi.storage_buffer16 && !device->enabled_shader_profile.storage_buffer16 && !device->enabled_shader_profile.storage_buffer8)
+        || (abi.uniform_buffer16 && !device->enabled_shader_profile.uniform_buffer16)
+        || (abi.push_constant16 && !device->enabled_shader_profile.push_constant16))
+    {
+        diagnostic = "required 16-bit storage feature was not enabled when the Vulkan device was created";
+        return false;
+    }
+    if (abi.storage_buffer8 && !device->enabled_shader_profile.storage_buffer8)
+    {
+        diagnostic = "8-bit storage buffer access was not enabled when the Vulkan device was created";
         return false;
     }
     if (abi.fp64 && !device->enabled_shader_profile.fp64)

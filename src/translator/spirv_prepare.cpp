@@ -122,6 +122,14 @@ const char* capability_name(Capability capability)
         return "RoundingModeRTZ";
     case CapabilityInt16:
         return "Int16";
+    case CapabilityInt8:
+        return "Int8";
+    case CapabilityStorageBuffer8BitAccess:
+        return "StorageBuffer8BitAccess";
+    case CapabilityUniformAndStorageBuffer8BitAccess:
+        return "UniformAndStorageBuffer8BitAccess";
+    case CapabilityStoragePushConstant8:
+        return "StoragePushConstant8";
     case CapabilityFloat16:
         return "Float16";
     case CapabilityStorageBuffer16BitAccess:
@@ -130,6 +138,8 @@ const char* capability_name(Capability capability)
         return "UniformAndStorageBuffer16BitAccess";
     case CapabilityStoragePushConstant16:
         return "StoragePushConstant16";
+    case CapabilityStorageInputOutput16:
+        return "StorageInputOutput16";
     case CapabilityGroupNonUniform:
         return "GroupNonUniform";
     case CapabilityGroupNonUniformVote:

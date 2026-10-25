@@ -228,7 +228,7 @@ void impl_cmd_push_descriptor_set(
         for (uint32_t w = 0; w < write_count; w++)
         {
             const VkWriteDescriptorSet& write = writes[w];
-            if (write.descriptorType != VK_DESCRIPTOR_TYPE_STORAGE_BUFFER || !write.pBufferInfo)
+            if ((write.descriptorType != VK_DESCRIPTOR_TYPE_STORAGE_BUFFER && write.descriptorType != VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER) || !write.pBufferInfo)
             {
                 record_command_buffer_error(buffer, VK_ERROR_FEATURE_NOT_PRESENT);
                 return;
@@ -266,7 +266,7 @@ void impl_cmd_push_descriptor_set_with_template(
         for (size_t e = 0; e < update_template->entries.size(); e++)
         {
             const VkDescriptorUpdateTemplateEntry& entry = update_template->entries[e];
-            if (entry.descriptorType != VK_DESCRIPTOR_TYPE_STORAGE_BUFFER)
+            if (entry.descriptorType != VK_DESCRIPTOR_TYPE_STORAGE_BUFFER && entry.descriptorType != VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER)
                 continue;
             for (uint32_t i = 0; i < entry.descriptorCount; i++)
             {

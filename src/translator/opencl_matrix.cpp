@@ -13,16 +13,16 @@ bool CompilerOpenCL::access_chain_contains_matrix(
     const SPIRType* type = &get_pointee_type(expression_type(base));
     for (uint32_t i = 0; i < count; i++)
     {
-        if (type->basetype == SPIRType::Struct)
+        if (!type->array.empty())
+        {
+            type = &get<SPIRType>(type->parent_type);
+        }
+        else if (type->basetype == SPIRType::Struct)
         {
             const uint32_t member = evaluate_constant_u32(indices[i]);
             if (member >= type->member_types.size())
                 return false;
             type = &get<SPIRType>(type->member_types[member]);
-        }
-        else if (!type->array.empty())
-        {
-            type = &get<SPIRType>(type->parent_type);
         }
         else if (type->columns > 1)
         {
@@ -62,7 +62,12 @@ bool CompilerOpenCL::emit_matrix_access_chain(
     for (uint32_t i = 0; i < count; i++)
     {
         const std::string index = to_unpacked_expression(indices[i]);
-        if (type->basetype == SPIRType::Struct)
+        if (!type->array.empty())
+        {
+            expression += "[" + index + "]";
+            type = &get<SPIRType>(type->parent_type);
+        }
+        else if (type->basetype == SPIRType::Struct)
         {
             const uint32_t member = evaluate_constant_u32(indices[i]);
             if (member >= type->member_types.size())
@@ -70,11 +75,6 @@ bool CompilerOpenCL::emit_matrix_access_chain(
             if (storage_block_types.count(type->self) == 0)
                 expression += to_member_reference(base, *type, member, i != 0);
             type = &get<SPIRType>(type->member_types[member]);
-        }
-        else if (!type->array.empty())
-        {
-            expression += "[" + index + "]";
-            type = &get<SPIRType>(type->parent_type);
         }
         else if (type->columns > 1)
         {

@@ -1,0 +1,67 @@
+// Copyright 2026 nihui
+// SPDX-License-Identifier: Apache-2.0
+
+#version 450
+#extension GL_EXT_shader_explicit_arithmetic_types_int16 : require
+
+layout(local_size_x = 64) in;
+layout(set = 0, binding = 0, std430) buffer Data
+{
+    uint values[];
+} data;
+
+shared u16vec4 lanes[64];
+
+void main()
+{
+    uint i = gl_GlobalInvocationID.x;
+    if (i >= 65536u)
+        return;
+    uint base = i * 32u;
+    uint16_t a = uint16_t(data.values[base]);
+    uint16_t b = uint16_t(data.values[base + 1u]);
+    int16_t sa = int16_t(a);
+    int16_t sb = int16_t(b);
+    uint shift = i & 15u;
+    data.values[base + 2u] = uint(a + b);
+    data.values[base + 3u] = uint(a - b);
+    data.values[base + 4u] = uint(a * b);
+    data.values[base + 5u] = uint(int(sa + sb));
+    data.values[base + 6u] = uint(int(-sa));
+    data.values[base + 7u] = uint(a << shift);
+    data.values[base + 8u] = uint(int(sa >> shift));
+    data.values[base + 9u] = uint(a / uint16_t(uint(b) | 1u));
+    data.values[base + 10u] = uint(sa < sb);
+    uint16_t product = a * b;
+    data.values[base + 11u] = uint(int(int16_t(product)) < 0 ? 1 : 0);
+    u16vec4 v = u16vec4(a, b, uint16_t(a ^ b), uint16_t(~a));
+    lanes[gl_LocalInvocationID.x] = v;
+    barrier();
+    u16vec4 neighbor = lanes[(gl_LocalInvocationID.x + 1u) & 63u];
+    u16vec4 sum = v + u16vec4(b, a, uint16_t(65535), uint16_t(32768));
+    u16vec4 mul = v * u16vec4(b, a, uint16_t(65535), uint16_t(32768));
+    i16vec4 signed_sum = i16vec4(v) + i16vec4(int16_t(b));
+    data.values[base + 12u] = uint(sum.x) | (uint(sum.w) << 16);
+    data.values[base + 13u] = uint(mul.x) | (uint(mul.z) << 16);
+    data.values[base + 14u] = uint(int(signed_sum.z));
+    data.values[base + 15u] = uint(mix(v, sum, lessThan(i16vec4(v), i16vec4(int16_t(0)))).y);
+    int16_t divisor = int16_t(int(sb) | 1);
+    data.values[base + 16u] = uint(int(sa % divisor));
+    data.values[base + 17u] = uint(a % uint16_t(uint(b) | 1u));
+    data.values[base + 18u] = uint(int(sa / divisor));
+    data.values[base + 19u] = uint(int(sa < sb ? sa : sb));
+    data.values[base + 20u] = uint(int(abs(sa)));
+    data.values[base + 21u] = uint(int(sign(sa)));
+    data.values[base + 22u] = uint(int(min(sa, sb)));
+    data.values[base + 23u] = uint(int(clamp(sa, int16_t(-1000), int16_t(1000))));
+    data.values[base + 24u] = uint(uint16_t(data.values[base] * 987655u));
+    data.values[base + 25u] = uint(int(int16_t(data.values[base] * 987655u)));
+    data.values[base + 26u] = uint((v << uvec4(shift)).z);
+    data.values[base + 27u] = uint(int((i16vec4(v) >> uvec4(shift)).z));
+    data.values[base + 28u] = uint(int(abs(i16vec4(v)).z));
+    data.values[base + 29u] = uint(int(sign(i16vec4(v)).z));
+    data.values[base + 30u] = uint(int((i16vec4(v) % i16vec4(divisor)).z));
+    data.values[base + 31u] = uint((neighbor >> uvec4(shift)).z);
+    data.values[base] = uint(int(float(sa)));
+    data.values[base + 1u] = uint(int(float(sb)));
+}

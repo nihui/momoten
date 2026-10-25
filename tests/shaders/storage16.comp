@@ -1,0 +1,74 @@
+// Copyright 2026 nihui
+// SPDX-License-Identifier: Apache-2.0
+
+#version 450
+#extension GL_EXT_shader_16bit_storage : require
+
+layout(local_size_x = 64) in;
+
+struct Source
+{
+    int16_t s[2];
+    uint16_t u;
+    float16_t h;
+    f16vec2 f;
+    u16vec4 v;
+};
+
+layout(set = 0, binding = 0, std140) uniform Input
+{
+    Source values[65536];
+    mat4 matrices[2];
+} input_data;
+
+layout(set = 0, binding = 1, std430) buffer Output
+{
+    uint values[];
+} output_data;
+
+struct HalfOutput
+{
+    float16_t copied;
+    float16_t roundtrip;
+    f16vec2 rounded;
+};
+
+layout(set = 0, binding = 2, std430) buffer Copy
+{
+    HalfOutput values[];
+} copied_data;
+
+layout(push_constant, std430) uniform Parameters
+{
+    layout(offset = 0) int16_t a;
+    layout(offset = 2) uint16_t b;
+    layout(offset = 8) float16_t c;
+    layout(offset = 16) i16vec4 v;
+    layout(offset = 32) uint index;
+    layout(offset = 40) float f;
+    layout(offset = 48) float16_t h[2];
+} parameters;
+
+void main()
+{
+    uint i = gl_GlobalInvocationID.x;
+    if (i >= 65536u)
+        return;
+    uint base = i * 8u;
+    output_data.values[base] = uint(int(input_data.values[i].s[0]) + int(parameters.a));
+    output_data.values[base + 1u] = uint(int(input_data.values[i].s[1]) - ivec4(parameters.v)[i & 3u]);
+    output_data.values[base + 2u] = uint(input_data.values[i].u) ^ uint(parameters.b);
+    output_data.values[base + 3u] = floatBitsToUint(float(input_data.values[i].h));
+    output_data.values[base + 4u] = uvec4(input_data.values[i].v)[i & 3u];
+    output_data.values[base + 5u] = floatBitsToUint(float(parameters.c) + vec2(input_data.values[i].f)[i & 1u] + mat4(input_data.matrices[i & 1u])[2][1]);
+    output_data.values[base + 6u] = uint(input_data.values[(i + parameters.index) & 65535u].u);
+    output_data.values[base + 7u] = floatBitsToUint(parameters.f + float(parameters.h[i & 1u]));
+    copied_data.values[i].copied = input_data.values[i].h;
+    copied_data.values[i].roundtrip = float16_t(float(input_data.values[i].h));
+    precise float value = float(i) * 0.1 - 5000.25;
+    if (i < 64u)
+        value = float(int(i) - 32) * 7.450580596923828125e-9;
+    else if (i < 128u)
+        value = float(int(i) - 96) * 2048.5;
+    copied_data.values[i].rounded = f16vec2(vec2(value, -value + 0.03125));
+}

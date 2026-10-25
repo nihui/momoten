@@ -1,0 +1,45 @@
+// Copyright 2026 nihui
+// SPDX-License-Identifier: Apache-2.0
+
+#version 450
+layout(local_size_x = 64) in;
+
+struct Item
+{
+    uint u;
+    int s;
+    uint old_u0;
+    uint old_u1;
+    int old_s0;
+    int old_s1;
+    uint before;
+    uint after;
+};
+layout(binding = 0, std430) buffer Data
+{
+    Item items[];
+} data;
+shared uint lanes[64];
+
+void main()
+{
+    uint i = gl_GlobalInvocationID.x;
+    uint lane = gl_LocalInvocationID.x;
+    lanes[lane] = i;
+    barrier();
+    if (i >= 65535u)
+        return;
+
+    uint neighbor = lanes[(lane + 1u) & 63u];
+    uint expected_u = i * 40503u + 13u;
+    uint desired_u = expected_u ^ (0x80000000u | neighbor);
+    int expected_s = int(i) - 32768;
+    int desired_s = int(neighbor) - 131072;
+
+    data.items[i].before = data.items[i].u;
+    data.items[i].old_u0 = atomicCompSwap(data.items[i].u, expected_u, desired_u);
+    data.items[i].old_u1 = atomicCompSwap(data.items[i].u, expected_u, expected_u + 1u);
+    data.items[i].old_s0 = atomicCompSwap(data.items[i].s, expected_s, desired_s);
+    data.items[i].old_s1 = atomicCompSwap(data.items[i].s, expected_s, expected_s + 1);
+    data.items[i].after = data.items[i].u;
+}

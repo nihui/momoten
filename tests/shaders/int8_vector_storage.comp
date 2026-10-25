@@ -1,0 +1,20 @@
+// Copyright 2026 nihui
+// SPDX-License-Identifier: Apache-2.0
+
+#version 450
+#extension GL_EXT_shader_8bit_storage : require
+
+layout(local_size_x = 64) in;
+layout(set = 0, binding = 0, std430) buffer Data
+{
+    u8vec4 values[];
+} data;
+
+void main()
+{
+    uint i = gl_GlobalInvocationID.x;
+    if (i >= 65536u)
+        return;
+    uvec4 value = uvec4(data.values[i + 1u]);
+    data.values[i + 1u] = u8vec4((value + uvec4(1u, 127u, 255u, i)) ^ uvec4(i));
+}
