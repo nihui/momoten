@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 96 96" role="img" aria-label="momoten playful upright yellow bucket logo">
+  <rect width="96" height="96" rx="24" fill="#F5CD57"/>
+  <!-- Original centered upright bucket, same outline weight as nikki. -->
+  <g transform="translate(21.12 23.95) scale(2.24)" stroke="#ffffff" stroke-width="2.19" stroke-linecap="round" stroke-linejoin="round" fill="none">
+    <path d="M5 9V7a7 7 0 0 1 14 0v2"/>
+    <ellipse cx="12" cy="10" rx="9" ry="2"/>
+    <path d="m3 10.3 2.7 9.3a2.5 2.5 0 0 0 2.4 1.8h7.8a2.5 2.5 0 0 0 2.4-1.8l2.7-9.3"/>
+    <!-- Gentle little water ripple, not pouring or tilting -->
+    <path d="M8 10.8 Q10 10 12 10.6 T16 10.5" stroke-width="0.8" opacity="0.8"/>
+    <!-- Soft side reflection -->
+    <path d="M6.5 14.9 L7.4 17.9" stroke-width="1.05" opacity="0.8"/>
+  </g>
+  <!-- Matching twinkle and small energetic lines. -->
+  <path d="M77.5 25.5 Q78.1 30.3 82.5 31 Q78.1 31.7 77.5 36.5 Q76.8 31.7 72.5 31 Q76.8 30.3 77.5 25.5Z" fill="#ffffff"/>
+  <path d="M19.3 53 L15.6 51.3 M20 58.2 L16.5 59" stroke="#ffffff" stroke-width="2.5" stroke-linecap="round" opacity="0.86"/>
+</svg>
