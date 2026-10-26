@@ -1,5 +1,7 @@
 # momoten
 
+<img src="images/logo.svg" alt="momoten logo" width="128" height="128">
+
 momoten is an experimental implementation of a restricted subset of the Vulkan API over OpenCL.
 
 ## Experimental and non-conformant implementation
