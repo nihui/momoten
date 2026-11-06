@@ -262,6 +262,7 @@ static int check_vendor_profile(const char* name, const char* extensions, bool s
     momoten_detail::OpenCLDriverPolicy policy;
     // KHR-only workarounds must never affect vendor lowering.
     policy.split_packed_dot_acc_sat = true;
+    policy.split_vector_dot_acc_sat = true;
     policy.swap_mixed_dot_acc_sat = true;
     const momoten_detail::ShaderDeviceProfile profile = momoten_detail::probe_shader_device_profile(
         reinterpret_cast<cl_device_id>(1), extensions, 1, 1, policy);
@@ -284,7 +285,7 @@ static int check_vendor_profile(const char* name, const char* extensions, bool s
     momoten::TranslationOptions options;
     momoten_detail::configure_translation_options(&device, options);
     if (options.integer_dot_product != supported || options.integer_dot_product_backend != backend
-        || options.integer_dot_product_split_packed_acc_sat || options.integer_dot_product_swap_mixed_acc_sat)
+        || options.integer_dot_product_split_packed_acc_sat || options.integer_dot_product_split_vector_acc_sat || options.integer_dot_product_swap_mixed_acc_sat)
         return 1;
     device.enabled_shader_profile.integer_dot_product = false;
     momoten_detail::configure_translation_options(&device, options);
@@ -361,7 +362,7 @@ static int check_vendor_profiles()
     return result;
 }
 
-static int check_profile(const char* name, const char* vendor, const char* driver, bool supports_vector, bool workaround, bool swap = false)
+static int check_profile(const char* name, const char* vendor, const char* driver, bool supports_vector, bool workaround, bool swap = false, bool split_vector = false)
 {
     vector_support = supports_vector;
     matching_build_options = true;
@@ -378,8 +379,9 @@ static int check_profile(const char* name, const char* vendor, const char* drive
         || packed.accumulating_saturating_signed_accelerated != !workaround
         || packed.accumulating_saturating_unsigned_accelerated != !workaround
         || packed.accumulating_saturating_mixed_signedness_accelerated != !workaround
-        || dot.acceleration_8bit.accumulating_saturating_signed_accelerated != supports_vector
-        || dot.acceleration_8bit.accumulating_saturating_mixed_signedness_accelerated != supports_vector)
+        || dot.acceleration_8bit.accumulating_saturating_unsigned_accelerated != (supports_vector && !split_vector)
+        || dot.acceleration_8bit.accumulating_saturating_signed_accelerated != (supports_vector && !split_vector)
+        || dot.acceleration_8bit.accumulating_saturating_mixed_signedness_accelerated != (supports_vector && !split_vector))
     {
         fprintf(stderr, "driver_policy_test: %s has an incorrect capability or acceleration profile\n", name);
         return 1;
@@ -396,9 +398,13 @@ static int check_profile(const char* name, const char* vendor, const char* drive
             return 1;
         }
     }
-    if ((dot_probe_source.find("dot_acc_sat(sa, sb,") != std::string::npos) != supports_vector
-        || (dot_probe_source.find("dot_acc_sat(sa, ub,") != std::string::npos) != (supports_vector && !swap)
-        || (dot_probe_source.find("dot_acc_sat(ub, sa, as_int(a))") != std::string::npos) != (supports_vector && swap)
+    if ((dot_probe_source.find("dot_acc_sat(sa, sb,") != std::string::npos) != (supports_vector && !split_vector)
+        || (dot_probe_source.find("add_sat(dot(sa, sb),") != std::string::npos) != (supports_vector && split_vector)
+        || (dot_probe_source.find("add_sat(dot(ua, ub),") != std::string::npos) != (supports_vector && split_vector)
+        || (dot_probe_source.find("add_sat(dot(sa, ub),") != std::string::npos) != (supports_vector && split_vector)
+        || (dot_probe_source.find("add_sat(dot(ua, sb),") != std::string::npos) != (supports_vector && split_vector)
+        || (dot_probe_source.find("dot_acc_sat(sa, ub,") != std::string::npos) != (supports_vector && !swap && !split_vector)
+        || (dot_probe_source.find("dot_acc_sat(ub, sa, as_int(a))") != std::string::npos) != (supports_vector && swap && !split_vector)
         || (dot_probe_source.find("dot_acc_sat_4x8packed_us_int(b, a, as_int(a))") != std::string::npos) != swap)
     {
         fprintf(stderr, "driver_policy_test: %s changed the vector saturation path\n", name);
@@ -415,6 +421,7 @@ static int check_profile(const char* name, const char* vendor, const char* drive
     momoten_detail::configure_translation_options(&device, options);
     if (!options.integer_dot_product || !options.integer_dot_product_input_4x8bit_packed
         || options.integer_dot_product_split_packed_acc_sat != workaround
+        || options.integer_dot_product_split_vector_acc_sat != split_vector
         || options.integer_dot_product_swap_mixed_acc_sat != swap)
     {
         fprintf(stderr, "driver_policy_test: %s did not propagate the workaround to translation\n", name);
@@ -422,7 +429,7 @@ static int check_profile(const char* name, const char* vendor, const char* drive
     }
     device.enabled_shader_profile.integer_dot_product = false;
     momoten_detail::configure_translation_options(&device, options);
-    if (options.integer_dot_product || options.integer_dot_product_split_packed_acc_sat || options.integer_dot_product_swap_mixed_acc_sat)
+    if (options.integer_dot_product || options.integer_dot_product_split_packed_acc_sat || options.integer_dot_product_split_vector_acc_sat || options.integer_dot_product_swap_mixed_acc_sat)
     {
         fprintf(stderr, "driver_policy_test: %s retained a disabled integer-dot profile\n", name);
         return 1;
@@ -433,7 +440,7 @@ static int check_profile(const char* name, const char* vendor, const char* drive
 static int check_copy_policy(const char* vendor, const char* driver, bool use_kernel, bool copy_completion = false)
 {
     const momoten_detail::OpenCLDriverPolicy policy = momoten_detail::opencl_driver_policy(vendor, driver);
-    if (policy.use_buffer_copy_kernel != use_kernel || policy.use_copy_completion_event != copy_completion || policy.split_packed_dot_acc_sat || policy.swap_mixed_dot_acc_sat)
+    if (policy.use_buffer_copy_kernel != use_kernel || policy.use_copy_completion_event != copy_completion || policy.split_packed_dot_acc_sat || policy.split_vector_dot_acc_sat || policy.swap_mixed_dot_acc_sat)
     {
         fprintf(stderr, "driver_policy_test: incorrect copy policy for %s / %s\n", vendor, driver);
         return 1;
@@ -467,6 +474,7 @@ int main()
     const char* mixed_driver = "OpenCL 3.0 QUALCOMM build: 0676.73 Compiler E031.41.03.62";
     const char* adreno825_driver = "OpenCL 3.0 QUALCOMM build: 0800.48 Compiler E031.47.18.36";
     const char* adreno750_driver = "OpenCL 3.0 QUALCOMM build: 0762.41 Compiler E031.45.02.26";
+    const char* adreno840_driver = "OpenCL 3.0 QUALCOMM build: 0842.44 Compiler E031.50.19.29";
     const char* oppo_driver = "OpenCL 3.0 QUALCOMM build: commit unknown Compiler E031.41.03.57";
     language_version = "OpenCL C 3.0";
     expected_build_options = "-cl-std=CL3.0";
@@ -474,6 +482,8 @@ int main()
         return 1;
     if (check_profile("Adreno 825 CL3.0 packed saturation", "QUALCOMM", adreno825_driver, true, true)
         || check_profile("Adreno 750 CL3.0 packed saturation", "QUALCOMM", adreno750_driver, true, true))
+        return 1;
+    if (check_profile("Adreno 840 CL3.0 saturation", "QUALCOMM", adreno840_driver, true, true, false, true))
         return 1;
     if (check_profile("OPPO Adreno 740 CL3.0 mixed saturation", "QUALCOMM", oppo_driver, true, false, true))
         return 1;
@@ -512,6 +522,12 @@ int main()
            || check_profile("Adreno 750 compiler followed by metadata", "QUALCOMM", "OpenCL 3.0 QUALCOMM build: unknown Compiler E031.45.02.26 extra", true, true)
            || check_profile("Adreno 750 compiler version prefix", "QUALCOMM", "OpenCL 3.0 QUALCOMM build: unknown Compiler E031.45.02.260", true, false)
            || check_profile("Adreno 750 compiler version suffix", "QUALCOMM", "OpenCL 3.0 QUALCOMM build: unknown Compiler E031.45.02.26-custom", true, false)
+           || check_profile("Adreno 840 packed-only", "QUALCOMM", adreno840_driver, false, true, false, true)
+           || check_profile("Adreno 840 other vendor", "another vendor", adreno840_driver, true, false)
+           || check_profile("Adreno 840 other release", "QUALCOMM", "OpenCL 3.0 QUALCOMM build: unknown Compiler E031.50.19.29 extra", true, true, false, true)
+           || check_profile("Adreno 840 other compiler", "QUALCOMM", "OpenCL 3.0 QUALCOMM build: 0842.44 Compiler E031.50.19.30", true, false)
+           || check_profile("Adreno 840 compiler prefix", "QUALCOMM", "OpenCL 3.0 QUALCOMM build: 0842.44 Compiler E031.50.19.290", true, false)
+           || check_profile("Adreno 840 compiler suffix", "QUALCOMM", "OpenCL 3.0 QUALCOMM build: 0842.44 Compiler E031.50.19.29-custom", true, false)
            || check_profile("OPPO Adreno 740 packed-only", "QUALCOMM", oppo_driver, false, false, true)
            || check_profile("OPPO other vendor", "another vendor", oppo_driver, true, false)
            || check_profile("OPPO compiler followed by metadata", "QUALCOMM", "OpenCL 3.0 QUALCOMM build: commit unknown Compiler E031.41.03.57 extra", true, false, true)

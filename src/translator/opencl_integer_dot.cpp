@@ -233,7 +233,9 @@ bool CompilerOpenCL::emit_integer_dot_product_instruction(
     std::string function;
     SPIRType::BaseType expression_base = native_result_base;
     const bool vendor_backend = translation_options.integer_dot_product_backend != IntegerDotProductKhr;
-    const bool split_accumulation = !vendor_backend && packed && accumulating && translation_options.integer_dot_product_split_packed_acc_sat;
+    const bool split_accumulation = !vendor_backend && accumulating
+                                    && ((packed && translation_options.integer_dot_product_split_packed_acc_sat)
+                                        || (vector_4x8bit && translation_options.integer_dot_product_split_vector_acc_sat));
     if (vendor_backend && (packed || vector_4x8bit))
     {
         if (!packed)
@@ -263,9 +265,9 @@ bool CompilerOpenCL::emit_integer_dot_product_instruction(
     }
     else if (vector_4x8bit)
     {
-        if (accumulating && mixed_dot && translation_options.integer_dot_product_swap_mixed_acc_sat)
+        if (accumulating && mixed_dot && !split_accumulation && translation_options.integer_dot_product_swap_mixed_acc_sat)
             first.swap(second);
-        function = accumulating ? "dot_acc_sat" : "dot";
+        function = accumulating && !split_accumulation ? "dot_acc_sat" : "dot";
     }
     else if (first_type.width == 32 && first_type.vecsize >= 2 && first_type.vecsize <= 4)
     {

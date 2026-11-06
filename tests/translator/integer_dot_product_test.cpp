@@ -38,6 +38,7 @@ int main()
             options.integer_dot_product_input_4x8bit_packed = packed;
             // Vendor code must not inherit KHR driver workarounds.
             options.integer_dot_product_split_packed_acc_sat = test.backend != momoten::IntegerDotProductKhr;
+            options.integer_dot_product_split_vector_acc_sat = test.backend != momoten::IntegerDotProductKhr;
             options.integer_dot_product_swap_mixed_acc_sat = test.backend != momoten::IntegerDotProductKhr;
             momoten::TranslationResult translated;
             if (!momoten::translate_spirv_to_opencl_c(words.data(), words.size(), options, translated))
@@ -55,6 +56,29 @@ int main()
             if (momoten::translate_spirv_to_opencl_c(words.data(), words.size(), options, translated))
                 return 1;
         }
+        for (unsigned split_mask = 0; split_mask < 4; split_mask++)
+            for (bool swap : {false, true})
+            {
+                momoten::TranslationOptions options;
+                options.integer_dot_product = true;
+                options.integer_dot_product_input_4x8bit = !packed;
+                options.integer_dot_product_input_4x8bit_packed = packed;
+                options.integer_dot_product_split_packed_acc_sat = (split_mask & 1) != 0;
+                options.integer_dot_product_split_vector_acc_sat = (split_mask & 2) != 0;
+                options.integer_dot_product_swap_mixed_acc_sat = swap;
+                momoten::TranslationResult translated;
+                if (!momoten::translate_spirv_to_opencl_c(words.data(), words.size(), options, translated))
+                    return 1;
+                const bool split = (split_mask & (packed ? 1 : 2)) != 0;
+                const char* split_call = packed ? "add_sat(dot_4x8packed_" : "add_sat(dot(";
+                const char* native_call = packed ? "dot_acc_sat_4x8packed_" : "dot_acc_sat(";
+                if ((translated.source.find(split_call) != std::string::npos) != split
+                    || (translated.source.find(native_call) != std::string::npos) == split)
+                {
+                    fprintf(stderr, "integer_dot_product_test: incorrect saturation lowering for packed=%d split_mask=%u swap=%d\n", packed, split_mask, swap);
+                    return 1;
+                }
+            }
     }
     return 0;
 }

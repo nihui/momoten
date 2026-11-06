@@ -14,6 +14,7 @@ namespace momoten_detail {
 struct OpenCLDriverPolicy
 {
     bool split_packed_dot_acc_sat = false;
+    bool split_vector_dot_acc_sat = false;
     bool swap_mixed_dot_acc_sat = false;
     bool use_buffer_copy_kernel = false;
     bool use_copy_completion_event = false;

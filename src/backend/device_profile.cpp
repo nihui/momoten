@@ -360,9 +360,9 @@ static bool probe_khr_integer_dot_product(
     a8.unsigned_accelerated = acceleration_8bit.unsigned_accelerated == CL_TRUE;
     a8.signed_accelerated = acceleration_8bit.signed_accelerated == CL_TRUE;
     a8.mixed_signedness_accelerated = acceleration_8bit.mixed_signedness_accelerated == CL_TRUE;
-    a8.accumulating_saturating_unsigned_accelerated = acceleration_8bit.accumulating_saturating_unsigned_accelerated == CL_TRUE;
-    a8.accumulating_saturating_signed_accelerated = acceleration_8bit.accumulating_saturating_signed_accelerated == CL_TRUE;
-    a8.accumulating_saturating_mixed_signedness_accelerated = acceleration_8bit.accumulating_saturating_mixed_signedness_accelerated == CL_TRUE;
+    a8.accumulating_saturating_unsigned_accelerated = !policy.split_vector_dot_acc_sat && acceleration_8bit.accumulating_saturating_unsigned_accelerated == CL_TRUE;
+    a8.accumulating_saturating_signed_accelerated = !policy.split_vector_dot_acc_sat && acceleration_8bit.accumulating_saturating_signed_accelerated == CL_TRUE;
+    a8.accumulating_saturating_mixed_signedness_accelerated = !policy.split_vector_dot_acc_sat && acceleration_8bit.accumulating_saturating_mixed_signedness_accelerated == CL_TRUE;
 
     momoten_detail::IntegerDotProductAccelerationProfile& ap = profile.acceleration_4x8bit_packed;
     ap.unsigned_accelerated = acceleration_packed.unsigned_accelerated == CL_TRUE;
@@ -404,13 +404,23 @@ static bool probe_khr_integer_dot_product(
                   "    output[8] = as_uint(dot(sa, sb));\n"
                   "    output[9] = dot(ua, ub);\n"
                   "    output[10] = as_uint(dot(sa, ub));\n"
-                  "    output[11] = as_uint(dot(ua, sb));\n"
-                  "    output[12] = as_uint(dot_acc_sat(sa, sb, as_int(a)));\n"
-                  "    output[13] = dot_acc_sat(ua, ub, a);\n";
-        source += policy.swap_mixed_dot_acc_sat
-                      ? "    output[14] = as_uint(dot_acc_sat(ub, sa, as_int(a)));\n"
-                      : "    output[14] = as_uint(dot_acc_sat(sa, ub, as_int(a)));\n";
-        source += "    output[15] = as_uint(dot_acc_sat(ua, sb, as_int(a)));\n";
+                  "    output[11] = as_uint(dot(ua, sb));\n";
+        if (policy.split_vector_dot_acc_sat)
+        {
+            source += "    output[12] = as_uint(add_sat(dot(sa, sb), as_int(a)));\n"
+                      "    output[13] = add_sat(dot(ua, ub), a);\n"
+                      "    output[14] = as_uint(add_sat(dot(sa, ub), as_int(a)));\n"
+                      "    output[15] = as_uint(add_sat(dot(ua, sb), as_int(a)));\n";
+        }
+        else
+        {
+            source += "    output[12] = as_uint(dot_acc_sat(sa, sb, as_int(a)));\n"
+                      "    output[13] = dot_acc_sat(ua, ub, a);\n";
+            source += policy.swap_mixed_dot_acc_sat
+                          ? "    output[14] = as_uint(dot_acc_sat(ub, sa, as_int(a)));\n"
+                          : "    output[14] = as_uint(dot_acc_sat(sa, ub, as_int(a)));\n";
+            source += "    output[15] = as_uint(dot_acc_sat(ua, sb, as_int(a)));\n";
+        }
     }
     source += "}\n";
 
@@ -622,6 +632,7 @@ void configure_translation_options(
     options.integer_dot_product_input_4x8bit = enabled.integer_dot_product && physical.integer_dot_product.input_4x8bit;
     options.integer_dot_product_input_4x8bit_packed = enabled.integer_dot_product && physical.integer_dot_product.input_4x8bit_packed;
     options.integer_dot_product_split_packed_acc_sat = enabled.integer_dot_product && physical.integer_dot_product.backend == momoten::IntegerDotProductKhr && device->physical_device->driver_policy.split_packed_dot_acc_sat;
+    options.integer_dot_product_split_vector_acc_sat = enabled.integer_dot_product && physical.integer_dot_product.backend == momoten::IntegerDotProductKhr && device->physical_device->driver_policy.split_vector_dot_acc_sat;
     options.integer_dot_product_swap_mixed_acc_sat = enabled.integer_dot_product && physical.integer_dot_product.backend == momoten::IntegerDotProductKhr && device->physical_device->driver_policy.swap_mixed_dot_acc_sat;
 }
 

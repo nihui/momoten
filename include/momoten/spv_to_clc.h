@@ -153,6 +153,8 @@ struct TranslationOptions
     bool integer_dot_product_input_4x8bit_packed;
     // Lower packed saturating dot as a native dot followed by add_sat.
     bool integer_dot_product_split_packed_acc_sat;
+    // Apply the same split to native 4x8-bit vector saturating dot.
+    bool integer_dot_product_split_vector_acc_sat;
     // Use unsigned x signed inputs for native mixed 8-bit saturating dot.
     bool integer_dot_product_swap_mixed_acc_sat;
     // Use native vector loads for complete, non-volatile storage-buffer vectors.

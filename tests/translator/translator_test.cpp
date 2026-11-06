@@ -383,7 +383,7 @@ int main(int argc, char** argv)
         return 1;
 
     momoten::TranslationOptions integer_dot_options;
-    if (require(!integer_dot_options.integer_dot_product_split_packed_acc_sat && !integer_dot_options.integer_dot_product_swap_mixed_acc_sat,
+    if (require(!integer_dot_options.integer_dot_product_split_packed_acc_sat && !integer_dot_options.integer_dot_product_split_vector_acc_sat && !integer_dot_options.integer_dot_product_swap_mixed_acc_sat,
                 "integer dot-product workarounds must be opt-in"))
         return 1;
     integer_dot_options.integer_dot_product = true;

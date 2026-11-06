@@ -65,6 +65,8 @@ static void dump_pipeline_artifacts(const std::shared_ptr<ShaderModule>& module,
                    sizeof(options.integer_dot_product_input_4x8bit_packed), hash);
     hash = fnv1a64(&options.integer_dot_product_split_packed_acc_sat,
                    sizeof(options.integer_dot_product_split_packed_acc_sat), hash);
+    hash = fnv1a64(&options.integer_dot_product_split_vector_acc_sat,
+                   sizeof(options.integer_dot_product_split_vector_acc_sat), hash);
     hash = fnv1a64(&options.integer_dot_product_swap_mixed_acc_sat,
                    sizeof(options.integer_dot_product_swap_mixed_acc_sat), hash);
     for (size_t i = 0; i < options.specializations.size(); i++)
